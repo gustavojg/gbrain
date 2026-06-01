@@ -619,33 +619,51 @@ function updateRegionActivity(regions) {
   const container = document.getElementById('regionActivity');
   if (!container) return;
 
-  // Build rows if not exist
+  // Build rows if not exist. Each region shows TWO honest activity bars:
+  //   • drive   — how much input signal the region is receiving (EMA, 0..1)
+  //   • novelty — how much its firing PATTERN is changing (0..1)
+  // We deliberately do NOT use `firingRate` here: with k-WTA sparse coding it is
+  // ~constant by design (Wernicke/Broca/Prefrontal all pin at ~14%), so it can't
+  // tell whether a region is engaged. drive + novelty actually react to interaction.
   if (container.children.length === 0) {
     for (const [id, color] of Object.entries(REGION_COLORS)) {
+      const hsl = `hsl(${color.h}, ${color.s}%, ${color.l}%)`;
       const row = document.createElement('div');
       row.className = 'region-row';
       row.innerHTML = `
         <span class="region-name">${color.label}</span>
-        <div class="region-bar-track">
-          <div class="region-bar-fill" id="rbar-${id}" style="background: hsl(${color.h}, ${color.s}%, ${color.l}%)"></div>
+        <div class="region-bars">
+          <div class="region-bar-track" title="drive — input signal received">
+            <div class="region-bar-fill region-bar-drive" id="rdrive-${id}" style="background: ${hsl}"></div>
+          </div>
+          <div class="region-bar-track" title="novelty — firing-pattern change">
+            <div class="region-bar-fill region-bar-nov" id="rnov-${id}" style="background: ${hsl}"></div>
+          </div>
         </div>
-        <span class="region-rate" id="rrate-${id}">0%</span>
+        <div class="region-vals">
+          <span class="region-rate" id="rdriveval-${id}">0%</span>
+          <span class="region-rate region-rate-nov" id="rnovval-${id}">0%</span>
+        </div>
       `;
       container.appendChild(row);
     }
   }
 
-  // Update values
-  // `firingRate` is now the REAL output of each region (previously several regions
-  // —thalamus, amygdala…— did not update this.spikes and showed up frozen at 0%).
-  // We scale it x4 so the sparse rates (k-WTA) are visible.
+  // Update values. drive is scaled ×2 for the bar (typical range 0..0.3) so it is
+  // visible, but the label shows the raw %. novelty already spans 0..1.
   for (const [id, data] of Object.entries(regions)) {
-    const bar = document.getElementById(`rbar-${id}`);
-    const rate = document.getElementById(`rrate-${id}`);
-    const f = data.firingRate || 0;
-    const shown = Math.min(1, f * 4);
-    if (bar) bar.style.width = `${(shown * 100).toFixed(0)}%`;
-    if (rate) rate.textContent = `${(f * 100).toFixed(0)}%`;
+    const drive = Math.max(0, Math.min(1, data.drive || 0));
+    const nov = Math.max(0, Math.min(1, data.novelty || 0));
+
+    const driveBar = document.getElementById(`rdrive-${id}`);
+    const driveVal = document.getElementById(`rdriveval-${id}`);
+    if (driveBar) driveBar.style.width = `${Math.min(100, drive * 2 * 100).toFixed(0)}%`;
+    if (driveVal) driveVal.textContent = `${(drive * 100).toFixed(0)}%`;
+
+    const novBar = document.getElementById(`rnov-${id}`);
+    const novVal = document.getElementById(`rnovval-${id}`);
+    if (novBar) novBar.style.width = `${(nov * 100).toFixed(0)}%`;
+    if (novVal) novVal.textContent = `${(nov * 100).toFixed(0)}%`;
   }
 }
 

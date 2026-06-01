@@ -480,6 +480,14 @@ body::after {
   letter-spacing: 0.04em;
 }
 
+.io-hint {
+  font-size: 0.6rem;
+  font-weight: 400;
+  color: var(--text-muted);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
 .input-group {
   display: flex;
   gap: var(--gap-xs);
@@ -597,7 +605,7 @@ body::after {
 
 .region-row {
   display: grid;
-  grid-template-columns: 100px 1fr 40px;
+  grid-template-columns: 100px 1fr 34px;
   align-items: center;
   gap: var(--gap-sm);
   font-size: 0.7rem;
@@ -609,6 +617,12 @@ body::after {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.region-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .region-bar-track {
@@ -625,11 +639,28 @@ body::after {
   width: 0%;
 }
 
+/* novelty bar reads as the "secondary" signal: same hue, dimmer + dashed feel */
+.region-bar-nov {
+  opacity: 0.45;
+}
+
+.region-vals {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-end;
+}
+
 .region-row .region-rate {
   color: var(--text-muted);
   font-family: var(--font-mono);
-  font-size: 0.65rem;
+  font-size: 0.6rem;
+  line-height: 1;
   text-align: right;
+}
+
+.region-row .region-rate-nov {
+  opacity: 0.6;
 }
 
 /* Learning panel (Corteza Visual) */

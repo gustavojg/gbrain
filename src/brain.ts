@@ -684,12 +684,13 @@ export class DigitalBrain {
       if (!src || src.length !== dim) return;
       for (let i = 0; i < dim; i++) mental[i] += src[i] * weight;
     };
-    addInto(this.regions.get('wernicke')?.getActivity().outputSpikes, 1.0);
-    addInto(this.regions.get('broca')?.getActivity().outputSpikes, 1.0);
-    // Decaying trace of the last thing it read: recent perception dominates the
-    // thought right after reading, then fades back toward spontaneous activity
-    // (exponential decay over ~50 ticks ≈ 0.5 s at 100 Hz).
-    const traceWeight = 3.0 * Math.exp(-this.ticksSinceRead / 50);
+    addInto(this.regions.get('wernicke')?.getActivity().outputSpikes, 0.5);
+    addInto(this.regions.get('broca')?.getActivity().outputSpikes, 0.5);
+    // Decaying trace of the last thing it read: recent perception clearly
+    // dominates the thought right after reading (so distinct inputs yield
+    // distinct thoughts), then fades back toward the spontaneous activity of the
+    // language areas (exponential decay over ~50 ticks ≈ 5 s at the 10 Hz server tick).
+    const traceWeight = 6.0 * Math.exp(-this.ticksSinceRead / 50);
     if (traceWeight > 0.01) addInto(this.lastLinguisticIntention ?? undefined, traceWeight);
 
     // Decode the mental state into the words the brain is currently activating.

@@ -25,8 +25,11 @@
 import { DigitalBrain } from '../src/brain.js';
 
 function thoughtAfterReading(brain: DigitalBrain, text: string): { words: string[]; text: string; emotion: string } {
+  // Let any previous perception trace fully decay so each thought is shaped by
+  // its OWN input, not residue from the prior read (avoids cross-contamination).
+  for (let i = 0; i < 120; i++) brain.tick();
   brain.read(text);
-  for (let i = 0; i < 5; i++) brain.tick(); // let activation settle while trace is fresh
+  for (let i = 0; i < 3; i++) brain.tick(); // settle while the fresh trace dominates
   const t = brain.think();
   return { words: t.words, text: t.text, emotion: t.emotion };
 }

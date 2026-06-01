@@ -756,6 +756,59 @@ body::after {
   color: var(--accent-red);
 }
 
+/* --- Stream of consciousness --- */
+.thought-box {
+  padding: 0.5rem;
+  background: var(--bg-card);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  max-height: 140px;
+  overflow-y: auto;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  line-height: 1.7;
+}
+
+.thought-empty {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.thought-entry {
+  padding: 3px 0;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.05);
+  opacity: 0;
+  transform: translateY(-4px);
+  animation: thought-in 0.4s ease forwards;
+  transition: opacity 0.6s ease;
+}
+
+@keyframes thought-in {
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.thought-entry .thought-emoji {
+  margin-right: 0.3rem;
+}
+
+.thought-entry .thought-emotion {
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.7;
+  margin-right: 0.3rem;
+}
+
+.thought-entry .thought-words {
+  color: var(--text-primary);
+}
+
+.thought-entry .thought-time {
+  float: right;
+  color: var(--text-muted);
+  font-size: 0.6rem;
+}
+
 /* --- Scrollbar --- */
 ::-webkit-scrollbar {
   width: 4px;

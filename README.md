@@ -44,6 +44,7 @@ Tres propiedades guían el proyecto:
 - **Persistencia binaria** — el estado sináptico completo se guarda/carga en un `.bin` (protocolo `0xBRA1N001`).
 - **Léxico bilingüe (ES + EN)** — ~360 palabras codificadas como patrones de impulsos deterministas (hash de n-gramas) compartidas entre Wernicke y Broca. Español e inglés conviven en el mismo espacio de representación.
 - **Aprendizaje de vocabulario** — las palabras desconocidas que lee el cerebro se aprenden tras varias exposiciones (umbral configurable) y se añaden al léxico, recompensadas con dopamina + acetilcolina. El vocabulario aprendido persiste entre sesiones.
+- **Pensamientos en directo** — el dashboard muestra un *stream of consciousness*: cada ~1.2 s se decodifica la activación interna del cerebro (Wernicke + Broca + traza decadente de lo último que leyó) a una frase corta enmarcada por la emoción dominante (ej. `(stressed) miedo · tristeza · anxiety`). Es una lectura *asociativa* honesta del estado de la red, no razonamiento.
 
 ### Aprendizaje verificado (no es marketing)
 
@@ -54,6 +55,7 @@ Cada capacidad tiene un test con criterios cuantitativos en `tests/`:
 - **Lenguaje** (`language-loop.test.ts`) — el bucle texto→Wernicke→Broca es **reproducible** (84%), **discriminativo** (3% de solape entre textos distintos) y **relevante** (100% de respuestas contienen palabras del input).
 - **Lenguaje bilingüe** (`bilingual-lexicon.test.ts`) — comprende y responde en español e inglés (100% de relevancia).
 - **Vocabulario** (`vocabulary-learning.test.ts`) — aprende palabras nuevas tras N exposiciones, las comprende después y las persiste en disco.
+- **Pensamientos en directo** (`live-thoughts.test.ts`) — `think()` produce pensamientos bien formados, **reactivos** (en reposo el pensamiento está vacío; al leer se vuelve no vacío) y **discriminativos** (entradas distintas → pensamientos distintos, solape <60%).
 
 > **Honestidad técnica:** la comprensión del lenguaje es **asociativa** (recupera y reordena palabras del léxico relacionadas con la entrada), no razonamiento simbólico. Es el comportamiento esperado de una SNN con léxico distribuido.
 
@@ -116,6 +118,7 @@ Three principles drive the project:
 - **Binary persistence** — full synaptic state saved/loaded to a `.bin` file (`0xBRA1N001` protocol).
 - **Bilingual lexicon (ES + EN)** — ~360 words encoded as deterministic spike patterns (n-gram hashing) shared between Wernicke and Broca. Spanish and English coexist in the same representational space.
 - **Vocabulary learning** — unknown words the brain reads are learned after several exposures (configurable threshold) and added to the lexicon, rewarded with dopamine + acetylcholine. Learned vocabulary persists across sessions.
+- **Live thoughts** — the dashboard streams a *stream of consciousness*: every ~1.2 s the brain's current internal activation (Wernicke + Broca + a decaying trace of the last thing it read) is decoded into a short phrase framed by its dominant emotion (e.g. `(stressed) miedo · tristeza · anxiety`). An honest *associative* read-out of network state, not reasoning.
 
 ### Verified learning (not marketing)
 
@@ -126,6 +129,7 @@ Each capability has a test with quantitative criteria under `tests/`:
 - **Language** (`language-loop.test.ts`) — the text→Wernicke→Broca loop is **reproducible** (84%), **discriminative** (3% overlap between distinct texts) and **relevant** (100% of responses contain input words).
 - **Bilingual language** (`bilingual-lexicon.test.ts`) — comprehends and responds in Spanish and English (100% relevance).
 - **Vocabulary** (`vocabulary-learning.test.ts`) — learns new words after N exposures, comprehends them afterwards, and persists them to disk.
+- **Live thoughts** (`live-thoughts.test.ts`) — `think()` produces well-formed thoughts that are **reactive** (idle → empty; after reading → non-empty) and **discriminative** (distinct inputs → distinct thoughts, <60% overlap).
 
 > **Technical honesty:** language comprehension is **associative** (it retrieves and reorders lexicon words related to the input), not symbolic reasoning. This is the expected behaviour of an SNN with a distributed lexicon.
 

@@ -37,6 +37,7 @@ const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DASHBOARD_DIR = path.resolve(SERVER_DIR, 'dashboard');
 const TICK_INTERVAL_MS = 100; // 10 Hz brain tick
 const BROADCAST_INTERVAL_MS = 500; // 2 Hz dashboard update (lighter)
+const THOUGHT_INTERVAL_MS = 1200; // ~0.8 Hz live "thought" stream
 const IMAGE_THROTTLE_MS = 2000; // Max 1 frame every 2 seconds
 const AUTOSAVE_INTERVAL_MS = 5 * 60_000; // Save the learning every 5 min
 
@@ -353,6 +354,7 @@ wss.on('connection', (ws: WebSocket) => {
 
 let tickTimer: ReturnType<typeof setInterval>;
 let broadcastTimer: ReturnType<typeof setInterval>;
+let thoughtTimer: ReturnType<typeof setInterval>;
 let autosaveTimer: ReturnType<typeof setInterval>;
 let lastImageTime = 0;
 
@@ -375,6 +377,20 @@ function startBrainLoop(): void {
       }
     }
   }, BROADCAST_INTERVAL_MS);
+
+  // Live "thought" stream — decodes the brain's current internal activation
+  // (Wernicke + Broca + decaying input trace) into a short emotion-framed phrase.
+  thoughtTimer = setInterval(() => {
+    if (clients.size > 0) {
+      const thought = brain.think();
+      const msg = JSON.stringify({ type: 'thought', data: thought }, replacer);
+      for (const client of clients) {
+        if (client.readyState === 1) {
+          client.send(msg);
+        }
+      }
+    }
+  }, THOUGHT_INTERVAL_MS);
 
   // Autosave — learning survives restarts even without a clean shutdown
   autosaveTimer = setInterval(() => persist('autosave'), AUTOSAVE_INTERVAL_MS);
@@ -404,6 +420,7 @@ function shutdown(signal: string): void {
   console.log(`\n🛑 ${signal} — saving state and stopping brain...`);
   clearInterval(tickTimer);
   clearInterval(broadcastTimer);
+  clearInterval(thoughtTimer);
   clearInterval(autosaveTimer);
   persist(signal);
   wss.close();

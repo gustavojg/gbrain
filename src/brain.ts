@@ -183,6 +183,9 @@ export class DigitalBrain {
   /** Words learned (committed to the lexicon) during this session. */
   private learnedThisSession: string[] = [];
 
+  /** Ticks elapsed since the last `read()` — fades the perception trace in `think()`. */
+  private ticksSinceRead: number = Number.MAX_SAFE_INTEGER;
+
   // --- Decoders (outputs) ---
   private textDecoder: BrainTextDecoder;
   private emotionDecoder: EmotionDecoder;
@@ -446,6 +449,7 @@ export class DigitalBrain {
     // Store the clean intention so speak() generates a reproducible
     // response (text→Wernicke→Broca) without dilution from the recurrent loop.
     this.lastLinguisticIntention = spikes;
+    this.ticksSinceRead = 0;
 
     // Send to the thalamus (linguistic route)
     this.injectSensoryInput('linguistic', spikes);
@@ -645,6 +649,95 @@ export class DigitalBrain {
   }
 
   /**
+   * The brain "thinks" — decodes a live stream-of-consciousness snapshot from
+   * its CURRENT internal state (not a scripted message).
+   *
+   * How it works:
+   *   The language areas (Wernicke, Broca) spike in lexicon space, so their
+   *   current activation can be projected back onto the lexicon to read out
+   *   which words the brain is activating right now. We blend that with a
+   *   decaying trace of the last input and frame it with the current emotion
+   *   and dominant neuromodulator.
+   *
+   * Honesty:
+   *   This is an ASSOCIATIVE decode of real spiking activity — a daydream that
+   *   drifts at rest and reflects recent perception when stimulated. It is not
+   *   deliberative reasoning or a language model.
+   *
+   * @returns A thought snapshot with text, words and affective frame.
+   */
+  think(): {
+    text: string;
+    words: string[];
+    emotion: string;
+    emoji: string;
+    valence: number;
+    arousal: number;
+    color: string;
+    dominantModulator: string;
+  } {
+    const dim = this.lexicon.dimensions;
+    const mental = new Float32Array(dim);
+
+    // Superimpose the current activation of the language areas (lexicon space).
+    const addInto = (src: Float32Array | undefined, weight: number): void => {
+      if (!src || src.length !== dim) return;
+      for (let i = 0; i < dim; i++) mental[i] += src[i] * weight;
+    };
+    addInto(this.regions.get('wernicke')?.getActivity().outputSpikes, 1.0);
+    addInto(this.regions.get('broca')?.getActivity().outputSpikes, 1.0);
+    // Decaying trace of the last thing it read: recent perception dominates the
+    // thought right after reading, then fades back toward spontaneous activity
+    // (exponential decay over ~50 ticks ≈ 0.5 s at 100 Hz).
+    const traceWeight = 3.0 * Math.exp(-this.ticksSinceRead / 50);
+    if (traceWeight > 0.01) addInto(this.lastLinguisticIntention ?? undefined, traceWeight);
+
+    // Decode the mental state into the words the brain is currently activating.
+    const matches = this.lexicon.findClosest(mental, 6).filter((m) => m.similarity > 0.05);
+    const words = matches.map((m) => m.word);
+
+    const emotion = this.feel();
+    const dominant = this.dominantModulator();
+
+    // Hybrid style: affective frame + decoded words (wordless mood if silent).
+    const body = words.length > 0 ? words.join(' · ') : '…';
+    const text = `(${emotion.primaryEmotion.toLowerCase()}) ${body}`;
+
+    return {
+      text,
+      words,
+      emotion: emotion.primaryEmotion,
+      emoji: emotion.emoji,
+      valence: emotion.valence,
+      arousal: emotion.arousal,
+      color: emotion.color,
+      dominantModulator: dominant,
+    };
+  }
+
+  /** Name of the neuromodulator most elevated above its baseline right now. */
+  private dominantModulator(): string {
+    const types: ModulatorType[] = [
+      ModulatorType.Dopamine,
+      ModulatorType.Serotonin,
+      ModulatorType.Norepinephrine,
+      ModulatorType.Cortisol,
+      ModulatorType.Acetylcholine,
+      ModulatorType.Oxytocin,
+    ];
+    let best = types[0];
+    let bestLevel = -Infinity;
+    for (const t of types) {
+      const level = this.modulators.getLevel(t);
+      if (level > bestLevel) {
+        bestLevel = level;
+        best = t;
+      }
+    }
+    return best;
+  }
+
+  /**
    * The brain "imagines" — generates an image from the visual cortex.
    */
   imagine(): { pixels: Float32Array; width: number; height: number; ascii: string } {
@@ -728,6 +821,7 @@ export class DigitalBrain {
     const dt = this.config.snn.dt;
     this.currentTime += dt;
     this.tickCount++;
+    if (this.ticksSinceRead < Number.MAX_SAFE_INTEGER) this.ticksSinceRead++;
 
     // 1. Get neuromodulation effects
     const effects = this.modulators.getEffects();

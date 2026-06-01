@@ -97,6 +97,8 @@ function connectWebSocket() {
       if (msg.type === 'state' || msg.type === 'init') {
         brainState = msg.data;
         updateDashboard(brainState);
+      } else if (msg.type === 'thought') {
+        addThought(msg.data);
       }
     } catch (e) {
       // Silently ignore parse errors
@@ -860,6 +862,45 @@ function addLog(type, message) {
   while (box.children.length > 50) {
     box.removeChild(box.lastChild);
   }
+}
+
+// ================================================================
+// STREAM OF CONSCIOUSNESS
+// ================================================================
+
+let lastThoughtText = null;
+
+function addThought(thought) {
+  const box = document.getElementById('thoughtBox');
+  if (!box || !thought) return;
+
+  // Skip empty / repeated consecutive thoughts to keep the stream meaningful.
+  const words = Array.isArray(thought.words) ? thought.words : [];
+  if (words.length === 0) return;
+  if (thought.text === lastThoughtText) return;
+  lastThoughtText = thought.text;
+
+  // Drop the placeholder on first real thought.
+  const empty = box.querySelector('.thought-empty');
+  if (empty) empty.remove();
+
+  const time = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const color = thought.color || '#94a3b8';
+
+  const entry = document.createElement('div');
+  entry.className = 'thought-entry';
+  entry.innerHTML =
+    `<span class="thought-time">${time}</span>` +
+    `<span class="thought-emoji">${thought.emoji || '🧠'}</span>` +
+    `<span class="thought-emotion" style="color:${color}">${(thought.emotion || '').toLowerCase()}</span>` +
+    `<span class="thought-words">${words.join(' · ')}</span>`;
+
+  box.insertBefore(entry, box.firstChild);
+
+  // Fade older entries and cap the list.
+  const entries = box.querySelectorAll('.thought-entry');
+  entries.forEach((el, i) => { el.style.opacity = Math.max(0.25, 1 - i * 0.12); });
+  while (box.children.length > 30) box.removeChild(box.lastChild);
 }
 
 // ================================================================

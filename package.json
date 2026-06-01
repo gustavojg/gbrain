@@ -1,7 +1,7 @@
 {
   "name": "digital-brain",
   "version": "1.0.0",
-  "description": "Cerebro humano digital bio-inspirado con SNNs, STDP y 7 regiones funcionales",
+  "description": "Bio-inspired digital human brain with SNNs, STDP and functional brain regions",
   "main": "dist/server.js",
   "type": "module",
   "engines": {
@@ -11,8 +11,9 @@
     "build": "tsc && cp -r src/dashboard dist/",
     "start": "node dist/server.js",
     "dev": "npx tsx src/server.ts",
-    "test": "npx tsx tests/snn.test.ts",
-    "test:integration": "npx tsx tests/integration.test.ts"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build:test": "tsc -p tsconfig.test.json",
+    "test": "npm run build:test && node dist-test/tests/language-loop.test.js && node dist-test/tests/bilingual-lexicon.test.js && node dist-test/tests/hippocampus.test.js && node dist-test/tests/region-activity.test.js && node dist-test/tests/region-drive.test.js"
   },
   "dependencies": {
     "ws": "^8.21.0"

@@ -172,10 +172,10 @@ export class DigitalBrain {
     this.config = { ...DEFAULT_BRAIN_CONFIG, ...config };
 
     console.log(`\n🧠 ═══════════════════════════════════════════`);
-    console.log(`   CEREBRO DIGITAL — Inicializando...`);
-    console.log(`   Neuronas totales: ${getTotalNeurons(this.config).toLocaleString()}`);
-    console.log(`   Memoria estimada: ${estimateMemoryUsage(this.config).toFixed(1)} MB`);
-    console.log(`   Regiones: ${Object.keys(this.config.regions).length}`);
+    console.log(`   DIGITAL BRAIN — Initializing...`);
+    console.log(`   Total neurons: ${getTotalNeurons(this.config).toLocaleString()}`);
+    console.log(`   Estimated memory: ${estimateMemoryUsage(this.config).toFixed(1)} MB`);
+    console.log(`   Regions: ${Object.keys(this.config.regions).length}`);
     console.log(`═══════════════════════════════════════════════\n`);
 
     // 1. Initialize spike bus
@@ -222,9 +222,9 @@ export class DigitalBrain {
     // 8. Configure connectome on the bus
     this.setupConnectome();
 
-    console.log(`✅ Cerebro inicializado correctamente.`);
+    console.log(`✅ Brain initialized successfully.`);
     console.log(`   Tick rate: ${this.config.tickRate} Hz`);
-    console.log(`   Consolidación cada: ${this.config.memory.consolidationIntervalMs / 1000}s\n`);
+    console.log(`   Consolidation every: ${this.config.memory.consolidationIntervalMs / 1000}s\n`);
   }
 
   /**
@@ -249,7 +249,7 @@ export class DigitalBrain {
     this.lexicon = new Lexicon(1000);
     seedSpanishLexicon(this.lexicon);
     seedEnglishLexicon(this.lexicon);
-    console.log(`  📚 Léxico inicializado (ES+EN): ${this.lexicon.size} palabras`);
+    console.log(`  📚 Lexicon initialized (ES+EN): ${this.lexicon.size} words`);
 
     // ── Instantiate regions with reduced sizes ──
     // Total: ~10K neurons (vs 50K before) → smooth performance
@@ -276,7 +276,7 @@ export class DigitalBrain {
     for (const [, region] of this.regions) {
       totalNeurons += region.neurons;
     }
-    console.log(`  🧩 ${this.regions.size} regiones instanciadas (${totalNeurons.toLocaleString()} neuronas reales)`);
+    console.log(`  🧩 ${this.regions.size} regions instantiated (${totalNeurons.toLocaleString()} real neurons)`);
   }
 
   /**
@@ -293,7 +293,7 @@ export class DigitalBrain {
       region.feedInput(packet.spikes, packet.timestamp);
     });
 
-    console.log(`  🧩 Región añadida: ${region.id} (${region.name})`);
+    console.log(`  🧩 Region added: ${region.id} (${region.name})`);
   }
 
   /**
@@ -305,7 +305,7 @@ export class DigitalBrain {
       this.bus.setDelay(conn.from, conn.to, conn.delay);
       this.bus.setWeight(conn.from, conn.to, conn.weight);
     }
-    console.log(`  🔗 Conectoma configurado: ${connections.length} conexiones`);
+    console.log(`  🔗 Connectome configured: ${connections.length} connections`);
   }
 
   // ================================================================
@@ -320,7 +320,7 @@ export class DigitalBrain {
    * @param height - Height
    */
   see(pixels: number[] | Float32Array | Uint8Array, width: number, height: number): PerceptionResult {
-    console.log(`👁️  Percibiendo imagen (${width}×${height})...`);
+    console.log(`👁️  Perceiving image (${width}×${height})...`);
 
     // Encode to spikes
     const spikes = this.visualEncoder.encode(pixels, width, height, this.config.snn.dt);
@@ -405,7 +405,7 @@ export class DigitalBrain {
   };
 
   read(text: string): PerceptionResult {
-    console.log(`📖 Leyendo: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`);
+    console.log(`📖 Reading: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`);
 
     // Encode the text in LEXICON SPACE (not with the TextEncoder's generic
     // hash, which produces vectors orthogonal to the engrams and leaves
@@ -437,7 +437,7 @@ export class DigitalBrain {
     }
 
     if (emotionalHits > 0) {
-      console.log(`  💭 ${emotionalHits} palabras emocionales detectadas`);
+      console.log(`  💭 ${emotionalHits} emotional words detected`);
     }
 
     // Novelty → norepinephrine
@@ -660,15 +660,15 @@ export class DigitalBrain {
    * Replay of hippocampus memories to strengthen the cortices.
    */
   sleep(): void {
-    console.log(`💤 Consolidación iniciada (t=${this.currentTime.toFixed(0)}ms)...`);
+    console.log(`💤 Consolidation started (t=${this.currentTime.toFixed(0)}ms)...`);
     this.lastConsolidation = this.currentTime;
 
     // Consolidation would be delegated to the hippocampus
     const hippocampus = this.regions.get('hippocampus');
     if (hippocampus) {
       const stats = this.consolidationEngine.consolidate([], this.regions);
-      console.log(`   Memorias replayed: ${stats.memoriesReplayed}`);
-      console.log(`   Sinapsis fortalecidas: ${stats.synapsesStrengthened}`);
+      console.log(`   Memories replayed: ${stats.memoriesReplayed}`);
+      console.log(`   Synapses strengthened: ${stats.synapsesStrengthened}`);
     }
 
     // Emit event

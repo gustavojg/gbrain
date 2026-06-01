@@ -68,7 +68,7 @@ const MIME_TYPES: Record<string, string> = {
 // INITIALIZATION
 // ================================================================
 
-console.log(`\n🌐 Iniciando servidor del Cerebro Digital...\n`);
+console.log(`\n🌐 Starting Digital Brain server...\n`);
 
 // Create the brain
 const brain = new DigitalBrain();
@@ -78,21 +78,21 @@ if (existsSync(STATE_PATH)) {
   try {
     const { loaded, skipped } = brain.loadState(STATE_PATH);
     console.log(
-      `💾 Estado restaurado desde ${STATE_PATH} — regiones: ${loaded.join(', ') || 'ninguna'}` +
-        (skipped.length ? ` | saltadas (dim. incompatibles): ${skipped.join(', ')}` : ''),
+      `💾 State restored from ${STATE_PATH} — regions: ${loaded.join(', ') || 'none'}` +
+        (skipped.length ? ` | skipped (incompatible dims): ${skipped.join(', ')}` : ''),
     );
   } catch (err) {
-    console.error(`⚠️  No se pudo restaurar el estado (${(err as Error).message}); arrancando en limpio.`);
+    console.error(`⚠️  Could not restore state (${(err as Error).message}); starting fresh.`);
   }
 } else {
-  console.log(`💾 Sin estado previo en ${STATE_PATH}; arrancando en limpio.`);
+  console.log(`💾 No previous state at ${STATE_PATH}; starting fresh.`);
 }
 
 // Warn if storage is ephemeral in production
 if (process.env.RAILWAY_ENVIRONMENT && !process.env.RAILWAY_VOLUME_MOUNT_PATH) {
   console.warn(
-    '⚠️  En Railway sin volumen montado: el estado se perderá en el próximo redeploy. ' +
-      'Monta un volumen (Railway → Service → Volumes) para que el aprendizaje persista.',
+    '⚠️  On Railway without a mounted volume: state will be lost on the next redeploy. ' +
+      'Mount a volume (Railway → Service → Volumes) so learning persists.',
   );
 }
 
@@ -103,9 +103,9 @@ function persist(reason: string): void {
   saving = true;
   try {
     brain.saveState(STATE_PATH);
-    console.log(`💾 Estado guardado (${reason}) → ${STATE_PATH}`);
+    console.log(`💾 State saved (${reason}) → ${STATE_PATH}`);
   } catch (err) {
-    console.error(`⚠️  Error guardando estado: ${(err as Error).message}`);
+    console.error(`⚠️  Error saving state: ${(err as Error).message}`);
   } finally {
     saving = false;
   }
@@ -299,7 +299,7 @@ const clients: Set<WebSocket> = new Set();
 
 wss.on('connection', (ws: WebSocket) => {
   clients.add(ws);
-  console.log(`🔌 WebSocket cliente conectado (total: ${clients.size})`);
+  console.log(`🔌 WebSocket client connected (total: ${clients.size})`);
 
   // Send initial state
   ws.send(JSON.stringify({
@@ -337,13 +337,13 @@ wss.on('connection', (ws: WebSocket) => {
           break;
       }
     } catch (err) {
-      console.error('❌ WS mensaje inválido:', err);
+      console.error('❌ Invalid WS message:', err);
     }
   });
 
   ws.on('close', () => {
     clients.delete(ws);
-    console.log(`🔌 WebSocket cliente desconectado (total: ${clients.size})`);
+    console.log(`🔌 WebSocket client disconnected (total: ${clients.size})`);
   });
 });
 
@@ -386,7 +386,7 @@ function startBrainLoop(): void {
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`\n🌐 ═══════════════════════════════════════════`);
-  console.log(`   Servidor HTTP+WS:  http://0.0.0.0:${PORT}`);
+  console.log(`   HTTP+WS server:    http://0.0.0.0:${PORT}`);
   console.log(`   Dashboard:         http://localhost:${PORT}/`);
   console.log(`   API State:         http://localhost:${PORT}/api/state`);
   console.log(`═══════════════════════════════════════════════\n`);
@@ -401,7 +401,7 @@ let shuttingDown = false;
 function shutdown(signal: string): void {
   if (shuttingDown) return;
   shuttingDown = true;
-  console.log(`\n🛑 ${signal} — guardando estado y deteniendo cerebro...`);
+  console.log(`\n🛑 ${signal} — saving state and stopping brain...`);
   clearInterval(tickTimer);
   clearInterval(broadcastTimer);
   clearInterval(autosaveTimer);

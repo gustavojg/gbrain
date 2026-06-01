@@ -1,36 +1,36 @@
 /**
- * ÁREA DE WERNICKE — Comprensión del Lenguaje
+ * WERNICKE'S AREA — Language Comprehension
  * =============================================
- * Modela el área de Wernicke (parte posterior del giro temporal superior,
- * área de Brodmann 22) del cerebro digital, responsable de la comprensión
- * del lenguaje hablado y escrito.
+ * Models Wernicke's area (posterior part of the superior temporal gyrus,
+ * Brodmann area 22) of the digital brain, responsible for the comprehension
+ * of spoken and written language.
  *
- * Base biológica:
- *   El área de Wernicke fue identificada por Carl Wernicke en 1874 al
- *   observar que lesiones en la parte posterior del giro temporal superior
- *   causaban "afasia receptiva": los pacientes podían hablar fluidamente
- *   pero no comprendían el lenguaje. Sus emisiones verbales eran
- *   gramaticalmente correctas pero semánticamente vacías ("ensalada de
- *   palabras").
+ * Biological basis:
+ *   Wernicke's area was identified by Carl Wernicke in 1874 upon
+ *   observing that lesions in the posterior part of the superior temporal gyrus
+ *   caused "receptive aphasia": patients could speak fluently
+ *   but did not comprehend language. Their verbal utterances were
+ *   grammatically correct but semantically empty ("word
+ *   salad").
  *
- *   Funciones modeladas:
- *   1. **Decodificación auditiva/visual → léxica**: Mapea patrones de
- *      activación (procedentes del tálamo) a entradas en el léxico mental.
- *      Modelo de acceso léxico por cohorte (Marslen-Wilson, 1987).
+ *   Modeled functions:
+ *   1. **Auditory/visual → lexical decoding**: Maps activation
+ *      patterns (coming from the thalamus) to entries in the mental lexicon.
+ *      Cohort model of lexical access (Marslen-Wilson, 1987).
  *
- *   2. **Comprensión semántica**: Extrae significado de secuencias de
- *      patrones léxicos activados. Las neuronas de Wernicke responden
- *      selectivamente a combinaciones semánticas (no solo palabras
- *      individuales).
+ *   2. **Semantic comprehension**: Extracts meaning from sequences of
+ *      activated lexical patterns. Wernicke's neurons respond
+ *      selectively to semantic combinations (not just individual
+ *      words).
  *
- *   3. **Aprendizaje léxico**: Nuevas palabras se incorporan al léxico
- *      compartido, creando nuevos engramas neurales en el lóbulo temporal.
+ *   3. **Lexical learning**: New words are incorporated into the shared
+ *      lexicon, creating new neural engrams in the temporal lobe.
  *
- *   Conexiones:
- *   - Recibe: spikes del tálamo (señales auditivas/visuales procesadas)
- *   - Envía: representaciones semánticas a la corteza prefrontal y al
- *     área de Broca (vía fascículo arqueado)
- *   - Comparte: léxico con el área de Broca
+ *   Connections:
+ *   - Receives: spikes from the thalamus (processed auditory/visual signals)
+ *   - Sends: semantic representations to the prefrontal cortex and to
+ *     Broca's area (via the arcuate fasciculus)
+ *   - Shares: lexicon with Broca's area
  */
 
 import { BrainRegion } from '../../core/brain-region.js';
@@ -38,11 +38,11 @@ import type { ModulationEffects } from '../../core/neuromodulators/modulator-sys
 import { Lexicon, type LexiconMatch } from './lexicon.js';
 
 /**
- * Piso de activación para el k-WTA. Los "potenciales" aquí son sumas de
- * pesos adimensionales (~0 en reposo), no mV de membrana. Sin este piso el
- * gate compararía contra `_modulatedThreshold` (−55 mV), siempre pasaría y
- * el k-WTA encendería exactamente k neuronas por tick → actividad constante
- * y falsa. Con el piso, en reposo (sin drive) la región queda a 0%.
+ * Activation floor for the k-WTA. The "potentials" here are sums of
+ * dimensionless weights (~0 at rest), not membrane mV. Without this floor the
+ * gate would compare against `_modulatedThreshold` (−55 mV), always pass, and
+ * the k-WTA would fire exactly k neurons per tick → constant and false
+ * activity. With the floor, at rest (no drive) the region stays at 0%.
  */
 const ACTIVATION_FLOOR = 1e-3;
 
@@ -51,84 +51,84 @@ const ACTIVATION_FLOOR = 1e-3;
 // ==================================================================
 
 /**
- * Resultado de la comprensión de un patrón de spikes.
+ * Result of comprehending a spike pattern.
  *
- * Base biológica:
- *   Cada resultado representa una activación léxica candidata,
- *   análoga a la cohorte de candidatos léxicos que se activan
- *   parcialmente al procesar una señal de habla (modelo de cohorte).
+ * Biological basis:
+ *   Each result represents a candidate lexical activation,
+ *   analogous to the cohort of lexical candidates that are
+ *   partially activated when processing a speech signal (cohort model).
  */
 export interface ComprehensionResult {
-  /** Palabra identificada en el léxico */
+  /** Word identified in the lexicon */
   word: string;
-  /** Grado de similitud con el patrón de entrada (0.0–1.0) */
+  /** Degree of similarity with the input pattern (0.0–1.0) */
   similarity: number;
 }
 
 /**
- * Representación semántica producida por el procesamiento de Wernicke.
+ * Semantic representation produced by Wernicke's processing.
  */
 export interface SemanticRepresentation {
-  /** Patrón neural de la representación semántica */
+  /** Neural pattern of the semantic representation */
   pattern: Float32Array;
-  /** Palabras comprendidas y sus similitudes */
+  /** Comprehended words and their similarities */
   comprehendedWords: ComprehensionResult[];
-  /** Confianza global de la comprensión (0.0–1.0) */
+  /** Overall comprehension confidence (0.0–1.0) */
   confidence: number;
 }
 
 // ==================================================================
-// Clase WernickeArea
+// WernickeArea class
 // ==================================================================
 
 /**
- * Área de Wernicke — Comprensión lingüística del cerebro digital.
+ * Wernicke's area — Linguistic comprehension of the digital brain.
  *
- * Procesa patrones de spikes recibidos del tálamo (señales auditivas/
- * visuales preprocesadas) y los mapea a representaciones semánticas
- * mediante acceso léxico por similitud. Comparte un léxico neural
- * con el área de Broca.
+ * Processes spike patterns received from the thalamus (preprocessed
+ * auditory/visual signals) and maps them to semantic representations
+ * through lexical access by similarity. Shares a neural lexicon
+ * with Broca's area.
  *
- * Base biológica:
- *   Las neuronas de Wernicke se organizan tonotópicamente y responden
- *   selectivamente a categorías fonéticas y combinaciones semánticas.
- *   La comprensión ocurre en ~200ms (componente N400 del ERP para
- *   violaciones semánticas). La red SNN interna modela las columnas
- *   corticales del giro temporal superior con competencia lateral.
+ * Biological basis:
+ *   Wernicke's neurons are organized tonotopically and respond
+ *   selectively to phonetic categories and semantic combinations.
+ *   Comprehension occurs in ~200ms (N400 ERP component for
+ *   semantic violations). The internal SNN models the cortical
+ *   columns of the superior temporal gyrus with lateral competition.
  */
 export class WernickeArea extends BrainRegion {
   /**
-   * Léxico compartido con el área de Broca.
+   * Lexicon shared with Broca's area.
    *
-   * Biología: El léxico mental es un almacén compartido en el lóbulo
-   * temporal, accedido por la vía ventral (Wernicke → comprensión) y
-   * la vía dorsal (Broca → producción).
+   * Biology: The mental lexicon is a shared store in the temporal
+   * lobe, accessed via the ventral pathway (Wernicke → comprehension) and
+   * the dorsal pathway (Broca → production).
    */
   private readonly lexicon: Lexicon;
 
   /**
-   * Última representación semántica producida.
-   * Se mantiene para que otras regiones puedan consultarla.
+   * Last semantic representation produced.
+   * Kept so that other regions can query it.
    */
   private lastSemanticOutput: SemanticRepresentation | null = null;
 
   /**
-   * Umbral mínimo de similitud para considerar una coincidencia léxica válida.
+   * Minimum similarity threshold to consider a lexical match valid.
    *
-   * Biología: Modela el umbral de activación léxica. Patrones que no
-   * superan este umbral no activan ningún engrama léxico (palabra
-   * desconocida o ruido).
+   * Biology: Models the lexical activation threshold. Patterns that do not
+   * exceed this threshold do not activate any lexical engram (unknown
+   * word or noise).
    */
   private readonly comprehensionThreshold: number = 0.15;
 
   /**
-   * Crea el Área de Wernicke del cerebro digital.
+   * Creates Wernicke's area of the digital brain.
    *
-   * Biología: El área de Wernicke contiene ~150 millones de neuronas.
-   * Modelamos 5.000 neuronas con 5.000 entradas, reflejando la estructura
-   * columnar del giro temporal superior.
+   * Biology: Wernicke's area contains ~150 million neurons.
+   * We model 5,000 neurons with 5,000 inputs, reflecting the columnar
+   * structure of the superior temporal gyrus.
    *
-   * @param lexicon - Léxico compartido (inyectado para compartir con Broca)
+   * @param lexicon - Shared lexicon (injected to share with Broca)
    */
   constructor(lexicon: Lexicon, neuronCount: number = 5000, inputCount: number = 5000) {
     super(
@@ -141,34 +141,34 @@ export class WernickeArea extends BrainRegion {
   }
 
   // ----------------------------------------------------------------
-  // Comprensión Lingüística
+  // Linguistic Comprehension
   // ----------------------------------------------------------------
 
   /**
-   * Comprende un patrón de spikes mapeándolo a las entradas léxicas más cercanas.
+   * Comprehends a spike pattern by mapping it to the closest lexical entries.
    *
-   * Base biológica:
-   *   Modela el acceso léxico auditivo/visual. Al recibir un patrón de
-   *   activación (ej: representación acústica procesada por la corteza
-   *   auditiva), Wernicke lo compara con todos los engramas léxicos
-   *   almacenados. Los más similares se activan formando una "cohorte"
-   *   de candidatos (modelo de cohorte, Marslen-Wilson 1987). La
-   *   competencia lateral resuelve la ambigüedad seleccionando la
-   *   coincidencia más fuerte.
+   * Biological basis:
+   *   Models auditory/visual lexical access. Upon receiving an
+   *   activation pattern (e.g.: acoustic representation processed by the
+   *   auditory cortex), Wernicke compares it against all the stored lexical
+   *   engrams. The most similar ones are activated, forming a "cohort"
+   *   of candidates (cohort model, Marslen-Wilson 1987). Lateral
+   *   competition resolves the ambiguity by selecting the
+   *   strongest match.
    *
-   *   El efecto de frecuencia léxica está integrado en el método
-   *   findClosest() del léxico (palabras frecuentes tienen ventaja).
+   *   The lexical frequency effect is built into the lexicon's
+   *   findClosest() method (frequent words have an advantage).
    *
-   * @param inputSpikes - Patrón de spikes a comprender
-   * @returns Array de palabras candidatas con su similitud, ordenadas descendentemente
+   * @param inputSpikes - Spike pattern to comprehend
+   * @returns Array of candidate words with their similarity, ordered descending
    */
   comprehend(inputSpikes: Float32Array): ComprehensionResult[] {
     if (this.lexicon.size === 0) return [];
 
-    // Buscar las coincidencias más cercanas en el léxico
+    // Find the closest matches in the lexicon
     const matches: LexiconMatch[] = this.lexicon.findClosest(inputSpikes, 5);
 
-    // Filtrar por umbral de comprensión
+    // Filter by comprehension threshold
     return matches
       .filter(m => m.similarity >= this.comprehensionThreshold)
       .map(m => ({
@@ -178,77 +178,77 @@ export class WernickeArea extends BrainRegion {
   }
 
   /**
-   * Aprende una nueva palabra agregándola al léxico compartido.
+   * Learns a new word by adding it to the shared lexicon.
    *
-   * Base biológica:
-   *   El aprendizaje léxico ocurre cuando un patrón de activación nuevo
-   *   (sin coincidencia suficiente en el léxico existente) se presenta
-   *   repetidamente y se asocia con un significado. En el cerebro, esto
-   *   involucra la formación de un nuevo engrama neural en el lóbulo
-   *   temporal, inicialmente dependiente del hipocampo y gradualmente
-   *   consolidado en neocorteza (complementary learning systems theory,
+   * Biological basis:
+   *   Lexical learning occurs when a new activation pattern
+   *   (without a sufficient match in the existing lexicon) is presented
+   *   repeatedly and associated with a meaning. In the brain, this
+   *   involves the formation of a new neural engram in the temporal
+   *   lobe, initially dependent on the hippocampus and gradually
+   *   consolidated in the neocortex (complementary learning systems theory,
    *   McClelland et al., 1995).
    *
-   * @param word - Palabra a aprender
-   * @param pattern - Patrón de activación neural asociado
+   * @param word - Word to learn
+   * @param pattern - Associated neural activation pattern
    */
   learnWord(word: string, pattern: Float32Array): void {
     this.lexicon.add(word, pattern);
   }
 
   /**
-   * Retorna la última representación semántica producida.
+   * Returns the last semantic representation produced.
    *
-   * @returns Representación semántica o null si no se ha procesado nada
+   * @returns Semantic representation or null if nothing has been processed
    */
   getLastSemanticOutput(): SemanticRepresentation | null {
     return this.lastSemanticOutput;
   }
 
   /**
-   * Retorna una referencia de solo lectura al léxico compartido.
+   * Returns a read-only reference to the shared lexicon.
    */
   getLexicon(): Lexicon {
     return this.lexicon;
   }
 
   // ----------------------------------------------------------------
-  // processInput — Ciclo de comprensión lingüística
+  // processInput — Linguistic comprehension cycle
   // ----------------------------------------------------------------
 
   /**
-   * Procesa un paso de simulación del área de Wernicke.
+   * Processes one simulation step of Wernicke's area.
    *
-   * Base biológica:
-   *   El ciclo de comprensión de Wernicke opera en ~200ms y consiste en:
+   * Biological basis:
+   *   Wernicke's comprehension cycle operates in ~200ms and consists of:
    *
-   *   1. **Recepción**: Recibir spikes del tálamo (señales auditivas/
-   *      visuales preprocesadas por cortezas sensoriales primarias)
+   *   1. **Reception**: Receive spikes from the thalamus (auditory/
+   *      visual signals preprocessed by primary sensory cortices)
    *
-   *   2. **Acceso léxico**: Mapear el patrón de entrada a candidatos
-   *      léxicos mediante comparación por similitud (cohorte)
+   *   2. **Lexical access**: Map the input pattern to lexical
+   *      candidates through similarity comparison (cohort)
    *
-   *   3. **Procesamiento SNN**: Pasar los spikes por la red neural
-   *      local para producir una representación semántica distribuida.
-   *      La competencia k-WTA en la SNN modela la selección del
-   *      candidato léxico ganador.
+   *   3. **SNN processing**: Pass the spikes through the local neural
+   *      network to produce a distributed semantic representation.
+   *      The k-WTA competition in the SNN models the selection of the
+   *      winning lexical candidate.
    *
-   *   4. **Integración semántica**: Combinar la entrada con las
-   *      coincidencias léxicas para producir una representación semántica
-   *      unificada que se envía a la corteza prefrontal y al área de Broca.
+   *   4. **Semantic integration**: Combine the input with the
+   *      lexical matches to produce a unified semantic representation
+   *      that is sent to the prefrontal cortex and Broca's area.
    *
-   * @param spikes - Vector de spikes de entrada del tálamo
-   * @param modulationEffects - Efectos de neuromodulación actuales
-   * @returns Vector de spikes de salida (representación semántica)
+   * @param spikes - Input spike vector from the thalamus
+   * @param modulationEffects - Current neuromodulation effects
+   * @returns Output spike vector (semantic representation)
    */
   processInput(
     spikes: Float32Array,
     modulationEffects: ModulationEffects
   ): Float32Array {
-    // 1. Acceso léxico: comprender el patrón de entrada
+    // 1. Lexical access: comprehend the input pattern
     const comprehended = this.comprehend(spikes);
 
-    // 2. Computar activaciones de la SNN local
+    // 2. Compute activations of the local SNN
     const activations = new Float32Array(this.neuronCount);
     const inputLen = Math.min(spikes.length, this.inputCount);
 
@@ -260,21 +260,21 @@ export class WernickeArea extends BrainRegion {
         sum += this.weights[baseOffset + j] * spikes[j];
       }
 
-      // Modulación atencional: la acetilcolina amplifica señales lingüísticas
+      // Attentional modulation: acetylcholine amplifies linguistic signals
       sum *= modulationEffects.attentionGain;
 
-      // Integración LIF simplificada
+      // Simplified LIF integration
       this.potentials[n] += sum;
-      this.potentials[n] *= 0.93; // Leak temporal
+      this.potentials[n] *= 0.93; // Temporal leak
 
       activations[n] = this.potentials[n];
     }
 
-    // 3. Competencia k-WTA: selección de representación ganadora
+    // 3. k-WTA competition: selection of the winning representation
     const k = Math.max(1, Math.floor(this.neuronCount * this.sparsity));
     const outputSpikes = new Float32Array(this.neuronCount);
 
-    // Encontrar el k-ésimo umbral
+    // Find the k-th threshold
     const sortedActivations = new Float32Array(activations);
     sortedActivations.sort();
     const kwtaThreshold = sortedActivations[this.neuronCount - k];
@@ -285,13 +285,13 @@ export class WernickeArea extends BrainRegion {
       }
     }
 
-    // 4. Actualizar estado de spikes
+    // 4. Update spike state
     this.spikes.set(outputSpikes);
 
-    // 5. Construir representación semántica
+    // 5. Build the semantic representation
     let confidence = 0;
     if (comprehended.length > 0) {
-      // Confianza basada en la mejor coincidencia léxica
+      // Confidence based on the best lexical match
       confidence = comprehended[0].similarity;
     }
 
@@ -301,8 +301,8 @@ export class WernickeArea extends BrainRegion {
       confidence,
     };
 
-    // 6. Aprendizaje Hebbiano: reforzar las conexiones que contribuyeron
-    //    a la comprensión exitosa
+    // 6. Hebbian learning: strengthen the connections that contributed
+    //    to successful comprehension
     if (confidence > 0.3 && modulationEffects.learningRateMultiplier > 0) {
       this.hebbianUpdate(spikes, outputSpikes);
     }
@@ -311,16 +311,16 @@ export class WernickeArea extends BrainRegion {
   }
 
   /**
-   * Actualización Hebbiana de pesos sinápticos para aprendizaje léxico.
+   * Hebbian update of synaptic weights for lexical learning.
    *
-   * Base biológica:
-   *   Las sinapsis en el giro temporal superior se fortalecen cuando
-   *   hay correlación entre el patrón de entrada (señal acústica/visual)
-   *   y la activación de neuronas que representan la palabra reconocida.
-   *   Esto refina progresivamente la representación léxica (tuning).
+   * Biological basis:
+   *   The synapses in the superior temporal gyrus are strengthened when
+   *   there is correlation between the input pattern (acoustic/visual signal)
+   *   and the activation of neurons that represent the recognized word.
+   *   This progressively refines the lexical representation (tuning).
    *
-   * @param preSpikes - Spikes de entrada (presinápticos)
-   * @param postSpikes - Spikes de salida (postsinápticos)
+   * @param preSpikes - Input spikes (presynaptic)
+   * @param postSpikes - Output spikes (postsynaptic)
    */
   private hebbianUpdate(preSpikes: Float32Array, postSpikes: Float32Array): void {
     const lr = this._modulatedLearningRate * 0.005;
@@ -335,7 +335,7 @@ export class WernickeArea extends BrainRegion {
           this.weights[baseOffset + j] += lr * preSpikes[j];
         }
 
-        // Clamp de pesos
+        // Weight clamp
         if (this.weights[baseOffset + j] > 1.0) {
           this.weights[baseOffset + j] = 1.0;
         } else if (this.weights[baseOffset + j] < 0) {

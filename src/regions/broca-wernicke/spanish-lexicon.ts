@@ -1,98 +1,98 @@
 /**
- * LÉXICO ESPAÑOL — Semilla de vocabulario inicial
+ * SPANISH LEXICON — Initial vocabulary seed
  * =================================================
- * Puebla el léxico neural con ~190 palabras fundamentales del español,
- * organizadas por categoría semántica.
+ * Populates the neural lexicon with ~190 fundamental Spanish words,
+ * organized by semantic category.
  *
- * Base biológica:
- *   El léxico mental del hablante nativo contiene ~60.000 palabras, pero
- *   un núcleo de ~2.000 palabras cubre el ~80% del uso cotidiano (ley de
- *   Zipf). Este módulo siembra las ~190 más esenciales como punto de
- *   partida, análogo a cómo un niño adquiere su vocabulario temprano:
- *   primero los pronombres, saludos, emociones básicas y palabras
- *   concretas de alta frecuencia.
+ * Biological basis:
+ *   The native speaker's mental lexicon contains ~60,000 words, but
+ *   a core of ~2,000 words covers ~80% of everyday use (Zipf's
+ *   law). This module seeds the ~190 most essential ones as a starting
+ *   point, analogous to how a child acquires its early vocabulary:
+ *   first the pronouns, greetings, basic emotions, and concrete
+ *   high-frequency words.
  *
- *   Los patrones se generan con hashing de n-gramas de caracteres.
- *   Esto produce representaciones distribuidas donde palabras que
- *   comparten sub-cadenas (ej: "triste"/"tristeza", "pensar"/"pensamiento")
- *   tienen patrones parcialmente superpuestos — modelando el priming
- *   fonológico/ortográfico observado en el acceso léxico humano
+ *   The patterns are generated with character n-gram hashing.
+ *   This produces distributed representations where words that
+ *   share substrings (e.g.: "triste"/"tristeza", "pensar"/"pensamiento")
+ *   have partially overlapping patterns — modeling the
+ *   phonological/orthographic priming observed in human lexical access
  *   (Marslen-Wilson, 1987; Coltheart et al., 2001).
  */
 
 import { Lexicon } from './lexicon.js';
 
 // ==================================================================
-// Generador de patrones deterministas por n-gramas
+// Deterministic n-gram pattern generator
 // ==================================================================
 
 /**
- * Función hash djb2 (Daniel J. Bernstein).
- * Genera un hash entero determinista para una cadena.
+ * djb2 hash function (Daniel J. Bernstein).
+ * Generates a deterministic integer hash for a string.
  *
- * Base biológica:
- *   Emula la transformación no lineal que convierte una señal
- *   acústica/visual en un patrón de activación cortical. Distintas
- *   entradas producen patrones distintos, pero entradas similares
- *   (n-gramas compartidos) activan posiciones superpuestas.
+ * Biological basis:
+ *   Emulates the nonlinear transformation that converts an
+ *   acoustic/visual signal into a cortical activation pattern. Different
+ *   inputs produce different patterns, but similar inputs
+ *   (shared n-grams) activate overlapping positions.
  *
- * @param str - Cadena a hashear
- * @returns Entero de 32 bits (puede ser negativo)
+ * @param str - String to hash
+ * @returns 32-bit integer (may be negative)
  */
 function hashCode(str: string): number {
   let hash = 5381;
   for (let i = 0; i < str.length; i++) {
-    // hash * 33 + charCode — variante clásica djb2
+    // hash * 33 + charCode — classic djb2 variant
     hash = ((hash << 5) + hash + str.charCodeAt(i)) | 0;
   }
   return hash;
 }
 
 /**
- * Convierte una palabra en un patrón de activación neural distribuido
- * usando hashing de n-gramas de caracteres (uni-, bi- y tri-gramas).
+ * Converts a word into a distributed neural activation pattern
+ * using character n-gram hashing (uni-, bi-, and tri-grams).
  *
- * Base biológica:
- *   El sistema de lectura humano descompone las palabras en unidades
- *   sub-léxicas (grafemas, bigramas abiertos, etc.) que se procesan
- *   en paralelo en el área visual de la forma de las palabras (VWFA,
- *   Cohen et al., 2000). Cada sub-unidad activa un subconjunto de
- *   neuronas. Palabras que comparten sub-unidades (ej: "casa"/"casado")
- *   activan neuronas solapadas → patrones parcialmente similares.
+ * Biological basis:
+ *   The human reading system decomposes words into sub-lexical
+ *   units (graphemes, open bigrams, etc.) that are processed
+ *   in parallel in the visual word form area (VWFA,
+ *   Cohen et al., 2000). Each sub-unit activates a subset of
+ *   neurons. Words that share sub-units (e.g.: "casa"/"casado")
+ *   activate overlapping neurons → partially similar patterns.
  *
- *   Pesos de activación:
- *   - Unigramas: 0.3 (activación débil, poca especificidad)
- *   - Bigramas:  0.5 (activación media, captura secuencia local)
- *   - Trigramas: 0.7 (activación fuerte, alta especificidad)
+ *   Activation weights:
+ *   - Unigrams: 0.3 (weak activation, low specificity)
+ *   - Bigrams:  0.5 (medium activation, captures local sequence)
+ *   - Trigrams: 0.7 (strong activation, high specificity)
  *
- * @param word - Palabra a codificar
- * @param size - Dimensionalidad del patrón (default: 5000)
- * @returns Patrón de activación normalizado [0, 1]
+ * @param word - Word to encode
+ * @param size - Dimensionality of the pattern (default: 5000)
+ * @returns Normalized activation pattern [0, 1]
  */
 export function wordToPattern(word: string, size: number = 5000): Float32Array {
   const pattern = new Float32Array(size);
 
   for (let i = 0; i < word.length; i++) {
-    // Unigrama: activación débil por cada carácter individual
+    // Unigram: weak activation for each individual character
     const h1 = hashCode(word[i]) % size;
     pattern[Math.abs(h1)] += 0.3;
 
-    // Bigrama: captura transiciones entre caracteres adyacentes
+    // Bigram: captures transitions between adjacent characters
     if (i < word.length - 1) {
       const h2 = hashCode(word.substring(i, i + 2)) % size;
       pattern[Math.abs(h2)] += 0.5;
     }
 
-    // Trigrama: captura contexto local más amplio
+    // Trigram: captures wider local context
     if (i < word.length - 2) {
       const h3 = hashCode(word.substring(i, i + 3)) % size;
       pattern[Math.abs(h3)] += 0.7;
     }
   }
 
-  // Normalización: escalar al rango [0, 1]
-  // Biología: homeostasis sináptica — las neuronas regulan su activación
-  // para mantenerse en un rango funcional (Turrigiano, 2008)
+  // Normalization: scale to the range [0, 1]
+  // Biology: synaptic homeostasis — neurons regulate their activation
+  // to stay within a functional range (Turrigiano, 2008)
   let max = 0;
   for (let j = 0; j < size; j++) {
     if (pattern[j] > max) max = pattern[j];
@@ -107,17 +107,17 @@ export function wordToPattern(word: string, size: number = 5000): Float32Array {
 }
 
 // ==================================================================
-// Vocabulario semilla organizado por categoría semántica
+// Seed vocabulary organized by semantic category
 // ==================================================================
 
 /**
- * Saludos y expresiones sociales (15 entradas).
+ * Greetings and social expressions (15 entries).
  *
- * Base biológica:
- *   Las fórmulas sociales se almacenan como unidades holísticas en la
- *   memoria procedimental (ganglios basales), no se componen palabra
- *   por palabra. Por eso los afásicos de Broca a menudo retienen
- *   saludos automáticos.
+ * Biological basis:
+ *   Social formulas are stored as holistic units in
+ *   procedural memory (basal ganglia); they are not composed word
+ *   by word. That is why Broca's aphasics often retain
+ *   automatic greetings.
  */
 const SALUDOS: readonly string[] = [
   'hola', 'adiós', 'buenos', 'días', 'noches',
@@ -126,13 +126,13 @@ const SALUDOS: readonly string[] = [
 ];
 
 /**
- * Pronombres personales y clíticos (12 entradas).
+ * Personal pronouns and clitics (12 entries).
  *
- * Base biológica:
- *   Los pronombres son palabras de clase cerrada, procesados
- *   principalmente en el hemisferio izquierdo (área de Broca).
- *   Su frecuencia extremadamente alta los convierte en los primeros
- *   ítems léxicos adquiridos (junto con determinantes).
+ * Biological basis:
+ *   Pronouns are closed-class words, processed
+ *   mainly in the left hemisphere (Broca's area).
+ *   Their extremely high frequency makes them the first
+ *   lexical items acquired (along with determiners).
  */
 const PRONOMBRES: readonly string[] = [
   'yo', 'tú', 'él', 'ella', 'nosotros', 'ellos',
@@ -140,13 +140,13 @@ const PRONOMBRES: readonly string[] = [
 ];
 
 /**
- * Vocabulario emocional (25 entradas).
+ * Emotional vocabulary (25 entries).
  *
- * Base biológica:
- *   Las palabras emocionales tienen acceso privilegiado al léxico:
- *   se reconocen más rápido y se recuerdan mejor (efecto de emocionalidad,
- *   Kensinger & Corkin, 2003). Esto se debe a la conexión directa
- *   entre la amígdala y las áreas de procesamiento léxico temporal.
+ * Biological basis:
+ *   Emotional words have privileged access to the lexicon:
+ *   they are recognized faster and remembered better (emotionality effect,
+ *   Kensinger & Corkin, 2003). This is due to the direct connection
+ *   between the amygdala and the temporal lexical processing areas.
  */
 const EMOCIONES: readonly string[] = [
   'feliz', 'triste', 'miedo', 'amor', 'odio',
@@ -157,13 +157,13 @@ const EMOCIONES: readonly string[] = [
 ];
 
 /**
- * Verbos de acción y cognición (25 entradas).
+ * Action and cognition verbs (25 entries).
  *
- * Base biológica:
- *   Los verbos de acción activan la corteza motora de forma somatotópica
- *   (Hauk et al., 2004): "caminar" activa la zona de las piernas,
- *   "escribir" la zona de las manos. Los verbos cognitivos ("pensar",
- *   "recordar") activan más la corteza prefrontal.
+ * Biological basis:
+ *   Action verbs activate the motor cortex somatotopically
+ *   (Hauk et al., 2004): "caminar" activates the leg area,
+ *   "escribir" the hand area. Cognitive verbs ("pensar",
+ *   "recordar") activate the prefrontal cortex more.
  */
 const ACCIONES: readonly string[] = [
   'ver', 'mirar', 'escuchar', 'oír', 'hablar',
@@ -174,13 +174,13 @@ const ACCIONES: readonly string[] = [
 ];
 
 /**
- * Conceptos del sistema nervioso (15 entradas).
+ * Nervous system concepts (15 entries).
  *
- * Base biológica:
- *   Vocabulario meta-cognitivo: palabras que el propio sistema cerebral
- *   puede usar para describirse a sí mismo. En un cerebro digital,
- *   estas palabras son especialmente relevantes para la introspección
- *   y el auto-reporte de estados internos.
+ * Biological basis:
+ *   Meta-cognitive vocabulary: words that the brain system itself
+ *   can use to describe itself. In a digital brain,
+ *   these words are especially relevant for introspection
+ *   and self-reporting of internal states.
  */
 const CONCEPTOS_CEREBRALES: readonly string[] = [
   'cerebro', 'neurona', 'sinapsis', 'memoria', 'recuerdo',
@@ -189,13 +189,13 @@ const CONCEPTOS_CEREBRALES: readonly string[] = [
 ];
 
 /**
- * Adjetivos descriptivos (20 entradas).
+ * Descriptive adjectives (20 entries).
  *
- * Base biológica:
- *   Los adjetivos se representan en el lóbulo temporal anterior como
- *   dimensiones de un espacio semántico continuo (Patterson et al., 2007).
- *   Los pares antónimos (grande/pequeño, rápido/lento) comparten regiones
- *   corticales cercanas, diferenciándose en la polaridad del eje semántico.
+ * Biological basis:
+ *   Adjectives are represented in the anterior temporal lobe as
+ *   dimensions of a continuous semantic space (Patterson et al., 2007).
+ *   Antonym pairs (grande/pequeño, rápido/lento) share nearby
+ *   cortical regions, differing in the polarity of the semantic axis.
  */
 const DESCRIPTIVOS: readonly string[] = [
   'grande', 'pequeño', 'rápido', 'lento', 'nuevo',
@@ -205,13 +205,13 @@ const DESCRIPTIVOS: readonly string[] = [
 ];
 
 /**
- * Conectores y preposiciones (15 entradas).
+ * Connectors and prepositions (15 entries).
  *
- * Base biológica:
- *   Las palabras funcionales (conectores, preposiciones) se procesan
- *   predominantemente en el área de Broca (BA44/45) y la corteza
- *   prefrontal inferior izquierda. Los afásicos de Broca tienen
- *   dificultades específicas con estas palabras (agramatismo).
+ * Biological basis:
+ *   Function words (connectors, prepositions) are processed
+ *   predominantly in Broca's area (BA44/45) and the left
+ *   inferior prefrontal cortex. Broca's aphasics have
+ *   specific difficulties with these words (agrammatism).
  */
 const CONECTORES: readonly string[] = [
   'y', 'o', 'pero', 'porque', 'cuando',
@@ -220,13 +220,13 @@ const CONECTORES: readonly string[] = [
 ];
 
 /**
- * Palabras interrogativas (8 entradas).
+ * Interrogative words (8 entries).
  *
- * Base biológica:
- *   Las preguntas involucran una prosodia especial (curva entonacional
- *   ascendente) procesada en el hemisferio derecho. Las palabras
- *   interrogativas en español llevan tilde diacrítica que las distingue
- *   de sus homófonos relativos (qué/que, cómo/como).
+ * Biological basis:
+ *   Questions involve a special prosody (rising intonational
+ *   contour) processed in the right hemisphere. Interrogative
+ *   words in Spanish carry a diacritical accent that distinguishes them
+ *   from their relative homophones (qué/que, cómo/como).
  */
 const PREGUNTAS: readonly string[] = [
   'qué', 'cómo', 'cuándo', 'dónde', 'quién',
@@ -234,15 +234,15 @@ const PREGUNTAS: readonly string[] = [
 ];
 
 /**
- * Sustantivos concretos de alta frecuencia (25 entradas).
+ * High-frequency concrete nouns (25 entries).
  *
- * Base biológica:
- *   Los sustantivos concretos ("casa", "mano", "sol") tienen una
- *   ventaja de concretud: se procesan más rápido y se recuerdan
- *   mejor que los abstractos (Paivio, 1971), porque activan
- *   representaciones tanto verbales como imagénicas (teoría de
- *   doble codificación). Se distribuyen en la corteza temporal
- *   ventral y lateral.
+ * Biological basis:
+ *   Concrete nouns ("casa", "mano", "sol") have a
+ *   concreteness advantage: they are processed faster and remembered
+ *   better than abstract ones (Paivio, 1971), because they activate
+ *   both verbal and imagistic representations (dual
+ *   coding theory). They are distributed across the ventral and
+ *   lateral temporal cortex.
  */
 const SUSTANTIVOS: readonly string[] = [
   'persona', 'casa', 'mundo', 'tiempo', 'vida',
@@ -253,13 +253,13 @@ const SUSTANTIVOS: readonly string[] = [
 ];
 
 /**
- * Respuestas cortas y fillers discursivos (10 entradas).
+ * Short responses and discourse fillers (10 entries).
  *
- * Base biológica:
- *   Los fillers ("mmm", "ah") y respuestas automáticas ("sí", "no")
- *   se procesan como unidades motoras sobreaprendidas en los ganglios
- *   basales. Sobreviven incluso a afasias graves, lo que indica
- *   almacenamiento subcortical redundante.
+ * Biological basis:
+ *   Fillers ("mmm", "ah") and automatic responses ("sí", "no")
+ *   are processed as overlearned motor units in the basal
+ *   ganglia. They survive even severe aphasias, which indicates
+ *   redundant subcortical storage.
  */
 const RESPUESTAS: readonly string[] = [
   'sí', 'no', 'tal vez', 'claro', 'bien',
@@ -267,13 +267,13 @@ const RESPUESTAS: readonly string[] = [
 ];
 
 /**
- * Adverbios y expresiones temporales (10 entradas).
+ * Adverbs and temporal expressions (10 entries).
  *
- * Base biológica:
- *   El procesamiento temporal involucra el cerebelo y la corteza
- *   prefrontal dorsolateral. Las palabras temporales anclan los
- *   eventos en la línea temporal subjetiva, esencial para la
- *   memoria episódica y la planificación.
+ * Biological basis:
+ *   Temporal processing involves the cerebellum and the
+ *   dorsolateral prefrontal cortex. Temporal words anchor
+ *   events on the subjective timeline, essential for
+ *   episodic memory and planning.
  */
 const TIEMPO: readonly string[] = [
   'hoy', 'ayer', 'mañana', 'ahora', 'antes',
@@ -281,14 +281,14 @@ const TIEMPO: readonly string[] = [
 ];
 
 /**
- * Números cardinales básicos (10 entradas).
+ * Basic cardinal numbers (10 entries).
  *
- * Base biológica:
- *   Los números se procesan en el surco intraparietal (Dehaene, 1997)
- *   con una representación logarítmica de magnitud (la distancia
- *   representacional entre 1 y 2 es mayor que entre 8 y 9).
- *   Las palabras numéricas son la interfaz entre el sistema lingüístico
- *   y el sistema de magnitud numérica.
+ * Biological basis:
+ *   Numbers are processed in the intraparietal sulcus (Dehaene, 1997)
+ *   with a logarithmic representation of magnitude (the
+ *   representational distance between 1 and 2 is greater than between 8 and 9).
+ *   Number words are the interface between the linguistic system
+ *   and the numerical magnitude system.
  */
 const NUMEROS: readonly string[] = [
   'uno', 'dos', 'tres', 'cuatro', 'cinco',
@@ -296,33 +296,33 @@ const NUMEROS: readonly string[] = [
 ];
 
 // ==================================================================
-// Función principal de siembra
+// Main seeding function
 // ==================================================================
 
 /**
- * Puebla el léxico con un vocabulario semilla de ~190 palabras en español.
+ * Populates the lexicon with a seed vocabulary of ~190 Spanish words.
  *
- * Base biológica:
- *   Análogo al período crítico de adquisición léxica temprana (0–6 años),
- *   donde el cerebro del niño incorpora rápidamente su vocabulario nuclear.
- *   Las palabras se codifican como patrones de activación distribuidos
- *   usando hashing de n-gramas, lo que produce superposición natural
- *   entre palabras morfológicamente relacionadas (ej: "triste"/"tristeza")
- *   — modelando el priming ortográfico/fonológico.
+ * Biological basis:
+ *   Analogous to the critical period of early lexical acquisition (0–6 years),
+ *   where the child's brain rapidly incorporates its core vocabulary.
+ *   The words are encoded as distributed activation patterns
+ *   using n-gram hashing, which produces natural overlap
+ *   between morphologically related words (e.g.: "triste"/"tristeza")
+ *   — modeling orthographic/phonological priming.
  *
- *   El orden de inserción (saludos → pronombres → emociones → acciones → ...)
- *   refleja aproximadamente la secuencia de adquisición del primer léxico
- *   infantil (Clark, 1993).
+ *   The insertion order (greetings → pronouns → emotions → actions → ...)
+ *   roughly reflects the acquisition sequence of the first
+ *   childhood lexicon (Clark, 1993).
  *
- * @param lexicon - Instancia de Lexicon donde se insertarán las palabras
+ * @param lexicon - Lexicon instance where the words will be inserted
  */
 export function seedSpanishLexicon(lexicon: Lexicon): void {
-  /** Tamaño del patrón neural, tomado de la instancia del léxico */
+  /** Neural pattern size, taken from the lexicon instance */
   const size = lexicon.dimensions;
 
   /**
-   * Todas las categorías semánticas a sembrar.
-   * Cada categoría es un arreglo de palabras en español.
+   * All the semantic categories to seed.
+   * Each category is an array of Spanish words.
    */
   const allCategories: readonly (readonly string[])[] = [
     SALUDOS,
@@ -348,31 +348,31 @@ export function seedSpanishLexicon(lexicon: Lexicon): void {
 }
 
 /**
- * Codifica una frase completa en el MISMO espacio representacional que el
- * léxico (superponiendo los patrones n-grama de cada palabra).
+ * Encodes a complete sentence into the SAME representational space as the
+ * lexicon (superimposing the n-gram patterns of each word).
  *
- * Por qué existe:
- *   El `TextEncoder` genérico usa su propio hash y produce vectores
- *   ORTOGONALES a los del léxico (cos ≈ 0), de modo que Wernicke no reconoce
- *   ninguna palabra. Esta función garantiza que el texto de entrada caiga en
- *   el espacio del léxico, para que `Wernicke.comprehend()` recupere las
- *   palabras reales y Broca pueda producir una respuesta asociativa
- *   reproducible y discriminativa.
+ * Why it exists:
+ *   The generic `TextEncoder` uses its own hash and produces vectors
+ *   ORTHOGONAL to those of the lexicon (cos ≈ 0), so that Wernicke does not
+ *   recognize any word. This function guarantees that the input text falls in
+ *   the lexicon space, so that `Wernicke.comprehend()` retrieves the
+ *   real words and Broca can produce a reproducible and discriminative
+ *   associative response.
  *
- * Base biológica:
- *   La comprensión del lenguaje proyecta la señal acústica/ortográfica sobre
- *   los engramas léxicos almacenados (acceso léxico por similitud de patrón,
- *   McClelland & Rumelhart 1981). Usamos la misma codificación n-grama que
- *   creó los engramas → solapamiento natural entre palabras relacionadas.
+ * Biological basis:
+ *   Language comprehension projects the acoustic/orthographic signal onto
+ *   the stored lexical engrams (lexical access by pattern similarity,
+ *   McClelland & Rumelhart 1981). We use the same n-gram encoding that
+ *   created the engrams → natural overlap between related words.
  *
- * @param text - Frase de entrada
- * @param size - Dimensionalidad (debe coincidir con lexicon.dimensions)
- * @returns Patrón distribuido normalizado [0, 1] en el espacio del léxico
+ * @param text - Input sentence
+ * @param size - Dimensionality (must match lexicon.dimensions)
+ * @returns Normalized distributed pattern [0, 1] in the lexicon space
  */
 export function encodeSentenceToLexiconSpace(text: string, size: number = 5000): Float32Array {
   const pattern = new Float32Array(size);
 
-  // Normalización tipográfica: minúsculas, sin acentos, solo palabras.
+  // Typographic normalization: lowercase, no accents, words only.
   const words = text
     .toLowerCase()
     .normalize('NFD')
@@ -383,14 +383,14 @@ export function encodeSentenceToLexiconSpace(text: string, size: number = 5000):
 
   if (words.length === 0) return pattern;
 
-  // Superponer el patrón n-grama de cada palabra (conocida o no): todas caen
-  // en el mismo espacio que los engramas del léxico.
+  // Superimpose the n-gram pattern of each word (known or not): they all fall
+  // in the same space as the lexicon engrams.
   for (const word of words) {
     const wp = wordToPattern(word, size);
     for (let i = 0; i < size; i++) pattern[i] += wp[i];
   }
 
-  // Normalizar al rango [0, 1] para mantener escala homeostática.
+  // Normalize to the range [0, 1] to keep a homeostatic scale.
   let max = 0;
   for (let i = 0; i < size; i++) if (pattern[i] > max) max = pattern[i];
   if (max > 0) {

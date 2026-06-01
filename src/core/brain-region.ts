@@ -1,167 +1,167 @@
 /**
- * Clase Base Abstracta para Regiones Cerebrales
+ * Abstract Base Class for Brain Regions
  * ================================================
- * Define la interfaz común para todas las regiones funcionales del cerebro digital.
+ * Defines the common interface for all functional regions of the digital brain.
  *
- * Biología: Cada región cerebral (corteza visual, hipocampo, amígdala, etc.)
- * contiene una red de neuronas especializadas con patrones de conectividad y
- * dinámicas particulares. Sin embargo, todas comparten una arquitectura común:
- * reciben señales aferentes, las procesan mediante una SNN local, y emiten
- * señales eferentes. Esta clase abstracta captura esa estructura compartida.
+ * Biology: Each brain region (visual cortex, hippocampus, amygdala, etc.)
+ * contains a network of specialized neurons with particular connectivity
+ * patterns and dynamics. However, they all share a common architecture:
+ * they receive afferent signals, process them through a local SNN, and emit
+ * efferent signals. This abstract class captures that shared structure.
  *
- * Las subclases concretas (VisualCortex, Hippocampus, etc.) implementan el
- * método processInput() con la lógica específica de cada región.
+ * The concrete subclasses (VisualCortex, Hippocampus, etc.) implement the
+ * processInput() method with the specific logic of each region.
  *
- * Nota: Esta clase referencia SNNNetwork como tipo genérico. Las implementaciones
- * concretas pueden usar BinaryBiologicalNetwork, LargeScaleNetwork, o cualquier
- * variante compatible.
+ * Note: This class references SNNNetwork as a generic type. The concrete
+ * implementations may use BinaryBiologicalNetwork, LargeScaleNetwork, or any
+ * compatible variant.
  */
 
 import { SensoryBuffer, type SensoryEntry } from './memory/sensory-buffer.js';
 import type { ModulationEffects } from './neuromodulators/modulator-system.js';
 
 /**
- * Actividad instantánea de una región cerebral.
- * Resultado del procesamiento de un paso de simulación.
+ * Instantaneous activity of a brain region.
+ * Result of processing one simulation step.
  */
 export interface RegionActivity {
-  /** Identificador de la región */
+  /** Region identifier */
   id: string;
-  /** Índices de neuronas activas (que dispararon spike) en este paso */
+  /** Indices of active neurons (that fired a spike) in this step */
   activeNeurons: number[];
-  /** Tasa de disparo promedio (Hz) de la región */
+  /** Average firing rate (Hz) of the region */
   firingRate: number;
   /**
-   * Nivel de activación percibido (EMA, 0..1). A diferencia de `firingRate`
-   * —que con codificación dispersa k-WTA es constante (= sparsity) y por tanto
-   * no informa— este valor refleja cuánta señal está recibiendo realmente la
-   * región (energía de drive de entrada) suavizada en el tiempo. Es lo que el
-   * dashboard usa para las barras "ACTIVIDAD POR REGIÓN".
+   * Perceived activation level (EMA, 0..1). Unlike `firingRate`
+   * —which with sparse k-WTA coding is constant (= sparsity) and therefore
+   * uninformative— this value reflects how much signal the region is actually
+   * receiving (input drive energy) smoothed over time. It is what the
+   * dashboard uses for the "ACTIVIDAD POR REGIÓN" bars.
    */
   drive: number;
   /**
-   * Novedad del patrón de disparo (EMA, 0..1). ~0 cuando la región repite el
-   * mismo patrón (reposo / atractor estable) y sube cuando un estímulo cambia
-   * QUÉ neuronas disparan. Es la señal reactiva del panel de actividad: a
-   * diferencia de `firingRate` (constante con k-WTA), responde a la interacción.
+   * Novelty of the firing pattern (EMA, 0..1). ~0 when the region repeats the
+   * same pattern (rest / stable attractor) and rises when a stimulus changes
+   * WHICH neurons fire. It is the reactive signal of the activity panel:
+   * unlike `firingRate` (constant with k-WTA), it responds to interaction.
    */
   novelty: number;
-  /** Marca temporal del paso de simulación */
+  /** Timestamp of the simulation step */
   timestamp: number;
-  /** Spikes de salida para transmitir a otras regiones */
+  /** Output spikes to transmit to other regions */
   outputSpikes: Float32Array;
 }
 
 /**
- * Configuración de red neural para una región cerebral.
- * Interfaz mínima que debe cumplir cualquier SNN usada como red local.
+ * Neural network configuration for a brain region.
+ * Minimal interface that any SNN used as a local network must satisfy.
  */
 export interface SNNNetworkConfig {
-  /** Número total de neuronas en la red */
+  /** Total number of neurons in the network */
   neuronCount: number;
-  /** Número de entradas a la red */
+  /** Number of inputs to the network */
   inputCount: number;
-  /** Pesos sinápticos (puede ser Float32Array plano o estructura compleja) */
+  /** Synaptic weights (may be a flat Float32Array or a complex structure) */
   weights: Float32Array;
 }
 
 /**
- * Datos serializados de una región cerebral.
+ * Serialized data of a brain region.
  */
 export interface SerializedRegion {
-  /** Identificador de la región */
+  /** Region identifier */
   id: string;
-  /** Nombre descriptivo */
+  /** Descriptive name */
   name: string;
-  /** Configuración de la red neural */
+  /** Neural network configuration */
   network: SNNNetworkConfig;
-  /** Tiempo actual de simulación */
+  /** Current simulation time */
   currentTime: number;
 }
 
 /**
- * Clase base abstracta para regiones cerebrales del cerebro digital.
+ * Abstract base class for brain regions of the digital brain.
  *
- * Cada región contiene:
- * 1. Una red de neuronas de spikes (SNN) con pesos sinápticos propios
- * 2. Un buffer sensorial circular para almacenar entradas recientes
- * 3. Estado de activación y temporización
+ * Each region contains:
+ * 1. A spiking neural network (SNN) with its own synaptic weights
+ * 2. A circular sensory buffer to store recent inputs
+ * 3. Activation and timing state
  *
- * Las subclases concretas deben implementar processInput() con la
- * lógica de procesamiento específica de la región.
+ * The concrete subclasses must implement processInput() with the
+ * region's specific processing logic.
  */
 export abstract class BrainRegion {
-  /** Identificador único de la región (ej: 'visualCortex') */
+  /** Unique region identifier (e.g.: 'visualCortex') */
   public readonly id: string;
 
-  /** Nombre descriptivo legible (ej: 'Corteza Visual Primaria') */
+  /** Human-readable descriptive name (e.g.: 'Corteza Visual Primaria') */
   public readonly name: string;
 
-  /** Número de neuronas en esta región */
+  /** Number of neurons in this region */
   protected readonly neuronCount: number;
 
-  /** Número de entradas a la red neural de esta región */
+  /** Number of inputs to this region's neural network */
   protected readonly inputCount: number;
 
-  /** Pesos sinápticos de la red neural local (Float32Array plano) */
+  /** Synaptic weights of the local neural network (flat Float32Array) */
   protected weights: Float32Array;
 
-  /** Buffer circular de memoria sensorial para entradas recientes */
+  /** Circular sensory memory buffer for recent inputs */
   protected sensoryBuffer: SensoryBuffer;
 
-  /** Potenciales de membrana de todas las neuronas */
+  /** Membrane potentials of all neurons */
   protected potentials: Float32Array;
 
-  /** Estado de spike de cada neurona (1.0 = spike, 0.0 = silencio) */
+  /** Spike state of each neuron (1.0 = spike, 0.0 = silence) */
   protected spikes: Float32Array;
 
-  /** Si la región está activa y procesando señales */
+  /** Whether the region is active and processing signals */
   public isActive: boolean = true;
 
-  /** Tiempo actual de simulación (ms) */
+  /** Current simulation time (ms) */
   public currentTime: number = 0;
 
-  /** Tasa de aprendizaje base (modificable por neuromoduladores) */
+  /** Base learning rate (modifiable by neuromodulators) */
   protected baseLearningRate: number = 0.1;
 
-  /** Umbral de disparo base en mV (modificable por neuromoduladores) */
+  /** Base firing threshold in mV (modifiable by neuromodulators) */
   protected baseThreshold: number = -55;
 
-  /** Fracción de neuronas activas en el último paso (k-WTA sparsity) */
+  /** Fraction of active neurons in the last step (k-WTA sparsity) */
   protected sparsity: number = 0.1;
 
   /**
-   * Nivel de activación percibido (EMA del drive de entrada, 0..1).
-   * Refleja cuánta señal está recibiendo realmente la región, suavizado en el
-   * tiempo. Sirve para el panel de actividad: a diferencia de `firingRate`,
-   * varía de forma continua con la interacción (texto/webcam/micrófono).
+   * Perceived activation level (EMA of the input drive, 0..1).
+   * Reflects how much signal the region is actually receiving, smoothed over
+   * time. Used for the activity panel: unlike `firingRate`, it
+   * varies continuously with interaction (text/webcam/microphone).
    */
   protected driveEMA: number = 0;
 
   /**
-   * Media móvil del patrón de disparo (qué neuronas suelen ganar). Sirve para
-   * medir la NOVEDAD: cuánto se desvía el patrón actual de su régimen habitual.
-   * Se asigna perezosamente en el primer `step` (necesita neuronCount).
+   * Moving average of the firing pattern (which neurons tend to win). Used to
+   * measure NOVELTY: how much the current pattern deviates from its usual regime.
+   * Allocated lazily on the first `step` (it needs neuronCount).
    */
   protected spikeAvg: Float32Array | null = null;
 
   /**
-   * Novedad del patrón (EMA, 0..1). ~0 cuando la región repite el mismo patrón
-   * (reposo / atractor estable) y sube cuando un input cambia QUÉ neuronas
-   * disparan. A diferencia de `firingRate` (constante con k-WTA) y de `drive`
-   * (dominado por el fondo recurrente), esta señal SÍ reacciona a la
-   * interacción: es lo que enciende las barras del panel de actividad.
+   * Pattern novelty (EMA, 0..1). ~0 when the region repeats the same pattern
+   * (rest / stable attractor) and rises when an input changes WHICH neurons
+   * fire. Unlike `firingRate` (constant with k-WTA) and `drive`
+   * (dominated by the recurrent background), this signal DOES react to
+   * interaction: it is what lights up the activity panel bars.
    */
   protected noveltyEMA: number = 0;
 
   /**
-   * Crea una nueva región cerebral.
+   * Creates a new brain region.
    *
-   * @param id - Identificador único (ej: 'hippocampus')
-   * @param name - Nombre descriptivo (ej: 'Hipocampo - Formación de Memorias')
-   * @param neuronCount - Número de neuronas en la región
-   * @param inputCount - Número de entradas (dimensión del vector de entrada)
-   * @param sensoryCapacity - Capacidad del buffer sensorial (default: 100 entradas)
+   * @param id - Unique identifier (e.g.: 'hippocampus')
+   * @param name - Descriptive name (e.g.: 'Hipocampo - Formación de Memorias')
+   * @param neuronCount - Number of neurons in the region
+   * @param inputCount - Number of inputs (dimension of the input vector)
+   * @param sensoryCapacity - Sensory buffer capacity (default: 100 entries)
    */
   constructor(
     id: string,
@@ -175,25 +175,25 @@ export abstract class BrainRegion {
     this.neuronCount = neuronCount;
     this.inputCount = inputCount;
 
-    // Inicializar pesos sinápticos (neuronCount * inputCount pesos)
+    // Initialize synaptic weights (neuronCount * inputCount weights)
     this.weights = new Float32Array(neuronCount * inputCount);
     this.initializeWeights();
 
-    // Inicializar vectores de estado
+    // Initialize state vectors
     this.potentials = new Float32Array(neuronCount);
-    this.potentials.fill(-70); // Potencial de reposo
+    this.potentials.fill(-70); // Resting potential
     this.spikes = new Float32Array(neuronCount);
 
-    // Buffer sensorial para entradas recientes
+    // Sensory buffer for recent inputs
     this.sensoryBuffer = new SensoryBuffer(sensoryCapacity, inputCount);
   }
 
   /**
-   * Inicializa los pesos sinápticos con valores aleatorios pequeños.
+   * Initializes the synaptic weights with small random values.
    *
-   * Biología: Las conexiones sinápticas iniciales son débiles y
-   * parcialmente aleatorias, refinándose mediante experiencia y
-   * plasticidad sináptica (STDP, Hebbian learning).
+   * Biology: The initial synaptic connections are weak and
+   * partially random, refining themselves through experience and
+   * synaptic plasticity (STDP, Hebbian learning).
    */
   protected initializeWeights(): void {
     const initialConnections = Math.min(
@@ -201,7 +201,7 @@ export abstract class BrainRegion {
       this.inputCount
     );
 
-    // Inicialización esparsa: solo conectar un subconjunto
+    // Sparse initialization: only connect a subset
     for (let n = 0; n < this.neuronCount; n++) {
       const baseOffset = n * this.inputCount;
       for (let k = 0; k < initialConnections; k++) {
@@ -212,14 +212,14 @@ export abstract class BrainRegion {
   }
 
   /**
-   * Procesa un vector de spikes de entrada y produce spikes de salida.
+   * Processes an input spike vector and produces output spikes.
    *
-   * Método abstracto que cada región concreta debe implementar con
-   * su lógica de procesamiento específica.
+   * Abstract method that each concrete region must implement with
+   * its specific processing logic.
    *
-   * @param spikes - Vector de spikes de entrada (Float32Array)
-   * @param modulationEffects - Efectos de neuromodulación actuales
-   * @returns Vector de spikes de salida (Float32Array)
+   * @param spikes - Input spike vector (Float32Array)
+   * @param modulationEffects - Current neuromodulation effects
+   * @returns Output spike vector (Float32Array)
    */
   abstract processInput(
     spikes: Float32Array,
@@ -227,22 +227,22 @@ export abstract class BrainRegion {
   ): Float32Array;
 
   /**
-   * Ejecuta un paso de simulación de la región.
+   * Runs one simulation step of the region.
    *
-   * 1. Recupera entradas recientes del buffer sensorial
-   * 2. Aplica modulación a los parámetros de la red
-   * 3. Procesa la entrada mediante la SNN local
-   * 4. Retorna la actividad resultante
+   * 1. Retrieves recent inputs from the sensory buffer
+   * 2. Applies modulation to the network parameters
+   * 3. Processes the input through the local SNN
+   * 4. Returns the resulting activity
    *
-   * @param dt - Paso de tiempo (ms)
-   * @param modulationEffects - Efectos de neuromodulación actuales
-   * @returns Actividad de la región en este paso
+   * @param dt - Time step (ms)
+   * @param modulationEffects - Current neuromodulation effects
+   * @returns Region activity in this step
    */
   step(dt: number, modulationEffects: ModulationEffects): RegionActivity {
     this.currentTime += dt;
 
     if (!this.isActive) {
-      // Sin actividad: drive y novedad decaen suavemente hacia 0.
+      // No activity: drive and novelty decay smoothly toward 0.
       this.driveEMA *= 0.85;
       this.noveltyEMA *= 0.85;
       return {
@@ -256,19 +256,19 @@ export abstract class BrainRegion {
       };
     }
 
-    // Recuperar entradas recientes del buffer sensorial
+    // Retrieve recent inputs from the sensory buffer
     const recentEntries = this.sensoryBuffer.getRecent(dt * 2);
     let inputSpikes: Float32Array;
 
     if (recentEntries.length > 0) {
-      // Promediar entradas recientes
+      // Average the recent inputs
       inputSpikes = this.averageEntries(recentEntries);
     } else {
       inputSpikes = new Float32Array(this.inputCount);
     }
 
-    // Actualizar el nivel de drive percibido (EMA). Medimos la fracción de
-    // canales de entrada con señal: 0 = región en reposo, sube al interactuar.
+    // Update the perceived drive level (EMA). We measure the fraction of
+    // input channels with signal: 0 = region at rest, rises during interaction.
     let driven = 0;
     for (let i = 0; i < inputSpikes.length; i++) {
       if (inputSpikes[i] > 0) driven++;
@@ -277,13 +277,13 @@ export abstract class BrainRegion {
       inputSpikes.length > 0 ? driven / inputSpikes.length : 0;
     this.driveEMA = this.driveEMA * 0.85 + instDrive * 0.15;
 
-    // Aplicar modulación a parámetros
+    // Apply modulation to parameters
     this.modulateBy(modulationEffects);
 
-    // Procesar mediante la implementación específica de la región
+    // Process through the region's specific implementation
     const outputSpikes = this.processInput(inputSpikes, modulationEffects);
 
-    // Calcular actividad
+    // Compute activity
     const activeNeurons: number[] = [];
     for (let i = 0; i < outputSpikes.length; i++) {
       if (outputSpikes[i] > 0) {
@@ -294,16 +294,16 @@ export abstract class BrainRegion {
     const firingRate =
       this.neuronCount > 0 ? activeNeurons.length / this.neuronCount : 0;
 
-    // Persistir la salida en this.spikes para que getActivity() sea consistente
-    // en TODAS las regiones (algunas no actualizaban this.spikes por su cuenta,
-    // y el panel las mostraba congeladas a 0%).
+    // Persist the output into this.spikes so getActivity() is consistent
+    // across ALL regions (some did not update this.spikes on their own,
+    // and the panel showed them frozen at 0%).
     if (outputSpikes.length === this.spikes.length) {
       this.spikes.set(outputSpikes);
     }
 
-    // Novedad del patrón: distancia L1 entre el disparo actual y su media móvil,
-    // normalizada por el nº de neuronas activas. Mide si el input cambió QUÉ
-    // neuronas ganan (≠ cuántas). Sube al interactuar, ~0 en régimen estable.
+    // Pattern novelty: L1 distance between the current firing and its moving
+    // average, normalized by the number of active neurons. Measures whether the
+    // input changed WHICH neurons win (≠ how many). Rises during interaction, ~0 in a stable regime.
     if (!this.spikeAvg || this.spikeAvg.length !== outputSpikes.length) {
       this.spikeAvg = new Float32Array(outputSpikes.length);
     }
@@ -312,9 +312,9 @@ export abstract class BrainRegion {
     for (let i = 0; i < outputSpikes.length; i++) {
       const cur = outputSpikes[i] > 0 ? 1 : 0;
       l1 += Math.abs(cur - avg[i]);
-      avg[i] = avg[i] * 0.9 + cur * 0.1; // EMA del patrón
+      avg[i] = avg[i] * 0.9 + cur * 0.1; // EMA of the pattern
     }
-    // Normalizar: con k activas, una renovación total del patrón da L1≈2k.
+    // Normalize: with k active, a full pattern turnover gives L1≈2k.
     const denom = Math.max(1, 2 * activeNeurons.length);
     const instNovelty = Math.min(1, l1 / denom);
     this.noveltyEMA = this.noveltyEMA * 0.7 + instNovelty * 0.3;
@@ -331,10 +331,10 @@ export abstract class BrainRegion {
   }
 
   /**
-   * Promedia múltiples entradas sensoriales recientes.
+   * Averages multiple recent sensory inputs.
    *
-   * @param entries - Entradas del buffer sensorial
-   * @returns Vector promediado
+   * @param entries - Entries from the sensory buffer
+   * @returns Averaged vector
    */
   private averageEntries(entries: SensoryEntry[]): Float32Array {
     const avg = new Float32Array(this.inputCount);
@@ -353,9 +353,9 @@ export abstract class BrainRegion {
   }
 
   /**
-   * Retorna la actividad actual de la región.
+   * Returns the region's current activity.
    *
-   * @returns Snapshot de actividad con neuronas activas y tasa de disparo
+   * @returns Activity snapshot with active neurons and firing rate
    */
   getActivity(): RegionActivity {
     const activeNeurons: number[] = [];
@@ -378,46 +378,46 @@ export abstract class BrainRegion {
   }
 
   /**
-   * Aplica efectos de neuromodulación a los parámetros de la red.
+   * Applies neuromodulation effects to the network parameters.
    *
-   * Biología: Los neuromoduladores difusos (dopamina, serotonina, etc.)
-   * modifican globalmente la excitabilidad neuronal, la plasticidad
-   * sináptica y la ganancia de señales en la región.
+   * Biology: The diffuse neuromodulators (dopamine, serotonin, etc.)
+   * globally modify neuronal excitability, synaptic
+   * plasticity, and signal gain in the region.
    *
-   * @param effects - Efectos de modulación a aplicar
+   * @param effects - Modulation effects to apply
    */
   modulateBy(effects: ModulationEffects): void {
-    // Ajustar umbral de disparo: serotonina y cortisol ↑ → umbral ↑
+    // Adjust firing threshold: serotonin and cortisol ↑ → threshold ↑
     const modulatedThreshold = this.baseThreshold * effects.thresholdMultiplier;
 
-    // Ajustar sparsity: más atención → más neuronas pueden activarse
+    // Adjust sparsity: more attention → more neurons can activate
     this.sparsity = Math.min(
       0.3,
       Math.max(0.02, 0.1 * effects.attentionGain)
     );
 
-    // El umbral modulado se usa internamente en processInput
-    // (almacenado para que las subclases lo accedan)
+    // The modulated threshold is used internally in processInput
+    // (stored so subclasses can access it)
     this._modulatedThreshold = modulatedThreshold;
     this._modulatedLearningRate =
       this.baseLearningRate * effects.learningRateMultiplier;
   }
 
-  /** Umbral de disparo después de modulación */
+  /** Firing threshold after modulation */
   protected _modulatedThreshold: number = -55;
-  /** Tasa de aprendizaje después de modulación */
+  /** Learning rate after modulation */
   protected _modulatedLearningRate: number = 0.1;
 
   /**
-   * Alimenta el buffer sensorial con un nuevo vector de entrada.
+   * Feeds the sensory buffer with a new input vector.
    *
-   * @param data - Vector de datos sensoriales
-   * @param timestamp - Marca temporal de la entrada
+   * @param data - Sensory data vector
+   * @param timestamp - Timestamp of the input
    */
   feedInput(data: Float32Array, timestamp?: number): void {
-    // Las regiones pueden recibir spikes de tamaño diferente a su inputCount
-    // (e.g., el tálamo tiene 3000 neuronas pero la corteza visual espera 5000 entradas).
-    // Adaptamos el tamaño: truncar si es mayor, pad con ceros si es menor.
+    // Regions may receive spikes of a different size than their inputCount
+    // (e.g., the thalamus has 3000 neurons but the visual cortex expects 5000 inputs).
+    // We adapt the size: truncate if larger, pad with zeros if smaller.
     let adapted: Float32Array;
     if (data.length === this.inputCount) {
       adapted = data;
@@ -431,12 +431,12 @@ export abstract class BrainRegion {
   }
 
   /**
-   * Serializa el estado de la región para persistencia.
+   * Serializes the region's state for persistence.
    *
-   * @returns Buffer binario con el estado completo de la región
+   * @returns Binary buffer with the region's complete state
    */
   serialize(): Buffer {
-    // Formato: id(string,len-prefixed) + neuronCount(4) + inputCount(4) + weights(Float32Array)
+    // Format: id(string,len-prefixed) + neuronCount(4) + inputCount(4) + weights(Float32Array)
     const idBytes = Buffer.from(this.id, 'utf-8');
     const idLenBuf = Buffer.alloc(4);
     idLenBuf.writeUInt32LE(idBytes.length, 0);
@@ -451,26 +451,26 @@ export abstract class BrainRegion {
   }
 
   /**
-   * Restaura el estado de la región desde un buffer serializado.
+   * Restores the region's state from a serialized buffer.
    *
-   * @param data - Buffer con datos previamente serializados
+   * @param data - Buffer with previously serialized data
    */
   deserialize(data: Buffer): void {
     let offset = 0;
 
-    // Leer id (length-prefixed)
+    // Read id (length-prefixed)
     const idLen = data.readUInt32LE(offset);
     offset += 4;
-    // Saltar el id (ya lo tenemos)
+    // Skip the id (we already have it)
     offset += idLen;
 
-    // Leer neuronCount e inputCount
+    // Read neuronCount and inputCount
     const neuronCount = data.readUInt32LE(offset);
     offset += 4;
     const inputCount = data.readUInt32LE(offset);
     offset += 4;
 
-    // Verificar compatibilidad
+    // Check compatibility
     if (neuronCount !== this.neuronCount || inputCount !== this.inputCount) {
       throw new Error(
         `[BrainRegion] Incompatibilidad de dimensiones al deserializar '${this.id}': ` +
@@ -479,7 +479,7 @@ export abstract class BrainRegion {
       );
     }
 
-    // Restaurar pesos
+    // Restore weights
     const weightsByteLen = neuronCount * inputCount * 4;
     const weightsSlice = data.subarray(offset, offset + weightsByteLen);
     this.weights = new Float32Array(
@@ -490,7 +490,7 @@ export abstract class BrainRegion {
   }
 
   /**
-   * Retorna la configuración de red neural de la región.
+   * Returns the region's neural network configuration.
    */
   getNetworkConfig(): SNNNetworkConfig {
     return {
@@ -501,9 +501,9 @@ export abstract class BrainRegion {
   }
 
   /**
-   * Reemplaza los pesos sinápticos (restauración desde persistencia).
-   * Rechaza tamaños incompatibles para no corromper la red si las dimensiones
-   * de la región cambiaron entre versiones guardadas.
+   * Replaces the synaptic weights (restoration from persistence).
+   * Rejects incompatible sizes to avoid corrupting the network if the region's
+   * dimensions changed between saved versions.
    */
   loadWeights(weights: Float32Array): void {
     if (weights.length !== this.weights.length) {
@@ -515,14 +515,14 @@ export abstract class BrainRegion {
   }
 
   /**
-   * Retorna el número de neuronas en la región.
+   * Returns the number of neurons in the region.
    */
   get neurons(): number {
     return this.neuronCount;
   }
 
   /**
-   * Retorna el número de entradas a la red.
+   * Returns the number of inputs to the network.
    */
   get inputs(): number {
     return this.inputCount;

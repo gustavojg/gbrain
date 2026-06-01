@@ -1,14 +1,14 @@
 /**
- * Verificación del hipocampo CA3 autoasociativo.
- * Prueba: (1) separación de patrones (DG), (2) completación desde pista
- * degradada (atractor), (3) discriminación entre episodios, y (4) que el
- * aprendizaje (pesos recurrentes) sobrevive a save/load.
+ * Verification of the autoassociative CA3 hippocampus.
+ * Tests: (1) pattern separation (DG), (2) completion from a degraded
+ * cue (attractor), (3) discrimination between episodes, and (4) that the
+ * learning (recurrent weights) survives save/load.
  */
 
 import { Hippocampus } from '../src/regions/hippocampus/hippocampus.js';
 
 const N = 1000;
-const P = 6; // número de episodios distintos
+const P = 6; // number of distinct episodes
 const rng = mulberry32(0xc0ffee);
 
 function mulberry32(seed: number): () => number {
@@ -21,7 +21,7 @@ function mulberry32(seed: number): () => number {
   };
 }
 
-/** Patrón continuo aleatorio con ~density fracción de entradas activas. */
+/** Random continuous pattern with ~density fraction of active entries. */
 function randomPattern(density: number): Float32Array {
   const p = new Float32Array(N);
   for (let i = 0; i < N; i++) {
@@ -30,7 +30,7 @@ function randomPattern(density: number): Float32Array {
   return p;
 }
 
-/** Degrada una pista: pone a 0 una fracción `drop` de sus entradas activas. */
+/** Degrades a cue: zeros out a `drop` fraction of its active entries. */
 function corrupt(pattern: Float32Array, drop: number): Float32Array {
   const c = new Float32Array(pattern);
   for (let i = 0; i < N; i++) {
@@ -45,16 +45,16 @@ console.log('── Hipocampo CA3: verificación ──\n');
 
 const hippo = new Hippocampus(N, N);
 
-// 1. Generar y almacenar P episodios distintos.
+// 1. Generate and store P distinct episodes.
 const patterns: Float32Array[] = [];
 for (let i = 0; i < P; i++) patterns.push(randomPattern(0.1));
 for (const p of patterns) hippo.store(p, { sourceRegion: 'test' });
 console.log(`Episodios almacenados: ${hippo.memoryCount}`);
 
-// 2. Atractor objetivo de cada episodio (completar desde el patrón limpio).
+// 2. Target attractor of each episode (complete from the clean pattern).
 const targets = patterns.map((p) => hippo.patternCompletion(p));
 
-// 3. Separación de patrones (DG): solape medio entre atractores distintos.
+// 3. Pattern separation (DG): mean overlap between distinct attractors.
 let sepSum = 0;
 let sepPairs = 0;
 for (let i = 0; i < P; i++) {
@@ -65,7 +65,7 @@ for (let i = 0; i < P; i++) {
 }
 const meanSeparationOverlap = sepSum / sepPairs;
 
-// 4. Completación desde pista degradada (50% de la información eliminada).
+// 4. Completion from a degraded cue (50% of the information removed).
 const cues = patterns.map((p) => corrupt(p, 0.5));
 const recovered = cues.map((c) => hippo.patternCompletion(c));
 
@@ -83,7 +83,7 @@ for (let i = 0; i < P; i++) {
 const meanSelfRecovery = selfSum / P;
 const meanCrossRecovery = crossSum / crossPairs;
 
-// 5. Persistencia: extraer pesos → hipocampo nuevo → loadWeights → completar.
+// 5. Persistence: extract weights → new hippocampus → loadWeights → complete.
 const savedWeights = new Float32Array(hippo.getNetworkConfig().weights);
 const hippo2 = new Hippocampus(N, N);
 hippo2.loadWeights(savedWeights);
@@ -94,7 +94,7 @@ for (let i = 0; i < P; i++) {
 }
 const meanPersistence = persistSum / P;
 
-// ── Resultados ──
+// ── Results ──
 const pct = (x: number) => (x * 100).toFixed(1) + '%';
 console.log(`\nSeparación DG (solape entre episodios):  ${pct(meanSeparationOverlap)}  (debe ser BAJO)`);
 console.log(`Recuperación self (pista 50% → atractor): ${pct(meanSelfRecovery)}  (debe ser ALTO)`);

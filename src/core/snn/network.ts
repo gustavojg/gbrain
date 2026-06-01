@@ -1,32 +1,32 @@
 /**
- * RED NEURONAL PULSANTE (SNN) CON INHIBICIÓN LATERAL k-WTA
+ * SPIKING NEURAL NETWORK (SNN) WITH k-WTA LATERAL INHIBITION
  * ==========================================================
- * Red de neuronas Izhikevich con almacenamiento plano de pesos en Float32Array,
- * inhibición lateral tipo k-Winners-Take-All, y aprendizaje STDP.
+ * Network of Izhikevich neurons with flat weight storage in a Float32Array,
+ * k-Winners-Take-All lateral inhibition, and STDP learning.
  *
- * Base biológica:
- *   La corteza cerebral organiza sus neuronas en columnas corticales donde
- *   la inhibición lateral (mediada por interneuronas GABAérgicas) asegura
- *   que solo un subconjunto "ganador" de neuronas (~5-15%) esté activo
- *   simultáneamente. Este mecanismo:
+ * Biological basis:
+ *   The cerebral cortex organizes its neurons into cortical columns where
+ *   lateral inhibition (mediated by GABAergic interneurons) ensures that
+ *   only a "winning" subset of neurons (~5-15%) is active
+ *   simultaneously. This mechanism:
  *
- *   - Produce representaciones dispersas (sparse coding), maximizando
- *     la capacidad de almacenamiento de la red.
- *   - Implementa competencia entre neuronas, forzando la especialización.
- *   - Reduce el consumo energético (el cerebro real gasta ~20W con
- *     solo ~5% de neuronas activas en un instante dado).
+ *   - Produces sparse representations (sparse coding), maximizing
+ *     the network's storage capacity.
+ *   - Implements competition between neurons, forcing specialization.
+ *   - Reduces energy consumption (the real brain uses ~20W with
+ *     only ~5% of neurons active at any given instant).
  *
- *   El almacenamiento en Float32Array imita la organización densa de
- *   la matriz sináptica cortical, donde cada neurona excitadora recibe
- *   ~10,000 sinapsis de neuronas aferentes.
+ *   Float32Array storage mimics the dense organization of
+ *   the cortical synaptic matrix, where each excitatory neuron receives
+ *   ~10,000 synapses from afferent neurons.
  *
- * Rendimiento:
- *   - Pesos en Float32Array plano: cache-friendly, ~4 bytes/sinapsis.
- *   - k-WTA con quickselect parcial: O(n) en promedio vs O(n log n) de sort.
- *   - Para 10,000 neuronas × 1,000 inputs = 40 MB de pesos.
+ * Performance:
+ *   - Weights in a flat Float32Array: cache-friendly, ~4 bytes/synapse.
+ *   - k-WTA with partial quickselect: O(n) on average vs O(n log n) for sort.
+ *   - For 10,000 neurons × 1,000 inputs = 40 MB of weights.
  *
- * Referencia de arquitectura:
- *   - Patrón Float32Array: /04_binary_optimization/binary_brain_system.ts
+ * Architecture reference:
+ *   - Float32Array pattern: /04_binary_optimization/binary_brain_system.ts
  *   - k-WTA: /02_distributed_network/distributed_network_complete.ts
  */
 
@@ -38,119 +38,119 @@ import { computeSTDP, DEFAULT_STDP_PARAMS, type STDPParams } from './synapse.js'
 // ====================================================================
 
 /**
- * Configuración para crear una red SNN.
+ * Configuration for creating an SNN network.
  */
 export interface SNNNetworkConfig {
-  /** Número de neuronas en la red */
+  /** Number of neurons in the network */
   readonly neuronCount: number;
-  /** Número de entradas externas a la red */
+  /** Number of external inputs to the network */
   readonly inputCount: number;
-  /** Fracción de neuronas que pueden ganar la competición k-WTA (0.0-1.0) */
+  /** Fraction of neurons that can win the k-WTA competition (0.0-1.0) */
   readonly sparsity: number;
-  /** Tipo de neurona Izhikevich predominante */
+  /** Predominant Izhikevich neuron type */
   readonly neuronType: NeuronTypeName;
-  /** Parámetros STDP opcionales */
+  /** Optional STDP parameters */
   readonly stdp?: STDPParams;
-  /** Peso máximo de sinapsis */
+  /** Maximum synaptic weight */
   readonly maxWeight?: number;
-  /** Peso mínimo de sinapsis */
+  /** Minimum synaptic weight */
   readonly minWeight?: number;
-  /** Presupuesto sináptico total para normalización */
+  /** Total synaptic budget for normalization */
   readonly synapticBudget?: number;
 }
 
 /**
- * Formato de datos serializado de la red para persistencia.
+ * Serialized network data format for persistence.
  *
- * Base biológica:
- *   Análogo a una "instantánea" del estado sináptico completo,
- *   similar a cómo las consolidación durante el sueño preserva
- *   las conexiones fortalecidas durante la vigilia.
+ * Biological basis:
+ *   Analogous to a "snapshot" of the complete synaptic state,
+ *   similar to how memory consolidation during sleep preserves
+ *   the connections strengthened during wakefulness.
  */
 export interface SerializedNetwork {
-  /** Número de neuronas */
+  /** Number of neurons */
   readonly neuronCount: number;
-  /** Número de inputs */
+  /** Number of inputs */
   readonly inputCount: number;
-  /** Esparcidad k-WTA */
+  /** k-WTA sparsity */
   readonly sparsity: number;
-  /** Tipo de neurona */
+  /** Neuron type */
   readonly neuronType: NeuronTypeName;
-  /** Pesos como ArrayBuffer (para serialización binaria) */
+  /** Weights as an ArrayBuffer (for binary serialization) */
   readonly weightsBuffer: ArrayBuffer;
-  /** Potenciales de membrana de las neuronas */
+  /** Membrane potentials of the neurons */
   readonly voltages: ArrayBuffer;
-  /** Variables de recuperación de las neuronas */
+  /** Recovery variables of the neurons */
   readonly recovery: ArrayBuffer;
 }
 
 // ====================================================================
-// Clase SNNNetwork
+// SNNNetwork class
 // ====================================================================
 
 /**
- * Red neuronal pulsante con k-WTA y STDP.
+ * Spiking neural network with k-WTA and STDP.
  *
- * Base biológica:
- *   Modela una población cortical homogénea (ej: una capa de corteza
- *   visual, una región del hipocampo) como un conjunto de neuronas
- *   Izhikevich densamente conectadas a un array de entradas, con
- *   inhibición lateral que asegura representaciones dispersas.
+ * Biological basis:
+ *   Models a homogeneous cortical population (e.g. a layer of visual
+ *   cortex, a region of the hippocampus) as a set of Izhikevich
+ *   neurons densely connected to an array of inputs, with
+ *   lateral inhibition that ensures sparse representations.
  *
- *   La combinación de:
- *   1. Neuronas Izhikevich (dinámica de membrana realista)
- *   2. k-WTA (inhibición lateral cortical)
- *   3. STDP (plasticidad Hebbiana con temporalidad)
- *   4. Normalización sináptica (homeostasis)
+ *   The combination of:
+ *   1. Izhikevich neurons (realistic membrane dynamics)
+ *   2. k-WTA (cortical lateral inhibition)
+ *   3. STDP (Hebbian plasticity with timing)
+ *   4. Synaptic normalization (homeostasis)
  *
- *   produce un sistema que auto-organiza representaciones dispersas
- *   estables para patrones de entrada, análogo a las columnas de
- *   orientación en V1 o las place cells en hipocampo.
+ *   produces a system that self-organizes stable sparse representations
+ *   for input patterns, analogous to the orientation columns
+ *   in V1 or the place cells in the hippocampus.
  */
 export class SNNNetwork {
-  /** Neuronas Izhikevich de la red */
+  /** Izhikevich neurons of the network */
   public readonly neurons: SpikingNeuron[];
 
   /**
-   * Matriz de pesos sinápticos en formato plano.
+   * Synaptic weight matrix in flat format.
    *
-   * Organización: weights[neuronIdx * inputCount + inputIdx]
-   * Esto es equivalente a una matriz (neuronCount × inputCount) almacenada
-   * por filas (row-major), optimizada para acceso cache-friendly.
+   * Layout: weights[neuronIdx * inputCount + inputIdx]
+   * This is equivalent to a (neuronCount × inputCount) matrix stored
+   * row-major, optimized for cache-friendly access.
    */
   public readonly weights: Float32Array;
 
-  /** Número de neuronas en la red */
+  /** Number of neurons in the network */
   public readonly neuronCount: number;
 
-  /** Número de entradas externas */
+  /** Number of external inputs */
   public readonly inputCount: number;
 
-  /** Fracción de neuronas activas (k-WTA) */
+  /** Fraction of active neurons (k-WTA) */
   public readonly sparsity: number;
 
-  /** Parámetros STDP */
+  /** STDP parameters */
   private readonly stdp: STDPParams;
 
-  /** Peso máximo permitido */
+  /** Maximum allowed weight */
   private readonly maxWeight: number;
 
-  /** Peso mínimo permitido */
+  /** Minimum allowed weight */
   private readonly minWeight: number;
 
-  /** Presupuesto sináptico total para normalización homeostática */
+  /** Total synaptic budget for homeostatic normalization */
   private readonly synapticBudget: number;
 
-  // Buffers pre-alocados para evitar GC durante la simulación
-  /** Potenciales crudos calculados en cada timestep */
+  // Pre-allocated buffers to avoid GC during simulation
+  /** Raw potentials computed at each timestep */
   private readonly rawPotentials: Float32Array;
-  /** Índices de neuronas para el sorting k-WTA */
+  /** Neuron indices for the k-WTA sorting */
   private readonly sortIndices: Uint32Array;
 
   /**
-   * Crea una nueva red SNN.
+   * Creates a new SNN network.
    *
-   * @param config - Configuración de la red, o parámetros posicionales
+   * @param config - Network configuration, or positional parameters
    */
   constructor(config: SNNNetworkConfig);
   constructor(
@@ -186,29 +186,29 @@ export class SNNNetwork {
     this.minWeight = config.minWeight ?? 0.0;
     this.synapticBudget = config.synapticBudget ?? 10.0;
 
-    // Crear población neuronal
+    // Create the neuron population
     this.neurons = createNeuronPopulation(this.neuronCount, config.neuronType);
 
-    // Alocar matriz de pesos plana (row-major: neuronCount × inputCount)
+    // Allocate the flat weight matrix (row-major: neuronCount × inputCount)
     const totalWeights = this.neuronCount * this.inputCount;
     this.weights = new Float32Array(totalWeights);
 
-    // Pre-alocar buffers de trabajo (reutilizados en cada timestep)
+    // Pre-allocate working buffers (reused at each timestep)
     this.rawPotentials = new Float32Array(this.neuronCount);
     this.sortIndices = new Uint32Array(this.neuronCount);
 
-    // Inicializar pesos aleatorios y normalizar
+    // Initialize random weights and normalize
     this.initializeWeights();
   }
 
   /**
-   * Inicializa los pesos sinápticos con valores aleatorios normalizados.
+   * Initializes the synaptic weights with normalized random values.
    *
-   * Base biológica:
-   *   Las sinapsis inmaduras tienen pesos distribuidos aleatoriamente
-   *   (ruido sinaptogénico). La normalización impone un presupuesto
-   *   total por neurona, modelando la homeostasis sináptica que
-   *   mantiene la actividad total en un rango fisiológico.
+   * Biological basis:
+   *   Immature synapses have randomly distributed weights
+   *   (synaptogenic noise). Normalization imposes a total
+   *   budget per neuron, modeling the synaptic homeostasis that
+   *   keeps total activity within a physiological range.
    */
   private initializeWeights(): void {
     for (let n = 0; n < this.neuronCount; n++) {
@@ -221,81 +221,81 @@ export class SNNNetwork {
   }
 
   /**
-   * Procesa un paso temporal completo de la red.
+   * Processes a complete time step of the network.
    *
-   * Base biológica:
-   *   Simula un ciclo completo de procesamiento cortical:
-   *   1. Integración sináptica: cada neurona suma las corrientes de entrada
-   *      ponderadas por sus pesos sinápticos (dot product parcial).
-   *   2. Dinámica de membrana: Izhikevich step para cada neurona.
-   *   3. Inhibición lateral (k-WTA): solo las k neuronas más excitadas
-   *      mantienen su spike; las demás son silenciadas por interneuronas
-   *      inhibitorias (modeladas implícitamente).
+   * Biological basis:
+   *   Simulates a complete cycle of cortical processing:
+   *   1. Synaptic integration: each neuron sums the input currents
+   *      weighted by its synaptic weights (partial dot product).
+   *   2. Membrane dynamics: Izhikevich step for each neuron.
+   *   3. Lateral inhibition (k-WTA): only the k most excited neurons
+   *      keep their spike; the rest are silenced by inhibitory
+   *      interneurons (modeled implicitly).
    *
-   * @param inputs - Vector de entrada (Float32Array de 0s y 1s, o valores continuos)
-   * @param dt - Paso temporal en milisegundos
-   * @param currentTime - Tiempo actual de la simulación (ms), para STDP
-   * @returns Índices de las neuronas que dispararon (ganadores k-WTA)
+   * @param inputs - Input vector (Float32Array of 0s and 1s, or continuous values)
+   * @param dt - Time step in milliseconds
+   * @param currentTime - Current simulation time (ms), for STDP
+   * @returns Indices of the neurons that fired (k-WTA winners)
    */
   step(inputs: Float32Array, dt: number, currentTime: number = 0): Uint32Array {
-    // --- 1. Calcular corriente de entrada para cada neurona ---
+    // --- 1. Compute the input current for each neuron ---
     for (let n = 0; n < this.neuronCount; n++) {
       const baseIdx = n * this.inputCount;
       let excitation = 0;
 
-      // Producto punto: sum(weight_i * input_i)
-      // Acceso secuencial en memoria → cache-friendly
+      // Dot product: sum(weight_i * input_i)
+      // Sequential memory access → cache-friendly
       for (let i = 0; i < this.inputCount; i++) {
         excitation += this.weights[baseIdx + i] * inputs[i];
       }
 
-      // Ruido sináptico leve (modela fluctuaciones de neurotransmisores)
+      // Mild synaptic noise (models neurotransmitter fluctuations)
       excitation += Math.random() * 0.05;
 
       this.rawPotentials[n] = excitation;
     }
 
-    // --- 2. Simular dinámica de membrana de cada neurona ---
+    // --- 2. Simulate the membrane dynamics of each neuron ---
     for (let n = 0; n < this.neuronCount; n++) {
       this.neurons[n].step(this.rawPotentials[n], dt, currentTime);
     }
 
-    // --- 3. Aplicar inhibición lateral k-WTA ---
-    // Inicializar índices
+    // --- 3. Apply k-WTA lateral inhibition ---
+    // Initialize indices
     for (let n = 0; n < this.neuronCount; n++) {
       this.sortIndices[n] = n;
     }
 
-    // Ordenar índices por potencial descendente
-    // Nota: Uint32Array.sort usa una comparación que accede a rawPotentials
+    // Sort indices by descending potential
+    // Note: Uint32Array.sort uses a comparison that accesses rawPotentials
     const potentials = this.rawPotentials;
     this.sortIndices.sort((a, b) => potentials[b] - potentials[a]);
 
-    // Solo los top-k pueden disparar
+    // Only the top-k can fire
     const k = Math.max(1, Math.floor(this.neuronCount * this.sparsity));
 
-    // Crear set de ganadores para lookup O(1)
-    const winnerSet = new Uint8Array(this.neuronCount); // 0 = no ganador
+    // Create a winner set for O(1) lookup
+    const winnerSet = new Uint8Array(this.neuronCount); // 0 = not a winner
     for (let i = 0; i < k; i++) {
       winnerSet[this.sortIndices[i]] = 1;
     }
 
-    // Construir array de índices ganadores que realmente dispararon
+    // Build the array of winner indices that actually fired
     let firingCount = 0;
-    // Buffer temporal para los ganadores (reutilizable)
+    // Temporary buffer for the winners (reusable)
     const firingBuffer = new Uint32Array(k);
 
     for (let n = 0; n < this.neuronCount; n++) {
       if (winnerSet[n] === 1 && this.neurons[n].fired) {
         firingBuffer[firingCount++] = n;
       } else {
-        // Silenciar neuronas que no ganaron la competición
+        // Silence neurons that did not win the competition
         this.neurons[n].fired = false;
       }
     }
 
-    // Si ninguno de los k ganadores disparó naturalmente,
-    // forzar el disparo de los top-k (activación por corriente subumbral)
+    // If none of the k winners fired naturally,
+    // force the top-k to fire (activation by subthreshold current)
     if (firingCount === 0) {
       for (let i = 0; i < k; i++) {
         const winnerIdx = this.sortIndices[i];
@@ -311,23 +311,23 @@ export class SNNNetwork {
   }
 
   /**
-   * Aplica la regla STDP a las sinapsis de las neuronas que dispararon.
+   * Applies the STDP rule to the synapses of the neurons that fired.
    *
-   * Base biológica:
-   *   Implementa plasticidad Hebbiana temporalizada: las sinapsis que
-   *   contribuyeron a hacer disparar la neurona postsináptica se
-   *   fortalecen (LTP), mientras que las que no contribuyeron se
-   *   debilitan (LTD). El factor de modulación permite control
-   *   neuromodulador (dopamina para recompensa, etc.).
+   * Biological basis:
+   *   Implements timing-dependent Hebbian plasticity: the synapses that
+   *   contributed to making the postsynaptic neuron fire are
+   *   strengthened (LTP), while those that did not contribute are
+   *   weakened (LTD). The modulation factor enables neuromodulatory
+   *   control (dopamine for reward, etc.).
    *
-   *   Después de STDP, se aplica normalización sináptica (synaptic scaling)
-   *   para mantener la homeostasis: el presupuesto sináptico total por
-   *   neurona se mantiene constante, modelando la regulación homeostática
-   *   observada en cultivos corticales.
+   *   After STDP, synaptic normalization (synaptic scaling) is applied
+   *   to maintain homeostasis: the total synaptic budget per
+   *   neuron is kept constant, modeling the homeostatic regulation
+   *   observed in cortical cultures.
    *
-   * @param firingNeurons - Índices de neuronas que dispararon (del step())
-   * @param inputSpikeTimes - Tiempos de spike de cada entrada (Float32Array)
-   * @param modulationFactor - Factor de modulación neuromoduladora (1.0 = normal)
+   * @param firingNeurons - Indices of neurons that fired (from step())
+   * @param inputSpikeTimes - Spike times of each input (Float32Array)
+   * @param modulationFactor - Neuromodulatory modulation factor (1.0 = normal)
    */
   applySTDP(
     firingNeurons: Uint32Array,
@@ -340,7 +340,7 @@ export class SNNNetwork {
       const postSpikeTime = neuron.lastSpikeTime;
       const baseIdx = neuronIdx * this.inputCount;
 
-      // Aplicar STDP para cada entrada
+      // Apply STDP for each input
       for (let i = 0; i < this.inputCount; i++) {
         const preSpikeTime = inputSpikeTimes[i];
         const deltaW = computeSTDP(
@@ -352,26 +352,26 @@ export class SNNNetwork {
 
         if (deltaW !== 0) {
           let newWeight = this.weights[baseIdx + i] + deltaW;
-          // Aplicar límites homeostáticos
+          // Apply homeostatic limits
           newWeight = Math.max(this.minWeight, Math.min(this.maxWeight, newWeight));
           this.weights[baseIdx + i] = newWeight;
         }
       }
 
-      // Normalización sináptica post-aprendizaje
+      // Post-learning synaptic normalization
       this.normalizeWeights(neuronIdx);
     }
   }
 
   /**
-   * Retorna los índices de las neuronas actualmente activas (que dispararon).
+   * Returns the indices of the currently active neurons (those that fired).
    *
-   * Base biológica:
-   *   La representación activa es el "código poblacional" — el patrón
-   *   de neuronas activas que codifica un concepto, objeto o recuerdo.
-   *   Es la base de la representación distribuida en corteza.
+   * Biological basis:
+   *   The active representation is the "population code" — the pattern
+   *   of active neurons that encodes a concept, object, or memory.
+   *   It is the basis of distributed representation in the cortex.
    *
-   * @returns Array de índices de neuronas activas
+   * @returns Array of active neuron indices
    */
   getRepresentation(): Uint32Array {
     let count = 0;
@@ -387,23 +387,23 @@ export class SNNNetwork {
   }
 
   /**
-   * Normaliza los pesos sinápticos de una neurona para mantener
-   * un presupuesto sináptico total fijo.
+   * Normalizes a neuron's synaptic weights to maintain
+   * a fixed total synaptic budget.
    *
-   * Base biológica:
-   *   "Synaptic scaling" (Turrigiano, 1998): mecanismo homeostático
-   *   donde la neurona escala multiplicativamente todos sus pesos
-   *   para mantener su actividad dentro de un rango fisiológico.
-   *   Esto implementa heterosynaptic LTD implícita: cuando una sinapsis
-   *   se fortalece (LTP), el rescalado debilita proporcionalmente
-   *   las demás sinapsis.
+   * Biological basis:
+   *   "Synaptic scaling" (Turrigiano, 1998): a homeostatic mechanism
+   *   where the neuron multiplicatively scales all its weights
+   *   to keep its activity within a physiological range.
+   *   This implements implicit heterosynaptic LTD: when one synapse
+   *   is strengthened (LTP), the rescaling proportionally weakens
+   *   the other synapses.
    *
-   * @param neuronIdx - Índice de la neurona a normalizar
+   * @param neuronIdx - Index of the neuron to normalize
    */
   normalizeWeights(neuronIdx: number): void {
     const baseIdx = neuronIdx * this.inputCount;
 
-    // Calcular suma total de pesos
+    // Compute the total sum of weights
     let total = 0;
     for (let i = 0; i < this.inputCount; i++) {
       total += this.weights[baseIdx + i];
@@ -411,7 +411,7 @@ export class SNNNetwork {
 
     if (total === 0) return;
 
-    // Escalar multiplicativamente para alcanzar el presupuesto
+    // Scale multiplicatively to reach the budget
     const factor = this.synapticBudget / total;
     for (let i = 0; i < this.inputCount; i++) {
       this.weights[baseIdx + i] *= factor;
@@ -419,13 +419,13 @@ export class SNNNetwork {
   }
 
   /**
-   * Reinicia todas las neuronas a su estado de reposo.
-   * Los pesos sinápticos se mantienen (la memoria persiste).
+   * Resets all neurons to their resting state.
+   * The synaptic weights are kept (memory persists).
    *
-   * Base biológica:
-   *   Equivale a un período de silencio cortical, como el observado
-   *   entre estados DOWN (silencio) y UP (actividad) durante
-   *   el sueño de ondas lentas.
+   * Biological basis:
+   *   Equivalent to a period of cortical silence, like the one observed
+   *   between DOWN (silence) and UP (activity) states during
+   *   slow-wave sleep.
    */
   resetNeurons(): void {
     for (let n = 0; n < this.neuronCount; n++) {
@@ -434,20 +434,20 @@ export class SNNNetwork {
   }
 
   /**
-   * Serializa el estado completo de la red para persistencia binaria.
+   * Serializes the complete network state for binary persistence.
    *
-   * Base biológica:
-   *   Análogo a la consolidación de memoria durante el sueño:
-   *   se preserva la estructura sináptica (pesos) y el estado
-   *   instantáneo de las neuronas para poder reanudar la simulación.
+   * Biological basis:
+   *   Analogous to memory consolidation during sleep:
+   *   the synaptic structure (weights) and the instantaneous
+   *   state of the neurons are preserved so the simulation can resume.
    *
-   * @returns Objeto serializable con todos los datos de la red
+   * @returns Serializable object with all the network data
    */
   serialize(): SerializedNetwork {
-    // Copiar pesos (no compartir referencia)
+    // Copy weights (do not share the reference)
     const weightsBuffer = this.weights.buffer.slice(0);
 
-    // Extraer estados neuronales
+    // Extract neuron states
     const voltages = new Float32Array(this.neuronCount);
     const recovery = new Float32Array(this.neuronCount);
 
@@ -470,10 +470,10 @@ export class SNNNetwork {
   }
 
   /**
-   * Restaura el estado de la red desde datos serializados.
+   * Restores the network state from serialized data.
    *
-   * @param data - Datos serializados previamente con serialize()
-   * @returns Nueva instancia de SNNNetwork con el estado restaurado
+   * @param data - Data previously serialized with serialize()
+   * @returns New SNNNetwork instance with the restored state
    */
   static deserialize(data: SerializedNetwork): SNNNetwork {
     const network = new SNNNetwork({
@@ -483,11 +483,11 @@ export class SNNNetwork {
       neuronType: data.neuronType,
     });
 
-    // Restaurar pesos
+    // Restore weights
     const loadedWeights = new Float32Array(data.weightsBuffer);
     network.weights.set(loadedWeights);
 
-    // Restaurar estados neuronales
+    // Restore neuron states
     const voltages = new Float32Array(data.voltages);
     const recovery = new Float32Array(data.recovery);
 
@@ -502,8 +502,8 @@ export class SNNNetwork {
   }
 
   /**
-   * Infiere el nombre del tipo de neurona a partir de los parámetros.
-   * Usado internamente para serialización.
+   * Infers the neuron type name from the parameters.
+   * Used internally for serialization.
    */
   private inferNeuronType(): NeuronTypeName {
     const p = this.neurons[0].params;
@@ -514,9 +514,9 @@ export class SNNNetwork {
   }
 
   /**
-   * Retorna estadísticas de la red para monitoreo.
+   * Returns network statistics for monitoring.
    *
-   * @returns Objeto con métricas de actividad y pesos
+   * @returns Object with activity and weight metrics
    */
   getStats(): {
     activeCount: number;

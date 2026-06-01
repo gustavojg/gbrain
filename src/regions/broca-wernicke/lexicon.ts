@@ -1,28 +1,28 @@
 /**
- * LÉXICO COMPARTIDO — Vocabulario neural distribuido
+ * SHARED LEXICON — Distributed neural vocabulary
  * ===================================================
- * Almacén de vocabulario compartido entre las áreas de Wernicke (comprensión)
- * y Broca (producción) del cerebro digital.
+ * Vocabulary store shared between the Wernicke (comprehension)
+ * and Broca (production) areas of the digital brain.
  *
- * Base biológica:
- *   El léxico mental humano almacena ~60.000 palabras como patrones de activación
- *   neuronal distribuidos en el lóbulo temporal. Cada palabra se representa como
- *   un vector de activación sparse en una población neuronal (codificación
- *   distribuida, Hebb 1949). La recuperación léxica ocurre por similitud de
- *   patrones: al escuchar una palabra parcial, se activa el patrón más cercano
- *   (priming fonológico/semántico).
+ * Biological basis:
+ *   The human mental lexicon stores ~60,000 words as neural activation
+ *   patterns distributed in the temporal lobe. Each word is represented as
+ *   a sparse activation vector over a neuronal population (distributed
+ *   coding, Hebb 1949). Lexical retrieval occurs by pattern
+ *   similarity: upon hearing a partial word, the closest pattern is activated
+ *   (phonological/semantic priming).
  *
- *   El léxico es compartido entre las áreas de comprensión y producción, aunque
- *   en la biología real estas áreas acceden al léxico por vías parcialmente
- *   distintas (vía ventral para Wernicke, vía dorsal para Broca).
+ *   The lexicon is shared between the comprehension and production areas, although
+ *   in real biology these areas access the lexicon via partially
+ *   distinct pathways (ventral pathway for Wernicke, dorsal pathway for Broca).
  *
- * Implementación:
- *   Cada entrada contiene:
- *   - El patrón de activación neural (Float32Array sparse)
- *   - Frecuencia de uso (para sesgos de recuperación — efecto de frecuencia léxica)
- *   - Timestamp del último uso (para efecto de recencia)
+ * Implementation:
+ *   Each entry contains:
+ *   - The neural activation pattern (sparse Float32Array)
+ *   - Usage frequency (for retrieval biases — lexical frequency effect)
+ *   - Timestamp of last use (for recency effect)
  *
- *   La búsqueda por similitud usa coseno, optimizada con pre-cómputo de normas.
+ *   The similarity search uses cosine, optimized with precomputed norms.
  */
 
 // ==================================================================
@@ -30,119 +30,119 @@
 // ==================================================================
 
 /**
- * Entrada léxica: asocia una palabra con su patrón neural distribuido.
+ * Lexical entry: associates a word with its distributed neural pattern.
  */
 export interface LexiconEntry {
-  /** Patrón de activación neural distribuido (Float32Array sparse) */
+  /** Distributed neural activation pattern (sparse Float32Array) */
   pattern: Float32Array;
   /**
-   * Frecuencia de uso acumulada. Palabras más frecuentes se recuperan más rápido
-   * (efecto de frecuencia léxica, Oldfield & Wingfield 1965).
+   * Cumulative usage frequency. More frequent words are retrieved faster
+   * (lexical frequency effect, Oldfield & Wingfield 1965).
    */
   frequency: number;
-  /** Marca temporal del último acceso (ms). Sesga recuperación por recencia. */
+  /** Timestamp of last access (ms). Biases retrieval by recency. */
   lastUsed: number;
 }
 
 /**
- * Resultado de una búsqueda por similitud en el léxico.
+ * Result of a similarity search in the lexicon.
  */
 export interface LexiconMatch {
-  /** Palabra encontrada */
+  /** Word found */
   word: string;
-  /** Similitud coseno con el patrón de consulta (0–1) */
+  /** Cosine similarity with the query pattern (0–1) */
   similarity: number;
 }
 
 /**
- * Formato de serialización del léxico completo.
+ * Serialization format of the complete lexicon.
  */
 export interface SerializedLexicon {
-  /** Entradas serializadas: palabra → { pattern como number[], frequency, lastUsed } */
+  /** Serialized entries: word → { pattern as number[], frequency, lastUsed } */
   entries: Array<{
     word: string;
     pattern: number[];
     frequency: number;
     lastUsed: number;
   }>;
-  /** Dimensionalidad de los patrones */
+  /** Dimensionality of the patterns */
   patternSize: number;
 }
 
 // ==================================================================
-// Clase Lexicon
+// Lexicon class
 // ==================================================================
 
 /**
- * Léxico neural compartido entre áreas del lenguaje.
+ * Neural lexicon shared between the language areas.
  *
- * Base biológica:
- *   Modela el almacén léxico del lóbulo temporal donde cada concepto/palabra
- *   se representa como un patrón de activación distribuido sobre una población
- *   neuronal. La recuperación ocurre por competencia: el patrón almacenado
- *   más similar al input gana (modelo de acceso léxico por activación
- *   interactiva, McClelland & Rumelhart 1981).
+ * Biological basis:
+ *   Models the lexical store of the temporal lobe where each concept/word
+ *   is represented as an activation pattern distributed over a neuronal
+ *   population. Retrieval occurs by competition: the stored pattern
+ *   most similar to the input wins (interactive activation model of
+ *   lexical access, McClelland & Rumelhart 1981).
  *
- *   Características implementadas:
- *   - Efecto de frecuencia léxica: palabras frecuentes tienen umbral de
- *     activación más bajo (se recuperan más rápido)
- *   - Efecto de recencia: palabras usadas recientemente tienen priming residual
- *   - Competencia léxica: al buscar, se retornan las K mejores coincidencias
+ *   Implemented features:
+ *   - Lexical frequency effect: frequent words have a lower activation
+ *     threshold (they are retrieved faster)
+ *   - Recency effect: recently used words have residual priming
+ *   - Lexical competition: when searching, the K best matches are returned
  */
 export class Lexicon {
-  /** Almacén principal: palabra → entrada léxica */
+  /** Main store: word → lexical entry */
   private readonly entries: Map<string, LexiconEntry> = new Map();
 
   /**
-   * Cache de normas L2 para acelerar cálculos de similitud coseno.
-   * Se invalida cuando se modifica una entrada.
+   * Cache of L2 norms to accelerate cosine similarity computations.
+   * Invalidated when an entry is modified.
    */
   private readonly normCache: Map<string, number> = new Map();
 
-  /** Dimensionalidad de los patrones neurales */
+  /** Dimensionality of the neural patterns */
   private readonly patternSize: number;
 
   /**
-   * Crea un nuevo léxico neural.
+   * Creates a new neural lexicon.
    *
-   * @param patternSize - Dimensionalidad de los patrones neurales (default: 5000)
+   * @param patternSize - Dimensionality of the neural patterns (default: 5000)
    */
   constructor(patternSize: number = 5000) {
     this.patternSize = patternSize;
   }
 
   // ----------------------------------------------------------------
-  // Operaciones CRUD
+  // CRUD operations
   // ----------------------------------------------------------------
 
   /**
-   * Agrega o actualiza una palabra en el léxico.
+   * Adds or updates a word in the lexicon.
    *
-   * Base biológica:
-   *   Modela el aprendizaje léxico: la primera exposición a una palabra
-   *   crea un nuevo engrama neural. Exposiciones repetidas fortalecen
-   *   la frecuencia (efecto de repetición) y actualizan el patrón si
-   *   el contexto genera una representación ligeramente diferente
-   *   (refinamiento del engrama).
+   * Biological basis:
+   *   Models lexical learning: the first exposure to a word
+   *   creates a new neural engram. Repeated exposures strengthen
+   *   the frequency (repetition effect) and update the pattern if
+   *   the context generates a slightly different representation
+   *   (engram refinement).
    *
-   * @param word - Palabra a agregar (normalizada a minúsculas)
-   * @param pattern - Patrón de activación neural asociado
+   * @param word - Word to add (normalized to lowercase)
+   * @param pattern - Associated neural activation pattern
    */
   add(word: string, pattern: Float32Array): void {
     const key = word.toLowerCase();
     const existing = this.entries.get(key);
 
     if (existing) {
-      // Actualización: mezclar patrón existente con nuevo (promedio ponderado)
-      // Biología: refinamiento del engrama por exposición repetida
-      const alpha = 0.3; // Tasa de actualización
+      // Update: blend existing pattern with new one (weighted average)
+      // Biology: engram refinement through repeated exposure
+      const alpha = 0.3; // Update rate
       for (let i = 0; i < this.patternSize; i++) {
         existing.pattern[i] = existing.pattern[i] * (1 - alpha) + pattern[i] * alpha;
       }
       existing.frequency++;
       existing.lastUsed = Date.now();
     } else {
-      // Nuevo engrama léxico
+      // New lexical engram
       this.entries.set(key, {
         pattern: new Float32Array(pattern),
         frequency: 1,
@@ -150,19 +150,19 @@ export class Lexicon {
       });
     }
 
-    // Invalidar cache de norma
+    // Invalidate norm cache
     this.normCache.delete(key);
   }
 
   /**
-   * Busca una palabra en el léxico y retorna su patrón neural.
+   * Looks up a word in the lexicon and returns its neural pattern.
    *
-   * Base biológica:
-   *   Acceso léxico directo (por forma ortográfica/fonológica conocida).
-   *   Actualiza la recencia para modelar priming.
+   * Biological basis:
+   *   Direct lexical access (by known orthographic/phonological form).
+   *   Updates recency to model priming.
    *
-   * @param word - Palabra a buscar
-   * @returns Patrón neural si existe, null si no está en el léxico
+   * @param word - Word to look up
+   * @returns Neural pattern if it exists, null if it is not in the lexicon
    */
   lookup(word: string): Float32Array | null {
     const entry = this.entries.get(word.toLowerCase());
@@ -173,18 +173,18 @@ export class Lexicon {
   }
 
   /**
-   * Busca las K palabras más similares a un patrón neural dado.
+   * Finds the K words most similar to a given neural pattern.
    *
-   * Base biológica:
-   *   Modela el acceso léxico por activación: el input neural (ej: patrón
-   *   auditivo parcial) se compara con todos los engramas léxicos
-   *   almacenados. Los engramas más similares se activan primero
-   *   (modelo de cohorte, Marslen-Wilson 1987). La frecuencia léxica
-   *   sesga la competencia a favor de palabras más comunes.
+   * Biological basis:
+   *   Models lexical access by activation: the neural input (e.g.: partial
+   *   auditory pattern) is compared against all the stored lexical
+   *   engrams. The most similar engrams are activated first
+   *   (cohort model, Marslen-Wilson 1987). Lexical frequency
+   *   biases the competition in favor of more common words.
    *
-   * @param pattern - Patrón neural de consulta
-   * @param topK - Número de coincidencias a retornar (default: 5)
-   * @returns Array de coincidencias ordenadas por similitud descendente
+   * @param pattern - Query neural pattern
+   * @param topK - Number of matches to return (default: 5)
+   * @returns Array of matches ordered by descending similarity
    */
   findClosest(pattern: Float32Array, topK: number = 5): LexiconMatch[] {
     const queryNorm = this.computeNorm(pattern);
@@ -196,38 +196,38 @@ export class Lexicon {
       const entryNorm = this.getCachedNorm(word, entry.pattern);
       if (entryNorm === 0) continue;
 
-      // Similitud coseno base
+      // Base cosine similarity
       let similarity = this.dotProduct(pattern, entry.pattern) / (queryNorm * entryNorm);
 
-      // Sesgo por frecuencia léxica (efecto sutil, ~5% de boost max)
-      // Biología: palabras frecuentes tienen umbrales más bajos
+      // Lexical frequency bias (subtle effect, ~5% max boost)
+      // Biology: frequent words have lower thresholds
       const freqBoost = Math.min(0.05, Math.log1p(entry.frequency) * 0.01);
       similarity = Math.min(1.0, similarity + freqBoost);
 
       matches.push({ word, similarity });
     }
 
-    // Ordenar por similitud descendente y retornar top K
+    // Sort by descending similarity and return the top K
     matches.sort((a, b) => b.similarity - a.similarity);
     return matches.slice(0, topK);
   }
 
   // ----------------------------------------------------------------
-  // Utilidades matemáticas
+  // Math utilities
   // ----------------------------------------------------------------
 
   /**
-   * Calcula la similitud coseno entre dos patrones neurales.
+   * Computes the cosine similarity between two neural patterns.
    *
-   * Base biológica:
-   *   La similitud coseno captura la similitud de la "dirección" de
-   *   activación de dos poblaciones neurales, independiente de la magnitud.
-   *   Esto modela cómo el cerebro compara patrones de activación
-   *   distributed (análogo a la correlación de población neural).
+   * Biological basis:
+   *   Cosine similarity captures the similarity of the activation
+   *   "direction" of two neural populations, independent of magnitude.
+   *   This models how the brain compares distributed activation
+   *   patterns (analogous to neural population correlation).
    *
-   * @param a - Primer patrón neural
-   * @param b - Segundo patrón neural
-   * @returns Similitud coseno en rango [-1, 1]
+   * @param a - First neural pattern
+   * @param b - Second neural pattern
+   * @returns Cosine similarity in range [-1, 1]
    */
   cosineSimilarity(a: Float32Array, b: Float32Array): number {
     const normA = this.computeNorm(a);
@@ -239,16 +239,16 @@ export class Lexicon {
   }
 
   /**
-   * Producto punto (dot product) optimizado para Float32Array.
+   * Dot product optimized for Float32Array.
    *
-   * @param a - Primer vector
-   * @param b - Segundo vector
-   * @returns Producto escalar
+   * @param a - First vector
+   * @param b - Second vector
+   * @returns Scalar product
    */
   private dotProduct(a: Float32Array, b: Float32Array): number {
     const len = Math.min(a.length, b.length);
     let sum = 0;
-    // Desenrollado manual de bucle para mejor rendimiento (4-way unroll)
+    // Manual loop unrolling for better performance (4-way unroll)
     const limit = len - (len % 4);
     let i = 0;
 
@@ -263,7 +263,7 @@ export class Lexicon {
   }
 
   /**
-   * Calcula la norma L2 de un vector.
+   * Computes the L2 norm of a vector.
    *
    * @param v - Vector
    * @returns ||v||₂
@@ -277,8 +277,8 @@ export class Lexicon {
   }
 
   /**
-   * Obtiene la norma L2 cacheada de una entrada léxica.
-   * Evita recalcular la norma en cada búsqueda.
+   * Gets the cached L2 norm of a lexical entry.
+   * Avoids recomputing the norm on every search.
    */
   private getCachedNorm(word: string, pattern: Float32Array): number {
     let norm = this.normCache.get(word);
@@ -290,45 +290,45 @@ export class Lexicon {
   }
 
   // ----------------------------------------------------------------
-  // Propiedades y utilidades
+  // Properties and utilities
   // ----------------------------------------------------------------
 
   /**
-   * Número total de palabras en el léxico.
+   * Total number of words in the lexicon.
    */
   get size(): number {
     return this.entries.size;
   }
 
   /**
-   * Dimensionalidad de los patrones neurales.
+   * Dimensionality of the neural patterns.
    */
   get dimensions(): number {
     return this.patternSize;
   }
 
   /**
-   * Retorna todas las palabras del léxico.
+   * Returns all the words in the lexicon.
    */
   getWords(): string[] {
     return Array.from(this.entries.keys());
   }
 
   /**
-   * Verifica si una palabra existe en el léxico.
+   * Checks whether a word exists in the lexicon.
    */
   has(word: string): boolean {
     return this.entries.has(word.toLowerCase());
   }
 
   // ----------------------------------------------------------------
-  // Serialización / Deserialización
+  // Serialization / Deserialization
   // ----------------------------------------------------------------
 
   /**
-   * Serializa el léxico completo para persistencia.
+   * Serializes the complete lexicon for persistence.
    *
-   * @returns Objeto serializable con todas las entradas léxicas
+   * @returns Serializable object with all the lexical entries
    */
   serialize(): SerializedLexicon {
     const serializedEntries: SerializedLexicon['entries'] = [];
@@ -349,9 +349,9 @@ export class Lexicon {
   }
 
   /**
-   * Restaura el léxico desde datos serializados.
+   * Restores the lexicon from serialized data.
    *
-   * @param data - Datos previamente serializados con serialize()
+   * @param data - Data previously serialized with serialize()
    */
   deserialize(data: SerializedLexicon): void {
     this.entries.clear();

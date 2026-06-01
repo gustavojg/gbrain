@@ -1,41 +1,41 @@
 /**
- * ÁREA DE BROCA — Producción del Lenguaje
+ * BROCA'S AREA — Language Production
  * =========================================
- * Modela el área de Broca (pars opercularis y pars triangularis del giro
- * frontal inferior, áreas de Brodmann 44/45) del cerebro digital,
- * responsable de la producción y planificación del habla.
+ * Models Broca's area (pars opercularis and pars triangularis of the inferior
+ * frontal gyrus, Brodmann areas 44/45) of the digital brain,
+ * responsible for speech production and planning.
  *
- * Base biológica:
- *   El área de Broca fue descubierta por Paul Broca en 1861 al estudiar
- *   al paciente "Tan" (Louis Leborgne), quien solo podía pronunciar la
- *   sílaba "tan" tras una lesión en el giro frontal inferior izquierdo.
- *   La "afasia de Broca" (afasia expresiva/no fluente) se caracteriza
- *   por comprensión preservada pero producción verbal severamente reducida
- *   y agramatismo (habla telegráfica).
+ * Biological basis:
+ *   Broca's area was discovered by Paul Broca in 1861 while studying
+ *   the patient "Tan" (Louis Leborgne), who could only pronounce the
+ *   syllable "tan" after a lesion in the left inferior frontal gyrus.
+ *   "Broca's aphasia" (expressive/non-fluent aphasia) is characterized
+ *   by preserved comprehension but severely reduced verbal production
+ *   and agrammatism (telegraphic speech).
  *
- *   Funciones modeladas:
- *   1. **Planificación articulatoria**: Traduce representaciones semánticas
- *      (intención comunicativa de la corteza prefrontal) en secuencias de
- *      patrones motores del habla.
+ *   Modeled functions:
+ *   1. **Articulatory planning**: Translates semantic representations
+ *      (communicative intention from the prefrontal cortex) into sequences
+ *      of speech motor patterns.
  *
- *   2. **Selección léxica para producción**: Busca en el léxico compartido
- *      las palabras que mejor expresan la intención semántica. A diferencia
- *      de Wernicke (que recibe input y busca significado), Broca parte
- *      del significado y busca la forma (acceso léxico invertido).
+ *   2. **Lexical selection for production**: Searches the shared lexicon
+ *      for the words that best express the semantic intention. Unlike
+ *      Wernicke (which receives input and searches for meaning), Broca
+ *      starts from meaning and searches for form (inverted lexical access).
  *
- *   3. **Secuenciación**: Ordena los patrones léxicos seleccionados en
- *      una secuencia temporalmente correcta (sintaxis simplificada).
+ *   3. **Sequencing**: Orders the selected lexical patterns into
+ *      a temporally correct sequence (simplified syntax).
  *
- *   4. **Modulación emocional**: El estado emocional (valence/arousal de
- *      la amígdala) modifica la prosodia y la selección léxica, modelando
- *      cómo las emociones afectan el habla (ej: vocabulario más reducido
- *      bajo estrés alto).
+ *   4. **Emotional modulation**: The emotional state (valence/arousal from
+ *      the amygdala) modifies prosody and lexical selection, modeling
+ *      how emotions affect speech (e.g.: more reduced vocabulary
+ *      under high stress).
  *
- *   Conexiones:
- *   - Recibe: intención semántica de la corteza prefrontal (vía fibras
- *     fronto-frontales) y estado emocional de la amígdala
- *   - Envía: patrones motores del habla a la corteza motora primaria
- *   - Comparte: léxico con el área de Wernicke (vía fascículo arqueado)
+ *   Connections:
+ *   - Receives: semantic intention from the prefrontal cortex (via
+ *     fronto-frontal fibers) and emotional state from the amygdala
+ *   - Sends: speech motor patterns to the primary motor cortex
+ *   - Shares: lexicon with Wernicke's area (via the arcuate fasciculus)
  */
 
 import { BrainRegion } from '../../core/brain-region.js';
@@ -43,10 +43,10 @@ import type { ModulationEffects } from '../../core/neuromodulators/modulator-sys
 import { Lexicon, type LexiconMatch } from './lexicon.js';
 
 /**
- * Piso de activación para el k-WTA. Los potenciales son sumas de pesos
- * adimensionales (~0 en reposo), no mV. Sin este piso el gate compara contra
- * `_modulatedThreshold` (−55 mV), siempre pasa, y el k-WTA enciende k neuronas
- * por tick → actividad constante y falsa. Con el piso, en reposo queda a 0%.
+ * Activation floor for the k-WTA. The potentials are sums of dimensionless
+ * weights (~0 at rest), not mV. Without this floor the gate compares against
+ * `_modulatedThreshold` (−55 mV), always passes, and the k-WTA fires k neurons
+ * per tick → constant and false activity. With the floor, it stays at 0% at rest.
  */
 const ACTIVATION_FLOOR = 1e-3;
 
@@ -55,103 +55,103 @@ const ACTIVATION_FLOOR = 1e-3;
 // ==================================================================
 
 /**
- * Estado emocional que modula la producción del lenguaje.
+ * Emotional state that modulates language production.
  *
- * Base biológica:
- *   La amígdala proyecta al área de Broca modulando la prosodia
- *   (entonación emocional) y la selección léxica. Un arousal alto
- *   reduce la fluidez verbal; una valencia positiva sesga hacia
- *   vocabulario positivo (mood-congruent lexical access).
+ * Biological basis:
+ *   The amygdala projects to Broca's area, modulating prosody
+ *   (emotional intonation) and lexical selection. High arousal
+ *   reduces verbal fluency; positive valence biases toward
+ *   positive vocabulary (mood-congruent lexical access).
  */
 export interface EmotionalState {
   /**
-   * Valencia emocional (-1.0 = muy negativo, +1.0 = muy positivo).
-   * Afecta la selección de palabras y el tono de la respuesta.
+   * Emotional valence (-1.0 = very negative, +1.0 = very positive).
+   * Affects word selection and the tone of the response.
    */
   valence: number;
   /**
-   * Nivel de activación emocional (0.0 = calma, 1.0 = alta excitación).
-   * Afecta la longitud y complejidad de la respuesta: arousal alto
-   * produce respuestas más cortas y menos elaboradas.
+   * Emotional arousal level (0.0 = calm, 1.0 = high excitation).
+   * Affects the length and complexity of the response: high arousal
+   * produces shorter and less elaborate responses.
    */
   arousal: number;
 }
 
 /**
- * Palabra seleccionada para producción con su puntuación de relevancia.
+ * Word selected for production with its relevance score.
  */
 export interface SelectedWord {
-  /** Palabra seleccionada del léxico */
+  /** Word selected from the lexicon */
   word: string;
-  /** Puntuación de relevancia semántica (0.0–1.0) */
+  /** Semantic relevance score (0.0–1.0) */
   relevance: number;
-  /** Patrón neural asociado en el léxico */
+  /** Associated neural pattern in the lexicon */
   pattern: Float32Array;
 }
 
 /**
- * Respuesta lingüística generada por el área de Broca.
+ * Linguistic response generated by Broca's area.
  */
 export interface LanguageResponse {
-  /** Secuencia de patrones motores del habla (uno por palabra) */
+  /** Sequence of speech motor patterns (one per word) */
   wordPatterns: Float32Array[];
-  /** Palabras seleccionadas en orden */
+  /** Selected words in order */
   words: string[];
-  /** Confianza global en la respuesta (0.0–1.0) */
+  /** Overall confidence in the response (0.0–1.0) */
   confidence: number;
 }
 
 // ==================================================================
-// Clase BrocaArea
+// BrocaArea class
 // ==================================================================
 
 /**
- * Área de Broca — Producción lingüística del cerebro digital.
+ * Broca's area — Linguistic production of the digital brain.
  *
- * Recibe intenciones semánticas de la corteza prefrontal, selecciona
- * palabras del léxico compartido por similitud coseno, y genera una
- * secuencia de patrones motores del habla modulada por el estado emocional.
+ * Receives semantic intentions from the prefrontal cortex, selects
+ * words from the shared lexicon by cosine similarity, and generates a
+ * sequence of speech motor patterns modulated by the emotional state.
  *
- * Base biológica:
- *   Las columnas corticales en el giro frontal inferior se especializan
- *   en la secuenciación de patrones motores complejos. La red SNN
- *   interna modela la competencia entre candidatos léxicos durante
- *   la producción (modelo de selección léxica por competencia,
- *   Levelt et al., 1999). La inhibición lateral asegura que solo
- *   una palabra se seleccione por slot temporal.
+ * Biological basis:
+ *   The cortical columns in the inferior frontal gyrus specialize
+ *   in sequencing complex motor patterns. The internal SNN
+ *   models the competition between lexical candidates during
+ *   production (competitive lexical selection model,
+ *   Levelt et al., 1999). Lateral inhibition ensures that only
+ *   one word is selected per temporal slot.
  */
 export class BrocaArea extends BrainRegion {
   /**
-   * Léxico compartido con el área de Wernicke.
+   * Lexicon shared with Wernicke's area.
    *
-   * Biología: Broca accede al mismo almacén léxico que Wernicke pero
-   * por la vía dorsal (fascículo arqueado): busca la forma léxica
-   * a partir del significado (dirección inversa a la comprensión).
+   * Biology: Broca accesses the same lexical store as Wernicke but
+   * via the dorsal pathway (arcuate fasciculus): it searches for the
+   * lexical form starting from meaning (the reverse direction of comprehension).
    */
   private readonly lexicon: Lexicon;
 
   /**
-   * Última respuesta lingüística generada.
+   * Last generated linguistic response.
    */
   private lastResponse: LanguageResponse | null = null;
 
   /**
-   * Número máximo de palabras por respuesta.
+   * Maximum number of words per response.
    *
-   * Biología: La longitud de las emisiones verbales está limitada por
-   * la capacidad de planificación articulatoria y la memoria de trabajo
-   * fonológica (bucle fonológico de Baddeley, ~2 segundos de habla).
+   * Biology: The length of verbal utterances is limited by
+   * articulatory planning capacity and phonological working
+   * memory (Baddeley's phonological loop, ~2 seconds of speech).
    */
   private readonly maxResponseLength: number = 10;
 
   /**
-   * Crea el Área de Broca del cerebro digital.
+   * Creates Broca's area of the digital brain.
    *
-   * Biología: El área de Broca contiene ~100 millones de neuronas en
-   * las áreas 44/45. Modelamos 5.000 neuronas con 5.000 entradas,
-   * reflejando la estructura columnar del giro frontal inferior.
+   * Biology: Broca's area contains ~100 million neurons in
+   * areas 44/45. We model 5,000 neurons with 5,000 inputs,
+   * reflecting the columnar structure of the inferior frontal gyrus.
    *
-   * @param lexicon - Léxico compartido (misma instancia que Wernicke)
+   * @param lexicon - Shared lexicon (same instance as Wernicke)
    */
   constructor(lexicon: Lexicon, neuronCount: number = 5000, inputCount: number = 5000) {
     super(
@@ -164,23 +164,23 @@ export class BrocaArea extends BrainRegion {
   }
 
   // ----------------------------------------------------------------
-  // Selección Léxica
+  // Lexical Selection
   // ----------------------------------------------------------------
 
   /**
-   * Selecciona las K palabras más relevantes para expresar un patrón semántico.
+   * Selects the K most relevant words to express a semantic pattern.
    *
-   * Base biológica:
-   *   Modela el acceso léxico para producción (lematización): dado un
-   *   concepto semántico, se busca la forma léxica que mejor lo expresa.
-   *   La selección ocurre por competencia: múltiples lemas se activan
-   *   parcialmente y compiten por selección (modelo WEAVER++, Levelt
-   *   et al., 1999). Las palabras con mayor similitud coseno al
-   *   patrón de intención ganan la competencia.
+   * Biological basis:
+   *   Models lexical access for production (lemmatization): given a
+   *   semantic concept, it searches for the lexical form that best expresses it.
+   *   Selection occurs by competition: multiple lemmas are partially
+   *   activated and compete for selection (WEAVER++ model, Levelt
+   *   et al., 1999). The words with the highest cosine similarity to
+   *   the intention pattern win the competition.
    *
-   * @param semanticPattern - Patrón semántico de la intención comunicativa
-   * @param topK - Número de palabras a seleccionar
-   * @returns Palabras seleccionadas ordenadas por relevancia descendente
+   * @param semanticPattern - Semantic pattern of the communicative intention
+   * @param topK - Number of words to select
+   * @returns Selected words ordered by descending relevance
    */
   selectWords(semanticPattern: Float32Array, topK: number = 5): SelectedWord[] {
     if (this.lexicon.size === 0) return [];
@@ -198,70 +198,70 @@ export class BrocaArea extends BrainRegion {
   }
 
   // ----------------------------------------------------------------
-  // Generación de Respuesta
+  // Response Generation
   // ----------------------------------------------------------------
 
   /**
-   * Genera una respuesta lingüística a partir de una intención semántica
-   * y un estado emocional.
+   * Generates a linguistic response from a semantic intention
+   * and an emotional state.
    *
-   * Base biológica:
-   *   La producción del habla en Broca sigue un pipeline de 3 etapas
-   *   (modelo de Levelt, 1989):
+   * Biological basis:
+   *   Speech production in Broca follows a 3-stage pipeline
+   *   (Levelt's model, 1989):
    *
-   *   1. **Conceptualización** → recibida como intención de la PFC
-   *   2. **Formulación** → selección léxica + codificación gramatical
-   *   3. **Articulación** → generación de patrones motores
+   *   1. **Conceptualization** → received as intention from the PFC
+   *   2. **Formulation** → lexical selection + grammatical encoding
+   *   3. **Articulation** → generation of motor patterns
    *
-   *   El estado emocional modula la formulación:
-   *   - Arousal alto → respuestas más cortas (la ansiedad reduce la
-   *     fluidez verbal, efecto Yerkes-Dodson en producción)
-   *   - Valencia negativa → sesgo hacia palabras de alta frecuencia
-   *     (vocabulario "seguro" bajo estrés)
-   *   - Valencia positiva → mayor diversidad léxica
+   *   The emotional state modulates formulation:
+   *   - High arousal → shorter responses (anxiety reduces verbal
+   *     fluency, Yerkes-Dodson effect in production)
+   *   - Negative valence → bias toward high-frequency words
+   *     ("safe" vocabulary under stress)
+   *   - Positive valence → greater lexical diversity
    *
-   * @param intention - Patrón semántico de la intención comunicativa (de la PFC)
-   * @param emotionalState - Estado emocional actual (de la amígdala)
-   * @returns Respuesta lingüística con secuencia de patrones y palabras
+   * @param intention - Semantic pattern of the communicative intention (from the PFC)
+   * @param emotionalState - Current emotional state (from the amygdala)
+   * @returns Linguistic response with a sequence of patterns and words
    */
   generateResponse(
     intention: Float32Array,
     emotionalState: EmotionalState
   ): LanguageResponse {
-    // 1. Determinar longitud de la respuesta según arousal
-    //    Alto arousal → respuesta más corta (efecto del estrés sobre fluidez)
+    // 1. Determine the response length based on arousal
+    //    High arousal → shorter response (effect of stress on fluency)
     const arousalFactor = 1.0 - emotionalState.arousal * 0.6;
     const responseLength = Math.max(
       1,
       Math.floor(this.maxResponseLength * arousalFactor)
     );
 
-    // 2. Determinar cantidad de candidatos a evaluar según valencia
-    //    Valencia positiva → más candidatos → mayor diversidad
+    // 2. Determine the number of candidates to evaluate based on valence
+    //    Positive valence → more candidates → greater diversity
     const diversityFactor = 1.0 + Math.max(0, emotionalState.valence) * 0.5;
     const candidateCount = Math.ceil(responseLength * diversityFactor * 2);
 
-    // 3. Seleccionar candidatos léxicos
+    // 3. Select lexical candidates
     const candidates = this.selectWords(intention, candidateCount);
 
     if (candidates.length === 0) {
       return { wordPatterns: [], words: [], confidence: 0 };
     }
 
-    // 4. Construir secuencia de respuesta
+    // 4. Build the response sequence
     const wordPatterns: Float32Array[] = [];
     const words: string[] = [];
     let totalRelevance = 0;
 
-    // Seleccionar las mejores palabras sin repetir
+    // Select the best words without repeating
     const used = new Set<string>();
 
     for (const candidate of candidates) {
       if (words.length >= responseLength) break;
       if (used.has(candidate.word)) continue;
 
-      // Bajo valencia negativa, favorecer palabras de alta relevancia
-      // (vocabulario más conservador bajo estrés)
+      // Under negative valence, favor high-relevance words
+      // (more conservative vocabulary under stress)
       const valencePenalty = emotionalState.valence < 0
         ? (1.0 - candidate.relevance) * Math.abs(emotionalState.valence) * 0.3
         : 0;
@@ -287,56 +287,56 @@ export class BrocaArea extends BrainRegion {
   }
 
   /**
-   * Retorna la última respuesta lingüística generada.
+   * Returns the last generated linguistic response.
    */
   getLastResponse(): LanguageResponse | null {
     return this.lastResponse;
   }
 
   /**
-   * Retorna una referencia al léxico compartido.
+   * Returns a reference to the shared lexicon.
    */
   getLexicon(): Lexicon {
     return this.lexicon;
   }
 
   // ----------------------------------------------------------------
-  // processInput — Ciclo de producción lingüística
+  // processInput — Linguistic production cycle
   // ----------------------------------------------------------------
 
   /**
-   * Procesa un paso de simulación del área de Broca.
+   * Processes one simulation step of Broca's area.
    *
-   * Base biológica:
-   *   El ciclo de producción de Broca opera en ~150ms y consiste en:
+   * Biological basis:
+   *   Broca's production cycle operates in ~150ms and consists of:
    *
-   *   1. **Recepción de intención**: Los spikes de entrada representan
-   *      la intención comunicativa de la corteza prefrontal, transmitida
-   *      vía fibras fronto-frontales.
+   *   1. **Intention reception**: The input spikes represent
+   *      the communicative intention of the prefrontal cortex, transmitted
+   *      via fronto-frontal fibers.
    *
-   *   2. **Procesamiento SNN**: La red neural local procesa la intención
-   *      mediante competencia k-WTA, seleccionando las representaciones
-   *      motoras más relevantes.
+   *   2. **SNN processing**: The local neural network processes the intention
+   *      through k-WTA competition, selecting the most relevant
+   *      motor representations.
    *
-   *   3. **Formulación**: Se seleccionan las palabras del léxico que
-   *      mejor capturan la intención (acceso léxico para producción).
+   *   3. **Formulation**: The lexicon words that best capture the
+   *      intention are selected (lexical access for production).
    *
-   *   4. **Generación**: Se produce una secuencia de patrones motores
-   *      del habla que se envían a la corteza motora primaria para
-   *      la ejecución articulatoria.
+   *   4. **Generation**: A sequence of speech motor patterns is
+   *      produced and sent to the primary motor cortex for
+   *      articulatory execution.
    *
-   *   El estado emocional se estima a partir de la actividad de spikes
-   *   en la ausencia de un input directo de la amígdala.
+   *   The emotional state is estimated from the spike activity
+   *   in the absence of a direct input from the amygdala.
    *
-   * @param spikes - Vector de spikes de entrada (intención de la PFC)
-   * @param modulationEffects - Efectos de neuromodulación actuales
-   * @returns Vector de spikes de salida (patrones motores del habla)
+   * @param spikes - Input spike vector (intention from the PFC)
+   * @param modulationEffects - Current neuromodulation effects
+   * @returns Output spike vector (speech motor patterns)
    */
   processInput(
     spikes: Float32Array,
     modulationEffects: ModulationEffects
   ): Float32Array {
-    // 1. Computar activaciones de la SNN local
+    // 1. Compute activations of the local SNN
     const activations = new Float32Array(this.neuronCount);
     const inputLen = Math.min(spikes.length, this.inputCount);
 
@@ -348,17 +348,17 @@ export class BrocaArea extends BrainRegion {
         sum += this.weights[baseOffset + j] * spikes[j];
       }
 
-      // Modulación: ganancia de spikes y atención
+      // Modulation: spike gain and attention
       sum *= modulationEffects.spikeGainMultiplier;
 
-      // Integración LIF simplificada
+      // Simplified LIF integration
       this.potentials[n] += sum;
-      this.potentials[n] *= 0.92; // Leak temporal (ligeramente más rápido que Wernicke)
+      this.potentials[n] *= 0.92; // Temporal leak (slightly faster than Wernicke)
 
       activations[n] = this.potentials[n];
     }
 
-    // 2. Competencia k-WTA
+    // 2. k-WTA competition
     const k = Math.max(1, Math.floor(this.neuronCount * this.sparsity));
     const outputSpikes = new Float32Array(this.neuronCount);
 
@@ -372,12 +372,12 @@ export class BrocaArea extends BrainRegion {
       }
     }
 
-    // 3. Actualizar estado de spikes
+    // 3. Update spike state
     this.spikes.set(outputSpikes);
 
-    // 4. Generar respuesta lingüística a partir del spike pattern
-    //    Estimar estado emocional desde la neuromodulación:
-    //    - Serotonina alta → valencia positiva; cortisol alto → arousal alto
+    // 4. Generate linguistic response from the spike pattern
+    //    Estimate emotional state from neuromodulation:
+    //    - High serotonin → positive valence; high cortisol → high arousal
     const estimatedEmotionalState: EmotionalState = {
       valence: (modulationEffects.spikeGainMultiplier - 1.0) * 0.5,
       arousal: Math.max(0, Math.min(1, (modulationEffects.attentionGain - 1.0) * 0.8)),
@@ -385,7 +385,7 @@ export class BrocaArea extends BrainRegion {
 
     this.generateResponse(spikes, estimatedEmotionalState);
 
-    // 5. Aprendizaje Hebbiano modulado
+    // 5. Modulated Hebbian learning
     if (modulationEffects.learningRateMultiplier > 0) {
       this.hebbianUpdate(spikes, outputSpikes);
     }
@@ -394,16 +394,16 @@ export class BrocaArea extends BrainRegion {
   }
 
   /**
-   * Actualización Hebbiana de pesos sinápticos para producción.
+   * Hebbian update of synaptic weights for production.
    *
-   * Base biológica:
-   *   Las sinapsis en el giro frontal inferior se fortalecen cuando
-   *   un patrón de intención (pre) activa exitosamente un patrón
-   *   motor (post). Esto refina la asociación entre significado y
-   *   forma léxica, mejorando la fluidez de producción con la práctica.
+   * Biological basis:
+   *   The synapses in the inferior frontal gyrus are strengthened when
+   *   an intention pattern (pre) successfully activates a motor
+   *   pattern (post). This refines the association between meaning and
+   *   lexical form, improving production fluency with practice.
    *
-   * @param preSpikes - Spikes de entrada (intención prefrontal)
-   * @param postSpikes - Spikes de salida (patrones motores)
+   * @param preSpikes - Input spikes (prefrontal intention)
+   * @param postSpikes - Output spikes (motor patterns)
    */
   private hebbianUpdate(preSpikes: Float32Array, postSpikes: Float32Array): void {
     const lr = this._modulatedLearningRate * 0.005;
@@ -418,7 +418,7 @@ export class BrocaArea extends BrainRegion {
           this.weights[baseOffset + j] += lr * preSpikes[j];
         }
 
-        // Clamp de pesos para estabilidad
+        // Weight clamp for stability
         if (this.weights[baseOffset + j] > 1.0) {
           this.weights[baseOffset + j] = 1.0;
         } else if (this.weights[baseOffset + j] < 0) {

@@ -1,38 +1,38 @@
 /**
- * CONFIGURACIÓN DEL CEREBRO DIGITAL
+ * DIGITAL BRAIN CONFIGURATION
  * ==================================
- * Parámetros globales completamente parametrizables para escalar
- * el cerebro según el hardware disponible.
- * 
- * Inspirado en la neuroanatomía humana real:
- * - Proporciones de neuronas basadas en densidades corticales reales
- * - Retardos axonales basados en velocidades de conducción nerviosa
- * - Neuromoduladores con dinámicas biológicamente plausibles
+ * Fully parameterizable global parameters to scale
+ * the brain according to the available hardware.
+ *
+ * Inspired by real human neuroanatomy:
+ * - Neuron proportions based on real cortical densities
+ * - Axonal delays based on nerve conduction velocities
+ * - Neuromodulators with biologically plausible dynamics
  */
 
 // ==================================================================
-// TIPOS DE CONFIGURACIÓN
+// CONFIGURATION TYPES
 // ==================================================================
 
 export interface RegionConfig {
-  /** Número de neuronas en esta región */
+  /** Number of neurons in this region */
   neurons: number;
-  /** Número de inputs que recibe esta región */
+  /** Number of inputs this region receives */
   inputs: number;
-  /** Fracción de neuronas que disparan simultáneamente (sparsity) */
+  /** Fraction of neurons that fire simultaneously (sparsity) */
   sparsity: number;
-  /** Tipo de neurona predominante */
+  /** Predominant neuron type */
   neuronType: 'RegularSpiking' | 'FastSpiking' | 'Chattering' | 'IntrinsicBursting';
 }
 
 export interface SNNConfig {
-  /** Modelo de neurona a utilizar */
+  /** Neuron model to use */
   model: 'izhikevich' | 'lif';
-  /** Paso temporal de simulación (ms) */
+  /** Simulation time step (ms) */
   dt: number;
-  /** Tasa de aprendizaje base para STDP */
+  /** Base learning rate for STDP */
   baseLearningRate: number;
-  /** Constantes de tiempo para STDP (ms) */
+  /** Time constants for STDP (ms) */
   stdp: {
     tauPlus: number;
     tauMinus: number;
@@ -42,37 +42,37 @@ export interface SNNConfig {
 }
 
 export interface MemoryConfig {
-  /** Duración del buffer sensorial (ms) */
+  /** Duration of the sensory buffer (ms) */
   sensoryBufferMs: number;
-  /** Slots de memoria de trabajo (7±2) */
+  /** Working memory slots (7±2) */
   workingMemorySlots: number;
-  /** Capacidad máxima de memorias episódicas en hipocampo */
+  /** Maximum capacity of episodic memories in the hippocampus */
   hippocampalCapacity: number;
-  /** Intervalo entre consolidaciones automáticas — "sueño" (ms) */
+  /** Interval between automatic consolidations — "sleep" (ms) */
   consolidationIntervalMs: number;
-  /** Número de replays por consolidación */
+  /** Number of replays per consolidation */
   consolidationReplays: number;
 }
 
 export interface ModulatorConfig {
-  /** Nivel base (0-1) — hacia donde decae naturalmente */
+  /** Base level (0-1) — where it naturally decays toward */
   baseline: number;
-  /** Velocidad de decaimiento hacia el baseline (por segundo) */
+  /** Decay rate toward the baseline (per second) */
   decayRate: number;
-  /** Cantidad máxima que puede alcanzar */
+  /** Maximum amount it can reach */
   max: number;
 }
 
 export interface ConnectionConfig {
-  /** Región de origen */
+  /** Source region */
   from: string;
-  /** Región de destino */
+  /** Destination region */
   to: string;
-  /** Peso de la conexión (0-1) — escala la amplitud de spikes transmitidos */
+  /** Connection weight (0-1) — scales the amplitude of transmitted spikes */
   weight: number;
-  /** Retardo axonal (ms) — tiempo de conducción entre regiones */
+  /** Axonal delay (ms) — conduction time between regions */
   delay: number;
-  /** Si el peso puede ser modulado por neuromoduladores */
+  /** Whether the weight can be modulated by neuromodulators */
   modulatable: boolean;
 }
 
@@ -82,29 +82,29 @@ export interface BrainConfiguration {
   memory: MemoryConfig;
   modulators: Record<string, ModulatorConfig>;
   connectome: ConnectionConfig[];
-  /** Puerto del servidor HTTP */
+  /** HTTP server port */
   serverPort: number;
-  /** Puerto del WebSocket */
+  /** WebSocket port */
   wsPort: number;
-  /** Frecuencia del tick principal del cerebro (Hz) */
+  /** Frequency of the brain's main tick (Hz) */
   tickRate: number;
-  /** Ruta para persistencia del estado cerebral */
+  /** Path for brain state persistence */
   persistencePath: string;
 }
 
 // ==================================================================
-// CONFIGURACIÓN POR DEFECTO (~50K neuronas)
+// DEFAULT CONFIGURATION (~50K neurons)
 // ==================================================================
 
 export const DEFAULT_BRAIN_CONFIG: BrainConfiguration = {
-  
-  // --- REGIONES DEL CEREBRO ---
+
+  // --- BRAIN REGIONS ---
   regions: {
     thalamus: {
       neurons: 3000,
       inputs: 50000,
       sparsity: 0.05,
-      neuronType: 'FastSpiking',  // El tálamo responde rápido
+      neuronType: 'FastSpiking',  // The thalamus responds fast
     },
     visualCortex: {
       neurons: 10000,
@@ -114,21 +114,21 @@ export const DEFAULT_BRAIN_CONFIG: BrainConfiguration = {
     },
     auditoryCortex: {
       neurons: 5000,
-      inputs: 800,   // 40 bandas × 20 timesteps
+      inputs: 800,   // 40 bands × 20 timesteps
       sparsity: 0.1,
       neuronType: 'RegularSpiking',
     },
     hippocampus: {
       neurons: 5000,
       inputs: 5000,
-      sparsity: 0.05,  // Hipocampo usa codificación muy sparse
+      sparsity: 0.05,  // Hippocampus uses very sparse encoding
       neuronType: 'RegularSpiking',
     },
     amygdala: {
       neurons: 2000,
       inputs: 3000,
-      sparsity: 0.15,  // Amígdala es más reactiva
-      neuronType: 'IntrinsicBursting',  // Respuestas en ráfaga
+      sparsity: 0.15,  // The amygdala is more reactive
+      neuronType: 'IntrinsicBursting',  // Burst responses
     },
     prefrontalCortex: {
       neurons: 15000,
@@ -140,51 +140,51 @@ export const DEFAULT_BRAIN_CONFIG: BrainConfiguration = {
       neurons: 10000,
       inputs: 5000,
       sparsity: 0.1,
-      neuronType: 'Chattering',  // Procesamiento lingüístico rítmico
+      neuronType: 'Chattering',  // Rhythmic linguistic processing
     },
   },
 
-  // --- CONFIGURACIÓN SNN ---
+  // --- SNN CONFIGURATION ---
   snn: {
     model: 'izhikevich',
     dt: 1.0,
     baseLearningRate: 0.01,
     stdp: {
-      tauPlus: 20.0,   // Ventana temporal LTP (ms)
-      tauMinus: 20.0,  // Ventana temporal LTD (ms)
-      aPlus: 0.01,     // Amplitud LTP
-      aMinus: 0.012,   // Amplitud LTD (ligeramente mayor para estabilidad)
+      tauPlus: 20.0,   // LTP time window (ms)
+      tauMinus: 20.0,  // LTD time window (ms)
+      aPlus: 0.01,     // LTP amplitude
+      aMinus: 0.012,   // LTD amplitude (slightly larger for stability)
     },
   },
 
-  // --- CONFIGURACIÓN DE MEMORIA ---
+  // --- MEMORY CONFIGURATION ---
   memory: {
-    sensoryBufferMs: 250,          // Buffer sensorial icónico/ecoico
-    workingMemorySlots: 7,          // 7±2 de Miller
-    hippocampalCapacity: 10000,     // Memorias episódicas máximas
-    consolidationIntervalMs: 300_000,  // "Dormir" cada 5 minutos
-    consolidationReplays: 10,       // Replays por memoria durante consolidación
+    sensoryBufferMs: 250,          // Iconic/echoic sensory buffer
+    workingMemorySlots: 7,          // Miller's 7±2
+    hippocampalCapacity: 10000,     // Maximum episodic memories
+    consolidationIntervalMs: 300_000,  // "Sleep" every 5 minutes
+    consolidationReplays: 10,       // Replays per memory during consolidation
   },
 
-  // --- NEUROMODULADORES ---
+  // --- NEUROMODULATORS ---
   modulators: {
     dopamine: {
       baseline: 0.3,
-      decayRate: 0.1,  // Decae lentamente
+      decayRate: 0.1,  // Decays slowly
       max: 1.0,
     },
     serotonin: {
-      baseline: 0.5,   // Normalmente alto (estabilidad)
-      decayRate: 0.05,  // Muy lento
+      baseline: 0.5,   // Normally high (stability)
+      decayRate: 0.05,  // Very slow
       max: 1.0,
     },
     norepinephrine: {
       baseline: 0.2,
-      decayRate: 0.15,  // Decae moderadamente rápido
+      decayRate: 0.15,  // Decays moderately fast
       max: 1.0,
     },
     cortisol: {
-      baseline: 0.15,   // Normalmente bajo
+      baseline: 0.15,   // Normally low
       decayRate: 0.08,
       max: 1.0,
     },
@@ -195,73 +195,73 @@ export const DEFAULT_BRAIN_CONFIG: BrainConfiguration = {
     },
     oxytocin: {
       baseline: 0.2,
-      decayRate: 0.05,  // Muy lento
+      decayRate: 0.05,  // Very slow
       max: 1.0,
     },
   },
 
-  // --- CONECTOMA (Conexiones inter-regionales) ---
-  // Inspirado en tractos de materia blanca reales
+  // --- CONNECTOME (Inter-regional connections) ---
+  // Inspired by real white matter tracts
   connectome: [
-    // === FEEDFORWARD (Sensorial → Asociativo → Ejecutivo) ===
-    
-    // Tálamo → Cortezas sensoriales (relay talámico)
+    // === FEEDFORWARD (Sensory → Associative → Executive) ===
+
+    // Thalamus → Sensory cortices (thalamic relay)
     { from: 'thalamus', to: 'visualCortex',   weight: 1.0, delay: 5,  modulatable: true },
     { from: 'thalamus', to: 'auditoryCortex',  weight: 1.0, delay: 5,  modulatable: true },
     { from: 'thalamus', to: 'brocaWernicke',   weight: 0.8, delay: 8,  modulatable: true },
-    
-    // Cortezas sensoriales → Hipocampo (formación de memoria)
+
+    // Sensory cortices → Hippocampus (memory formation)
     { from: 'visualCortex',  to: 'hippocampus', weight: 0.9, delay: 10, modulatable: true },
     { from: 'auditoryCortex', to: 'hippocampus', weight: 0.9, delay: 10, modulatable: true },
-    
-    // Cortezas sensoriales → Amígdala (evaluación emocional rápida)
+
+    // Sensory cortices → Amygdala (fast emotional evaluation)
     { from: 'visualCortex',  to: 'amygdala',    weight: 0.7, delay: 8,  modulatable: true },
     { from: 'auditoryCortex', to: 'amygdala',    weight: 0.7, delay: 8,  modulatable: true },
-    
-    // Ruta tálamo-amígdala directa (respuesta emocional ultra-rápida, "low road")
+
+    // Direct thalamus-amygdala route (ultra-fast emotional response, "low road")
     { from: 'thalamus', to: 'amygdala',         weight: 0.5, delay: 3,  modulatable: false },
-    
-    // Hipocampo + Amígdala → Corteza Prefrontal
+
+    // Hippocampus + Amygdala → Prefrontal Cortex
     { from: 'hippocampus', to: 'prefrontalCortex', weight: 0.8, delay: 15, modulatable: true },
     { from: 'amygdala',    to: 'prefrontalCortex', weight: 0.9, delay: 10, modulatable: true },
-    
-    // Corteza Prefrontal → Broca/Wernicke (producción del lenguaje)
+
+    // Prefrontal Cortex → Broca/Wernicke (language production)
     { from: 'prefrontalCortex', to: 'brocaWernicke', weight: 1.0, delay: 12, modulatable: true },
-    
-    // Broca/Wernicke → Hipocampo (memorizar lo que se dice/comprende)
+
+    // Broca/Wernicke → Hippocampus (memorize what is said/understood)
     { from: 'brocaWernicke', to: 'hippocampus', weight: 0.6, delay: 10, modulatable: true },
 
-    // === FEEDBACK (Top-Down — Control ejecutivo) ===
-    
-    // Corteza Prefrontal → Tálamo (control atencional top-down)
+    // === FEEDBACK (Top-Down — Executive control) ===
+
+    // Prefrontal Cortex → Thalamus (top-down attentional control)
     { from: 'prefrontalCortex', to: 'thalamus',      weight: 0.5, delay: 15, modulatable: true },
-    
-    // Corteza Prefrontal → Corteza Visual (imaginación, expectativas)
+
+    // Prefrontal Cortex → Visual Cortex (imagination, expectations)
     { from: 'prefrontalCortex', to: 'visualCortex',   weight: 0.4, delay: 12, modulatable: true },
-    
-    // Corteza Prefrontal → Corteza Auditiva (atención selectiva auditiva)
+
+    // Prefrontal Cortex → Auditory Cortex (auditory selective attention)
     { from: 'prefrontalCortex', to: 'auditoryCortex',  weight: 0.4, delay: 12, modulatable: true },
-    
-    // Amígdala → Tálamo (modulación emocional de atención)
+
+    // Amygdala → Thalamus (emotional modulation of attention)
     { from: 'amygdala', to: 'thalamus',               weight: 0.6, delay: 8,  modulatable: true },
-    
-    // Hipocampo → Cortezas (reactivación de memorias)
+
+    // Hippocampus → Cortices (memory reactivation)
     { from: 'hippocampus', to: 'visualCortex',         weight: 0.3, delay: 12, modulatable: true },
     { from: 'hippocampus', to: 'auditoryCortex',        weight: 0.3, delay: 12, modulatable: true },
-    
-    // Amígdala → Hipocampo (memorias emocionales se consolidan más fuerte)
+
+    // Amygdala → Hippocampus (emotional memories consolidate more strongly)
     { from: 'amygdala', to: 'hippocampus',             weight: 0.8, delay: 5,  modulatable: false },
   ],
 
-  // --- CONFIGURACIÓN DEL SERVIDOR ---
+  // --- SERVER CONFIGURATION ---
   serverPort: 3000,
   wsPort: 3001,
-  tickRate: 100,     // 100 Hz = 10ms por tick
+  tickRate: 100,     // 100 Hz = 10ms per tick
   persistencePath: './brain_state.bin',
 };
 
 /**
- * Crea una configuración personalizada mezclando valores parciales con los defaults.
+ * Creates a custom configuration by merging partial values with the defaults.
  */
 export function createBrainConfig(overrides: Partial<BrainConfiguration> = {}): BrainConfiguration {
   return {
@@ -291,14 +291,14 @@ export function createBrainConfig(overrides: Partial<BrainConfiguration> = {}): 
 }
 
 /**
- * Calcula el número total de neuronas en la configuración.
+ * Computes the total number of neurons in the configuration.
  */
 export function getTotalNeurons(config: BrainConfiguration): number {
   return Object.values(config.regions).reduce((sum, r) => sum + r.neurons, 0);
 }
 
 /**
- * Calcula la memoria estimada en MB para los pesos sinápticos.
+ * Estimates the memory in MB for the synaptic weights.
  */
 export function estimateMemoryUsage(config: BrainConfiguration): number {
   let totalBytes = 0;

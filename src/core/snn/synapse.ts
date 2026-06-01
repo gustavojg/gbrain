@@ -1,82 +1,82 @@
 /**
- * SINAPSIS CON STDP — Plasticidad Dependiente del Tiempo de Spikes
+ * SYNAPSE WITH STDP — Spike-Timing-Dependent Plasticity
  * ==================================================================
- * Implementación de la regla de aprendizaje sináptico STDP
+ * Implementation of the STDP synaptic learning rule
  * (Spike-Timing-Dependent Plasticity).
  *
- * Base biológica:
- *   STDP es el mecanismo de plasticidad sináptica más estudiado en
- *   neurociencia experimental. Descubierto por Markram (1997) y
- *   Bi & Poo (1998), establece que:
+ * Biological basis:
+ *   STDP is the most studied synaptic plasticity mechanism in
+ *   experimental neuroscience. Discovered by Markram (1997) and
+ *   Bi & Poo (1998), it states that:
  *
- *   - Si la neurona presináptica dispara ANTES que la postsináptica (Δt > 0):
- *     → Potenciación a Largo Plazo (LTP): la sinapsis se fortalece.
+ *   - If the presynaptic neuron fires BEFORE the postsynaptic one (Δt > 0):
+ *     → Long-Term Potentiation (LTP): the synapse is strengthened.
  *     → Δw = A+ · exp(-Δt / τ+)
- *     → Interpretación: "la pre CAUSÓ la post" → reforzar la conexión.
+ *     → Interpretation: "the pre CAUSED the post" → reinforce the connection.
  *
- *   - Si la neurona postsináptica dispara ANTES que la presináptica (Δt < 0):
- *     → Depresión a Largo Plazo (LTD): la sinapsis se debilita.
+ *   - If the postsynaptic neuron fires BEFORE the presynaptic one (Δt < 0):
+ *     → Long-Term Depression (LTD): the synapse is weakened.
  *     → Δw = -A- · exp(Δt / τ-)
- *     → Interpretación: "la pre NO causó la post" → debilitar.
+ *     → Interpretation: "the pre did NOT cause the post" → weaken.
  *
- *   La ventana temporal asimétrica (τ ≈ 20ms) coincide con la duración
- *   de los potenciales postsinápticos excitatorios (EPSPs) en corteza.
+ *   The asymmetric temporal window (τ ≈ 20ms) matches the duration
+ *   of the excitatory postsynaptic potentials (EPSPs) in cortex.
  *
- *   El factor de modulación permite que neuromoduladores (dopamina, etc.)
- *   escalen la magnitud del cambio sináptico, implementando así
- *   "three-factor learning rules" (elegibilidad × recompensa × STDP).
+ *   The modulation factor allows neuromodulators (dopamine, etc.)
+ *   to scale the magnitude of the synaptic change, thus implementing
+ *   "three-factor learning rules" (eligibility × reward × STDP).
  *
- * Referencias:
+ * References:
  *   - Bi, G. & Poo, M. (1998). J. Neuroscience, 18(24):10464-10472.
  *   - Markram, H. et al. (1997). Science, 275(5297):213-215.
  */
 
 // ====================================================================
-// Interfaces y tipos
+// Interfaces and types
 // ====================================================================
 
 /**
- * Configuración de una sinapsis individual.
+ * Configuration of an individual synapse.
  *
- * Base biológica:
- *   - weight: eficacia sináptica (amplitud del EPSP/IPSP).
- *   - maxWeight: límite superior por saturación de receptores AMPA/NMDA.
- *   - minWeight: límite inferior (sinapsis silenciosa, no eliminada).
- *   - delay: retardo de conducción axonal en ms.
+ * Biological basis:
+ *   - weight: synaptic efficacy (EPSP/IPSP amplitude).
+ *   - maxWeight: upper limit from AMPA/NMDA receptor saturation.
+ *   - minWeight: lower limit (silent synapse, not eliminated).
+ *   - delay: axonal conduction delay in ms.
  */
 export interface SynapseConfig {
-  /** Peso sináptico inicial (eficacia de transmisión) */
+  /** Initial synaptic weight (transmission efficacy) */
   weight: number;
-  /** Peso máximo alcanzable (saturación de receptores) */
+  /** Maximum reachable weight (receptor saturation) */
   maxWeight: number;
-  /** Peso mínimo (sinapsis silenciosa, pero preservada estructuralmente) */
+  /** Minimum weight (silent synapse, but structurally preserved) */
   minWeight: number;
-  /** Retardo de conducción axonal en milisegundos */
+  /** Axonal conduction delay in milliseconds */
   delay: number;
 }
 
 /**
- * Parámetros de la ventana temporal de STDP.
+ * Parameters of the STDP temporal window.
  *
- * Base biológica:
- *   Los valores por defecto están calibrados según datos experimentales
- *   de sinapsis corticales glutamatérgicas:
- *   - A+ < A- asegura que la competencia sináptica tienda hacia
- *     la estabilidad (más LTD que LTP en promedio).
- *   - τ ≈ 20ms corresponde a la duración típica de un EPSP.
+ * Biological basis:
+ *   The default values are calibrated according to experimental data
+ *   from glutamatergic cortical synapses:
+ *   - A+ < A- ensures that synaptic competition tends toward
+ *     stability (more LTD than LTP on average).
+ *   - τ ≈ 20ms corresponds to the typical duration of an EPSP.
  */
 export interface STDPParams {
-  /** Amplitud máxima de potenciación (LTP). Valor típico: 0.01 */
+  /** Maximum potentiation amplitude (LTP). Typical value: 0.01 */
   readonly aPlus: number;
-  /** Amplitud máxima de depresión (LTD). Valor típico: 0.012 */
+  /** Maximum depression amplitude (LTD). Typical value: 0.012 */
   readonly aMinus: number;
-  /** Constante de tiempo de la ventana LTP en ms. Valor típico: 20 */
+  /** Time constant of the LTP window in ms. Typical value: 20 */
   readonly tauPlus: number;
-  /** Constante de tiempo de la ventana LTD en ms. Valor típico: 20 */
+  /** Time constant of the LTD window in ms. Typical value: 20 */
   readonly tauMinus: number;
 }
 
-/** Parámetros STDP por defecto basados en datos experimentales corticales */
+/** Default STDP parameters based on experimental cortical data */
 export const DEFAULT_STDP_PARAMS: STDPParams = {
   aPlus: 0.01,
   aMinus: 0.012,
@@ -85,44 +85,44 @@ export const DEFAULT_STDP_PARAMS: STDPParams = {
 } as const;
 
 // ====================================================================
-// Clase STDPSynapse
+// STDPSynapse class
 // ====================================================================
 
 /**
- * Sinapsis con plasticidad dependiente del tiempo de spikes (STDP).
+ * Synapse with spike-timing-dependent plasticity (STDP).
  *
- * Base biológica:
- *   Modela una conexión sináptica individual entre dos neuronas, con
- *   capacidad de modificar su eficacia (peso) según la regla STDP.
+ * Biological basis:
+ *   Models an individual synaptic connection between two neurons, with
+ *   the ability to modify its efficacy (weight) according to the STDP rule.
  *
- *   La sinapsis incluye:
- *   - Un peso que determina la amplitud de corriente inyectada
- *   - Un retardo de conducción axonal
- *   - Límites homeostáticos para evitar pesos patológicos
- *   - Regla STDP modulable por neuromoduladores
+ *   The synapse includes:
+ *   - A weight that determines the amplitude of the injected current
+ *   - An axonal conduction delay
+ *   - Homeostatic limits to prevent pathological weights
+ *   - An STDP rule modulable by neuromodulators
  *
- * Rendimiento:
- *   Para redes grandes (50K+), se recomienda usar la clase SNNNetwork
- *   que almacena pesos en Float32Array plano. Esta clase es útil para
- *   conexiones inter-regionales individuales o para depuración.
+ * Performance:
+ *   For large networks (50K+), it is recommended to use the SNNNetwork
+ *   class, which stores weights in a flat Float32Array. This class is useful for
+ *   individual inter-regional connections or for debugging.
  */
 export class STDPSynapse {
-  /** Peso sináptico actual (eficacia de transmisión) */
+  /** Current synaptic weight (transmission efficacy) */
   private weight: number;
-  /** Peso máximo permitido (homeostasis) */
+  /** Maximum allowed weight (homeostasis) */
   private readonly maxWeight: number;
-  /** Peso mínimo permitido (homeostasis) */
+  /** Minimum allowed weight (homeostasis) */
   private readonly minWeight: number;
-  /** Retardo de conducción axonal (ms) */
+  /** Axonal conduction delay (ms) */
   public readonly delay: number;
-  /** Parámetros de la ventana STDP */
+  /** Parameters of the STDP window */
   private readonly stdp: STDPParams;
 
   /**
-   * Crea una nueva sinapsis STDP.
+   * Creates a new STDP synapse.
    *
-   * @param config - Configuración de la sinapsis (peso, límites, retardo)
-   * @param stdpParams - Parámetros opcionales de la ventana STDP
+   * @param config - Synapse configuration (weight, limits, delay)
+   * @param stdpParams - Optional parameters of the STDP window
    */
   constructor(
     config: SynapseConfig,
@@ -136,36 +136,36 @@ export class STDPSynapse {
   }
 
   /**
-   * Aplica la regla STDP basada en los tiempos de spike pre y postsináptico.
+   * Applies the STDP rule based on the pre- and postsynaptic spike times.
    *
-   * Base biológica:
-   *   Calcula el cambio de peso Δw según la diferencia temporal:
+   * Biological basis:
+   *   Computes the weight change Δw according to the temporal difference:
    *     Δt = t_post - t_pre
    *
-   *   - Δt > 0 (pre antes que post): LTP → la sinapsis se fortalece
-   *     porque la actividad presináptica predijo/causó el disparo post.
+   *   - Δt > 0 (pre before post): LTP → the synapse is strengthened
+   *     because the presynaptic activity predicted/caused the post firing.
    *     Δw = A+ · exp(-Δt / τ+)
    *
-   *   - Δt < 0 (post antes que pre): LTD → la sinapsis se debilita
-   *     porque la actividad presináptica NO predijo el disparo post.
-   *     Δw = -A- · exp(Δt / τ-)   (nota: Δt < 0 aquí)
+   *   - Δt < 0 (post before pre): LTD → the synapse is weakened
+   *     because the presynaptic activity did NOT predict the post firing.
+   *     Δw = -A- · exp(Δt / τ-)   (note: Δt < 0 here)
    *
-   *   El modulationFactor escala Δw, permitiendo que neuromoduladores
-   *   (dopamina = recompensa, norepinefrina = alerta) controlen
-   *   cuánto se aprende. Esto implementa la "three-factor rule":
-   *     Δw_final = STDP(Δt) × modulación
+   *   The modulationFactor scales Δw, allowing neuromodulators
+   *   (dopamine = reward, norepinephrine = alertness) to control
+   *   how much is learned. This implements the "three-factor rule":
+   *     Δw_final = STDP(Δt) × modulation
    *
-   * @param preSpikeTime - Tiempo del spike presináptico (ms)
-   * @param postSpikeTime - Tiempo del spike postsináptico (ms)
-   * @param modulationFactor - Factor de modulación neuromoduladora (default: 1.0)
-   * @returns El cambio de peso aplicado (Δw)
+   * @param preSpikeTime - Time of the presynaptic spike (ms)
+   * @param postSpikeTime - Time of the postsynaptic spike (ms)
+   * @param modulationFactor - Neuromodulatory modulation factor (default: 1.0)
+   * @returns The applied weight change (Δw)
    */
   applySTDP(
     preSpikeTime: number,
     postSpikeTime: number,
     modulationFactor: number = 1.0,
   ): number {
-    // No hay aprendizaje si alguna neurona nunca ha disparado
+    // No learning if either neuron has never fired
     if (!isFinite(preSpikeTime) || !isFinite(postSpikeTime)) {
       return 0;
     }
@@ -175,18 +175,18 @@ export class STDPSynapse {
     let deltaW = 0;
 
     if (deltaT > 0) {
-      // Pre dispara antes que post → LTP (potenciación)
+      // Pre fires before post → LTP (potentiation)
       deltaW = this.stdp.aPlus * Math.exp(-deltaT / this.stdp.tauPlus);
     } else if (deltaT < 0) {
-      // Post dispara antes que pre → LTD (depresión)
+      // Post fires before pre → LTD (depression)
       deltaW = -this.stdp.aMinus * Math.exp(deltaT / this.stdp.tauMinus);
     }
-    // Si deltaT === 0, no se aplica cambio (evento simultáneo, ambiguo)
+    // If deltaT === 0, no change is applied (simultaneous, ambiguous event)
 
-    // Aplicar modulación neuromoduladora (three-factor rule)
+    // Apply neuromodulatory modulation (three-factor rule)
     deltaW *= modulationFactor;
 
-    // Actualizar peso con límites homeostáticos
+    // Update weight with homeostatic limits
     this.weight = Math.max(
       this.minWeight,
       Math.min(this.maxWeight, this.weight + deltaW),
@@ -196,42 +196,42 @@ export class STDPSynapse {
   }
 
   /**
-   * Retorna el peso sináptico actual.
+   * Returns the current synaptic weight.
    *
-   * @returns Peso sináptico (eficacia de transmisión)
+   * @returns Synaptic weight (transmission efficacy)
    */
   getWeight(): number {
     return this.weight;
   }
 
   /**
-   * Establece el peso sináptico directamente (respetando límites).
-   * Útil para inicialización o restauración desde persistencia.
+   * Sets the synaptic weight directly (respecting limits).
+   * Useful for initialization or restoration from persistence.
    *
-   * @param newWeight - Nuevo peso sináptico
+   * @param newWeight - New synaptic weight
    */
   setWeight(newWeight: number): void {
     this.weight = Math.max(this.minWeight, Math.min(this.maxWeight, newWeight));
   }
 
   /**
-   * Reinicia el peso sináptico al valor medio entre min y max.
+   * Resets the synaptic weight to the midpoint value between min and max.
    *
-   * Base biológica:
-   *   Simula una despotenciación sináptica masiva, como la observada
-   *   durante el sueño de ondas lentas (slow-wave sleep), donde las
-   *   sinapsis se reescalan globalmente a niveles basales.
+   * Biological basis:
+   *   Simulates a massive synaptic depotentiation, like the one observed
+   *   during slow-wave sleep, where the
+   *   synapses are globally rescaled to basal levels.
    */
   reset(): void {
     this.weight = (this.maxWeight + this.minWeight) * 0.5;
   }
 
   /**
-   * Calcula la corriente sináptica transmitida (peso × spike presináptico).
-   * En la práctica: retorna el peso si hay spike, 0 si no.
+   * Computes the transmitted synaptic current (weight × presynaptic spike).
+   * In practice: returns the weight if there is a spike, 0 otherwise.
    *
-   * @param presynapticSpike - true si la neurona presináptica disparó
-   * @returns Corriente inyectada en la neurona postsináptica
+   * @param presynapticSpike - true if the presynaptic neuron fired
+   * @returns Current injected into the postsynaptic neuron
    */
   transmit(presynapticSpike: boolean): number {
     return presynapticSpike ? this.weight : 0;
@@ -239,22 +239,22 @@ export class STDPSynapse {
 }
 
 // ====================================================================
-// Funciones utilitarias para STDP a nivel de red
+// Utility functions for network-level STDP
 // ====================================================================
 
 /**
- * Calcula el cambio de peso STDP entre un par de neuronas sin aplicarlo.
- * Función pura para uso en redes que almacenan pesos en Float32Array.
+ * Computes the STDP weight change between a pair of neurons without applying it.
+ * Pure function for use in networks that store weights in a Float32Array.
  *
- * Base biológica:
- *   Versión funcional del cálculo STDP, diseñada para integración con
- *   la clase SNNNetwork que usa almacenamiento plano de pesos.
+ * Biological basis:
+ *   Functional version of the STDP computation, designed for integration with
+ *   the SNNNetwork class that uses flat weight storage.
  *
- * @param preSpikeTime - Tiempo del spike presináptico (ms)
- * @param postSpikeTime - Tiempo del spike postsináptico (ms)
- * @param stdp - Parámetros de la ventana STDP
- * @param modulationFactor - Factor de modulación neuromoduladora
- * @returns Δw calculado (sin aplicar límites)
+ * @param preSpikeTime - Time of the presynaptic spike (ms)
+ * @param postSpikeTime - Time of the postsynaptic spike (ms)
+ * @param stdp - Parameters of the STDP window
+ * @param modulationFactor - Neuromodulatory modulation factor
+ * @returns Computed Δw (without applying limits)
  */
 export function computeSTDP(
   preSpikeTime: number,

@@ -1,26 +1,26 @@
 /**
- * CORTEZA VISUAL — Procesamiento de patrones visuales (núcleo biológico real)
+ * VISUAL CORTEX — Visual pattern processing (real biological core)
  * ===========================================================================
- * Región de referencia del Camino A: dinámica de membrana de Izhikevich
- * ejecutada tick a tick, inhibición lateral k-WTA, período refractario,
- * corriente de fondo, homeostasis de excitabilidad y plasticidad STDP
- * basada en trazas pre/post.
+ * Reference region for Path A: Izhikevich membrane dynamics executed
+ * tick by tick, k-WTA lateral inhibition, refractory period,
+ * background current, excitability homeostasis and STDP plasticity
+ * based on pre/post traces.
  *
- * Base biológica:
- *   - Las neuronas de V1 (Hubel & Wiesel, 1962) responden a bordes/orientaciones.
- *   - Codificación sparse por inhibición lateral GABAérgica (k-WTA).
- *   - STDP (Bi & Poo, 1998): la pre que dispara ANTES que la post potencia
- *     la sinapsis (LTP); la pre que dispara DESPUÉS deprime (LTD).
- *   - Homeostasis (Turrigiano, 1998/2008): escalado sináptico + ajuste de
- *     excitabilidad intrínseca para mantener una tasa de disparo objetivo.
+ * Biological basis:
+ *   - V1 neurons (Hubel & Wiesel, 1962) respond to edges/orientations.
+ *   - Sparse coding via GABAergic lateral inhibition (k-WTA).
+ *   - STDP (Bi & Poo, 1998): a pre that fires BEFORE the post potentiates
+ *     the synapse (LTP); a pre that fires AFTER depresses it (LTD).
+ *   - Homeostasis (Turrigiano, 1998/2008): synaptic scaling + adjustment of
+ *     intrinsic excitability to maintain a target firing rate.
  *
- * Implementación de STDP:
- *   Se usa la formulación por TRAZAS (pair-based, nearest-neighbour), más
- *   estable numéricamente que comparar lastSpikeTime crudos cuando pre y post
- *   disparan en el mismo tick. Cada entrada mantiene una traza pre que decae
- *   con τ+, y cada neurona una traza post que decae con τ-:
- *     - Al disparar la post:  Δw_i = +A+ · preTrace_i      (LTP)
- *     - Al disparar la pre :  Δw_i = -A- · postTrace_n     (LTD)
+ * STDP implementation:
+ *   The TRACE-based formulation (pair-based, nearest-neighbour) is used, more
+ *   numerically stable than comparing raw lastSpikeTime values when pre and post
+ *   fire in the same tick. Each input keeps a pre trace that decays
+ *   with τ+, and each neuron a post trace that decays with τ-:
+ *     - When the post fires:  Δw_i = +A+ · preTrace_i      (LTP)
+ *     - When the pre fires :  Δw_i = -A- · postTrace_n     (LTD)
  */
 
 import type { SpikePacket } from '../../core/bus/spike-bus.js';
@@ -32,10 +32,10 @@ import type { NeuronTypeName } from '../../core/snn/neuron.js';
 import { rateCoding } from '../../core/snn/spike-train.js';
 
 // ====================================================================
-// Tipos de la Corteza Visual
+// Visual Cortex types
 // ====================================================================
 
-/** Memoria visual: patrón de neuronas activas asociado a una etiqueta. */
+/** Visual memory: pattern of active neurons associated with a label. */
 export interface VisualMemory {
   pattern: Int32Array;
   label: string;
@@ -43,7 +43,7 @@ export interface VisualMemory {
   createdAt: number;
 }
 
-/** Resultado del procesamiento visual. */
+/** Result of visual processing. */
 export interface VisualProcessingResult {
   winners: Int32Array;
   potentials: Float32Array;
@@ -51,59 +51,59 @@ export interface VisualProcessingResult {
   activity: number;
 }
 
-/** Resultado de presentar un estímulo durante una ventana temporal. */
+/** Result of presenting a stimulus during a temporal window. */
 export interface PresentationResult {
-  /** Engrama: índices de neuronas que más dispararon en la ventana. */
+  /** Engram: indices of the neurons that fired most during the window. */
   engram: Int32Array;
-  /** Conteo de spikes por neurona durante la ventana. */
+  /** Spike count per neuron during the window. */
   spikeCounts: Int32Array;
-  /** Magnitud total del cambio de pesos en la ventana (Σ|Δw|). */
+  /** Total magnitude of the weight change in the window (Σ|Δw|). */
   weightChange: number;
-  /** Fracción media de actividad cortical durante la ventana. */
+  /** Mean fraction of cortical activity during the window. */
   activity: number;
 }
 
-/** Configuración de la corteza visual. */
+/** Visual cortex configuration. */
 export interface VisualCortexConfig {
   neuronCount: number;
   inputCount: number;
-  /** Número de neuronas ganadoras en k-WTA (tamaño del engrama). */
+  /** Number of winning neurons in k-WTA (engram size). */
   kWinners: number;
-  /** Factor de fatiga homeostática (penalización por wins acumulados). */
+  /** Homeostatic fatigue factor (penalty for accumulated wins). */
   fatigueFactor: number;
-  /** Tasa de aprendizaje base (escala global de Δw). */
+  /** Base learning rate (global scale of Δw). */
   learningRate: number;
-  /** Amplitud de potenciación STDP (LTP). */
+  /** STDP potentiation amplitude (LTP). */
   aPlus: number;
-  /** Amplitud de depresión STDP (LTD). */
+  /** STDP depression amplitude (LTD). */
   aMinus: number;
-  /** Constante de tiempo de la traza LTP (ms). */
+  /** Time constant of the LTP trace (ms). */
   tauPlus: number;
-  /** Constante de tiempo de la traza LTD (ms). */
+  /** Time constant of the LTD trace (ms). */
   tauMinus: number;
-  /** Presupuesto máximo de peso sináptico por neurona (normalización). */
+  /** Maximum synaptic weight budget per neuron (normalization). */
   maxWeightBudget: number;
-  /** Rango de pesos permitidos [min, max]. */
+  /** Allowed weight range [min, max]. */
   weightRange: [number, number];
-  /** Ganancia de la corriente sináptica de entrada. */
+  /** Gain of the synaptic input current. */
   inputGain: number;
-  /** Corriente de fondo (mantiene a las neuronas cerca del umbral). */
+  /** Background current (keeps neurons close to threshold). */
   backgroundCurrent: number;
-  /** Techo de corriente de membrana (evita inestabilidad numérica de Izhikevich). */
+  /** Membrane current ceiling (avoids Izhikevich numerical instability). */
   maxCurrent: number;
-  /** Amplitud del ruido sináptico de fondo. */
+  /** Amplitude of the background synaptic noise. */
   noiseAmplitude: number;
-  /** Período refractario absoluto (ms). */
+  /** Absolute refractory period (ms). */
   refractoryMs: number;
-  /** Ticks de simulación por presentación de un estímulo. */
+  /** Simulation ticks per stimulus presentation. */
   presentationTicks: number;
-  /** Tasa de disparo objetivo por neurona (fracción, para homeostasis). */
+  /** Target firing rate per neuron (fraction, for homeostasis). */
   targetRate: number;
-  /** Velocidad de la homeostasis de excitabilidad intrínseca. */
+  /** Speed of intrinsic excitability homeostasis. */
   homeostasisRate: number;
-  /** Umbral de overlap para reconocimiento (de k neuronas). */
+  /** Overlap threshold for recognition (out of k neurons). */
   recognitionThreshold: number;
-  /** Tipo de neurona cortical. */
+  /** Cortical neuron type. */
   neuronType: NeuronTypeName;
 }
 
@@ -132,58 +132,58 @@ const DEFAULT_VISUAL_CONFIG: VisualCortexConfig = {
 };
 
 // ====================================================================
-// Clase VisualCortex
+// VisualCortex class
 // ====================================================================
 
 export class VisualCortex extends BrainRegion {
   private config: VisualCortexConfig;
 
-  /** Neuronas spiking locales (modelo Izhikevich con dinámica real). */
+  /** Local spiking neurons (Izhikevich model with real dynamics). */
   private localNeurons: SpikingNeuron[];
 
-  /** Traza presináptica por entrada (decae con τ+). */
+  /** Presynaptic trace per input (decays with τ+). */
   private preTrace: Float32Array;
-  /** Traza postsináptica por neurona (decae con τ-). */
+  /** Postsynaptic trace per neuron (decays with τ-). */
   private postTrace: Float32Array;
-  /** Bias de excitabilidad intrínseca por neurona (homeostasis). */
+  /** Intrinsic excitability bias per neuron (homeostasis). */
   private homeostaticBias: Float32Array;
-  /** Media móvil de actividad por neurona (para homeostasis). */
+  /** Moving average of activity per neuron (for homeostasis). */
   private avgActivity: Float32Array;
-  /** Traza de fatiga por neurona (decae cada tick; adaptación transitoria). */
+  /** Fatigue trace per neuron (decays each tick; transient adaptation). */
   private winCounts: Float32Array;
-  /** Excitación sináptica continua por neurona (Σ w·rate), reusado. */
+  /** Continuous synaptic excitation per neuron (Σ w·rate), reused. */
   private excBuf: Float32Array;
-  /** Buffer de corriente sináptica por neurona (reusado). */
+  /** Synaptic current buffer per neuron (reused). */
   private currentBuf: Float32Array;
-  /** Índices para el k-WTA (reusado). */
+  /** Indices for the k-WTA (reused). */
   private sortIdx: Int32Array;
 
-  /** Memorias visuales almacenadas (engramas etiquetados). */
+  /** Stored visual memories (labeled engrams). */
   private memories: VisualMemory[] = [];
 
-  /** Referencia al spike bus. */
+  /** Reference to the spike bus. */
   private spikeBus: SpikeBus | null = null;
 
-  /** Últimos ganadores (para consultas externas). */
+  /** Last winners (for external queries). */
   private lastWinners: Int32Array = new Int32Array(0);
 
-  /** dt del último step (capturado desde la clase base). */
+  /** dt of the last step (captured from the base class). */
   private _dt: number = 1.0;
 
-  // --- Métricas de aprendizaje en vivo (para el dashboard) ---
-  /** Conteo de spikes con fuga: define un engrama estable pese al ruido por tick. */
+  // --- Live learning metrics (for the dashboard) ---
+  /** Leaky spike count: defines a stable engram despite per-tick noise. */
   private recentSpikeCounts: Float32Array;
-  /** Engrama en vivo del tick anterior (para medir estabilidad). */
+  /** Live engram of the previous tick (to measure stability). */
   private prevLiveEngram: Int32Array = new Int32Array(0);
-  /** Engrama en vivo actual (top-k de recentSpikeCounts). */
+  /** Current live engram (top-k of recentSpikeCounts). */
   private liveEngram: Int32Array = new Int32Array(0);
-  /** EMA de Σ|Δw| por tick → decae al converger el aprendizaje. */
+  /** EMA of Σ|Δw| per tick → decays as learning converges. */
   private weightChangeEMA = 0;
-  /** EMA del overlap engrama_t vs engrama_{t-1} → sube al consolidarse. */
+  /** EMA of the engram_t vs engram_{t-1} overlap → rises as it consolidates. */
   private engramStabilityEMA = 0;
-  /** EMA de la fracción de neuronas activas por tick. */
+  /** EMA of the fraction of active neurons per tick. */
   private liveActivityEMA = 0;
-  /** Σ|Δw| acumulado desde el arranque (energía total de aprendizaje). */
+  /** Σ|Δw| accumulated since startup (total learning energy). */
   private cumWeightChange = 0;
 
   constructor(config: Partial<VisualCortexConfig> = {}) {
@@ -206,7 +206,7 @@ export class VisualCortex extends BrainRegion {
     this.initializeVisualWeights();
   }
 
-  /** Inicializa pesos sinápticos pequeños y aleatorios (sinaptogénesis). */
+  /** Initializes small, random synaptic weights (synaptogenesis). */
   private initializeVisualWeights(): void {
     for (let i = 0; i < this.weights.length; i++) {
       this.weights[i] = Math.random() * 0.1;
@@ -218,23 +218,23 @@ export class VisualCortex extends BrainRegion {
     bus.register(this.id);
   }
 
-  /** Captura dt y delega en la lógica de la clase base. */
+  /** Captures dt and delegates to the base class logic. */
   override step(dt: number, modulationEffects: ModulationEffects) {
     this._dt = dt;
     return super.step(dt, modulationEffects);
   }
 
   /**
-   * Un tick de dinámica cortical: integra corrientes, ejecuta Izhikevich,
-   * aplica inhibición lateral k-WTA y (si learn) plasticidad STDP por trazas.
+   * One tick of cortical dynamics: integrates currents, runs Izhikevich,
+   * applies k-WTA lateral inhibition and (if learn) trace-based STDP plasticity.
    *
-   * @param rates - Vector de tasas de entrada (0-1); se muestrea Poisson por tick.
-   * @param dt - Paso temporal (ms).
-   * @param t - Tiempo de simulación (ms).
-   * @param learn - Si aplicar STDP en este tick.
-   * @param lrMul - Multiplicador de tasa de aprendizaje (neuromodulación).
-   * @param gain - Multiplicador de ganancia de spikes (neuromodulación).
-   * @returns Δw total aplicado en este tick (Σ|Δw|).
+   * @param rates - Input rate vector (0-1); sampled with Poisson per tick.
+   * @param dt - Time step (ms).
+   * @param t - Simulation time (ms).
+   * @param learn - Whether to apply STDP this tick.
+   * @param lrMul - Learning rate multiplier (neuromodulation).
+   * @param gain - Spike gain multiplier (neuromodulation).
+   * @returns Total Δw applied this tick (Σ|Δw|).
    */
   private dynamicsTick(
     rates: Float32Array,
@@ -248,29 +248,29 @@ export class VisualCortex extends BrainRegion {
     const m = this.inputCount;
     const cfg = this.config;
 
-    // --- 0. Índices de entrada activos + decaer traza pre + muestrear Poisson ---
+    // --- 0. Active input indices + decay pre trace + sample Poisson ---
     const decayPre = Math.exp(-dt / cfg.tauPlus);
     for (let i = 0; i < m; i++) this.preTrace[i] *= decayPre;
 
     const activeInputs: number[] = [];
     for (let i = 0; i < m; i++) if (rates[i] > 0) activeInputs.push(i);
 
-    // Spikes de entrada de este tick (rate coding Poisson) → realismo temporal STDP.
+    // Input spikes for this tick (Poisson rate coding) → temporal STDP realism.
     const firedInputs: number[] = [];
     for (let a = 0; a < activeInputs.length; a++) {
       const i = activeInputs[a];
       if (rateCoding(rates[i], 200, dt) > 0.5) {
         firedInputs.push(i);
-        this.preTrace[i] = 1.0; // nearest-neighbour: resetea la traza al spike
+        this.preTrace[i] = 1.0; // nearest-neighbour: resets the trace on spike
       }
     }
 
-    // --- 1. Excitación CONTINUA (Σ w·rate) y SCORE de coincidencia coseno ---
-    // excBuf = w·rate (magnitud, para la corriente de membrana).
-    // scoreBuf = (w·rate)/‖w‖ → similitud coseno con el patrón: mide cuán bien
-    // los pesos de la neurona "apuntan" al estímulo actual, no su magnitud bruta.
-    // Sin esta normalización, unas pocas sinapsis compartidas saturadas a maxW
-    // harían que el engrama de A se filtrara a B (falsa coincidencia).
+    // --- 1. CONTINUOUS excitation (Σ w·rate) and cosine match SCORE ---
+    // excBuf = w·rate (magnitude, for the membrane current).
+    // scoreBuf = (w·rate)/‖w‖ → cosine similarity with the pattern: measures how well
+    // the neuron's weights "point" to the current stimulus, not their raw magnitude.
+    // Without this normalization, a few shared synapses saturated to maxW
+    // would make A's engram leak into B (false match).
     const score = this.currentBuf;
     for (let nn = 0; nn < n; nn++) {
       const offset = nn * m;
@@ -285,11 +285,11 @@ export class VisualCortex extends BrainRegion {
       score[nn] = exc / (Math.sqrt(norm2) + 1e-6);
     }
 
-    // --- 2. Inhibición lateral k-WTA por score coseno (+ sesgo homeostático) ---
-    // El bias entra con un peso PEQUEÑO (BIAS_GAIN): es un empujón de equidad
-    // para que neuronas crónicamente silentes ganen desempates, NO un término
-    // que pueda anular la coincidencia con el estímulo (eso colapsaría todos los
-    // patrones al mismo engrama de "neuronas menos activas").
+    // --- 2. k-WTA lateral inhibition by cosine score (+ homeostatic bias) ---
+    // The bias enters with a SMALL weight (BIAS_GAIN): it is a fairness nudge
+    // so that chronically silent neurons win ties, NOT a term
+    // that can override the match with the stimulus (that would collapse all
+    // patterns to the same engram of "least active neurons").
     const BIAS_GAIN = 0.05;
     for (let i = 0; i < n; i++) this.sortIdx[i] = i;
     const bias = this.homeostaticBias;
@@ -298,59 +298,59 @@ export class VisualCortex extends BrainRegion {
     const isWinner = new Uint8Array(n);
     for (let i = 0; i < k && i < n; i++) isWinner[this.sortIdx[i]] = 1;
 
-    // --- 3. Dinámica de membrana de Izhikevich (real) ---
-    // Ganadores: corriente supra-umbral sostenida (fondo + ganancia·exc).
-    // No-ganadores: solo fondo sub-umbral → su membrana evoluciona pero
-    // (salvo empuje homeostático) no cruza el umbral. Modela la inhibición
-    // lateral GABAérgica sin resetear la membrana de los competidores.
+    // --- 3. Izhikevich membrane dynamics (real) ---
+    // Winners: sustained supra-threshold current (background + gain·exc).
+    // Non-winners: only sub-threshold background → their membrane evolves but
+    // (except for a homeostatic push) does not cross the threshold. Models the
+    // GABAergic lateral inhibition without resetting the competitors' membrane.
     const decayPost = Math.exp(-dt / cfg.tauMinus);
     const winnersFired: number[] = [];
 
     for (let nn = 0; nn < n; nn++) {
       this.postTrace[nn] *= decayPost;
 
-      // Refractario absoluto
+      // Absolute refractory
       if (t - this.localNeurons[nn].lastSpikeTime < cfg.refractoryMs) {
         this.localNeurons[nn].fired = false;
         this.spikes[nn] = 0;
         continue;
       }
 
-      // El fondo es SUB-umbral para todos → un no-ganador nunca dispara solo por
-      // fondo. El disparo queda estrictamente regido por el k-WTA: el sesgo
-      // homeostático NO entra en la corriente de los no-ganadores (si lo hiciera,
-      // un bias alto los haría disparar ignorando el estímulo y el engrama se
-      // volvería independiente del patrón). El bias solo influye en QUIÉN gana
-      // (vía BIAS_GAIN en el WTA) y modula levemente a los ganadores.
+      // The background is SUB-threshold for everyone → a non-winner never fires from
+      // background alone. Firing is strictly governed by the k-WTA: the homeostatic
+      // bias does NOT enter the current of non-winners (if it did,
+      // a high bias would make them fire ignoring the stimulus and the engram would
+      // become independent of the pattern). The bias only influences WHO wins
+      // (via BIAS_GAIN in the WTA) and slightly modulates the winners.
       const noise = (Math.random() - 0.5) * 2 * cfg.noiseAmplitude;
       let I = cfg.backgroundCurrent + noise;
       if (isWinner[nn]) {
         const fatigue = Math.min(this.winCounts[nn] * cfg.fatigueFactor, 3.0);
         I += this.homeostaticBias[nn] + cfg.inputGain * this.excBuf[nn] * gain - fatigue;
       }
-      // Techo de corriente: la excitación de un engrama entrenado (w→maxW) puede
-      // alcanzar cientos; con dt=1 ms el término 0.04v² de Izhikevich se vuelve
-      // numéricamente inestable y u explota, haciendo que la neurona dispare en
-      // bucle ignorando el estímulo. El clamp mantiene la integración estable.
+      // Current ceiling: the excitation of a trained engram (w→maxW) can
+      // reach hundreds; with dt=1 ms Izhikevich's 0.04v² term becomes
+      // numerically unstable and u explodes, making the neuron fire in
+      // a loop ignoring the stimulus. The clamp keeps the integration stable.
       if (I > cfg.maxCurrent) I = cfg.maxCurrent;
       const fired = this.localNeurons[nn].step(I, dt, t);
 
       this.spikes[nn] = fired ? 1 : 0;
       if (fired) {
-        this.postTrace[nn] = 1.0; // traza post para LTD futura
+        this.postTrace[nn] = 1.0; // post trace for future LTD
         if (isWinner[nn]) winnersFired.push(nn);
       }
     }
 
-    // --- 4. Plasticidad STDP por trazas (solo si learn) ---
+    // --- 4. Trace-based STDP plasticity (only if learn) ---
     let weightChange = 0;
     if (learn) {
       const lr = cfg.learningRate * lrMul;
       const [minW, maxW] = cfg.weightRange;
 
-      // LTP: la post disparó → potenciar sinapsis con traza pre activa.
-      // Cota SUAVE: Δw ∝ (maxW − w) → la potenciación se frena al acercarse al
-      // techo, llevando la sinapsis a un punto fijo estable (convergencia de Δw).
+      // LTP: the post fired → potentiate synapses with an active pre trace.
+      // SOFT bound: Δw ∝ (maxW − w) → potentiation slows as it approaches the
+      // ceiling, driving the synapse to a stable fixed point (Δw convergence).
       for (let w = 0; w < winnersFired.length; w++) {
         const nn = winnersFired[w];
         this.winCounts[nn]++;
@@ -365,12 +365,12 @@ export class VisualCortex extends BrainRegion {
         }
       }
 
-      // LTD: la pre disparó → deprimir sinapsis hacia neuronas que dispararon
-      // ANTES (traza post activa) pero NO ahora ni recientemente. Se excluyen:
-      //   - los ganadores (isWinner): protegidos, su sinapsis activa es causal;
-      //   - los que disparan en este tick (spikes===0 ya lo garantiza);
-      //   - los refractarios (acaban de disparar → el silencio es artefacto).
-      // Así la LTD decorrela a los perdedores sin deshacer la LTP de los engramas.
+      // LTD: the pre fired → depress synapses toward neurons that fired
+      // BEFORE (active post trace) but NOT now or recently. Excluded are:
+      //   - the winners (isWinner): protected, their active synapse is causal;
+      //   - those firing this tick (spikes===0 already guarantees it);
+      //   - the refractory ones (they just fired → the silence is an artifact).
+      // Thus LTD decorrelates the losers without undoing the engrams' LTP.
       for (let f = 0; f < firedInputs.length; f++) {
         const i = firedInputs[f];
         for (let nn = 0; nn < n; nn++) {
@@ -379,8 +379,8 @@ export class VisualCortex extends BrainRegion {
           const post = this.postTrace[nn];
           if (post > 1e-4) {
             const offset = nn * m;
-            // Cota suave simétrica: Δw ∝ (w − minW) → la depresión se frena
-            // cerca del suelo, evitando oscilaciones y dando punto fijo estable.
+            // Symmetric soft bound: Δw ∝ (w − minW) → depression slows
+            // near the floor, avoiding oscillations and giving a stable fixed point.
             const dw = lr * cfg.aMinus * post * (this.weights[offset + i] - minW);
             this.weights[offset + i] -= dw;
             weightChange += Math.abs(dw);
@@ -389,11 +389,11 @@ export class VisualCortex extends BrainRegion {
       }
     }
 
-    // --- 5. Homeostasis de excitabilidad intrínseca (solo durante aprendizaje) ---
-    // Ajusta el bias para acercar la tasa media de cada neurona a targetRate y
-    // decae la fatiga (adaptación transitoria). El bias se acota a [-2, 2] para
-    // que nunca apague a un ganador supra-umbral (estabilidad del engrama).
-    // Las sondas (learn=false) NO mutan el estado homeostático → medición limpia.
+    // --- 5. Intrinsic excitability homeostasis (only during learning) ---
+    // Adjusts the bias to bring each neuron's mean rate closer to targetRate and
+    // decays the fatigue (transient adaptation). The bias is clamped to [-2, 2] so
+    // that it never silences a supra-threshold winner (engram stability).
+    // Probes (learn=false) do NOT mutate the homeostatic state → clean measurement.
     if (learn) {
       const a = cfg.homeostasisRate;
       for (let nn = 0; nn < n; nn++) {
@@ -402,7 +402,7 @@ export class VisualCortex extends BrainRegion {
         if (b > 1) b = 1;
         else if (b < -1) b = -1;
         this.homeostaticBias[nn] = b;
-        this.winCounts[nn] *= 0.98; // fatiga leaky
+        this.winCounts[nn] *= 0.98; // leaky fatigue
       }
     }
 
@@ -410,19 +410,19 @@ export class VisualCortex extends BrainRegion {
   }
 
   /**
-   * Procesa un input visual: ejecuta UN tick de dinámica con aprendizaje vivo.
-   * Llamado por la clase base en cada tick del cerebro.
+   * Processes a visual input: runs ONE tick of dynamics with live learning.
+   * Called by the base class on each tick of the brain.
    *
-   * @param spikes - Vector de entrada (tratado como tasas 0-1).
-   * @param modulationEffects - Efectos de neuromodulación.
-   * @returns Vector de spikes de salida (1.0 = disparó, 0.0 = silente).
+   * @param spikes - Input vector (treated as rates 0-1).
+   * @param modulationEffects - Neuromodulation effects.
+   * @returns Output spike vector (1.0 = fired, 0.0 = silent).
    */
   processInput(spikes: Float32Array, modulationEffects: ModulationEffects): Float32Array {
     const lrMul = modulationEffects.learningRateMultiplier ?? 1.0;
     const gain = modulationEffects.spikeGainMultiplier ?? 1.0;
     const dw = this.dynamicsTick(spikes, this._dt, this.currentTime, true, lrMul, gain);
 
-    // Engrama instantáneo: neuronas que dispararon este tick
+    // Instantaneous engram: neurons that fired this tick
     const winners: number[] = [];
     const out = new Float32Array(this.neuronCount);
     for (let nn = 0; nn < this.neuronCount; nn++) {
@@ -437,22 +437,22 @@ export class VisualCortex extends BrainRegion {
   }
 
   /**
-   * Actualiza las métricas de aprendizaje en vivo tras un tick.
-   * El engrama instantáneo (qué disparó ESTE tick) es ruidoso por el muestreo
-   * Poisson y el refractario, así que mantenemos un conteo de spikes con fuga
-   * (recentSpikeCounts) cuyo top-k define un engrama estable. Sobre él medimos:
-   *   - estabilidad: overlap con el engrama del tick previo (sube al consolidar);
-   *   - cambio de peso (EMA de Σ|Δw|): baja al converger el aprendizaje;
-   *   - actividad: fracción de neuronas activas.
+   * Updates the live learning metrics after a tick.
+   * The instantaneous engram (what fired THIS tick) is noisy due to the Poisson
+   * sampling and the refractory period, so we keep a leaky spike count
+   * (recentSpikeCounts) whose top-k defines a stable engram. On it we measure:
+   *   - stability: overlap with the previous tick's engram (rises on consolidation);
+   *   - weight change (EMA of Σ|Δw|): falls as learning converges;
+   *   - activity: fraction of active neurons.
    */
   private updateLearningMetrics(dw: number, firedCount: number): void {
     const n = this.neuronCount;
-    const decay = 0.85; // fuga del acumulador → ventana efectiva ~6-7 ticks
+    const decay = 0.85; // accumulator leak → effective window ~6-7 ticks
     for (let nn = 0; nn < n; nn++) {
       this.recentSpikeCounts[nn] = this.recentSpikeCounts[nn] * decay + this.spikes[nn];
     }
 
-    // Engrama estable = top-kWinners de recentSpikeCounts (solo cuentas > 0).
+    // Stable engram = top-kWinners of recentSpikeCounts (only counts > 0).
     for (let i = 0; i < n; i++) this.sortIdx[i] = i;
     const counts = this.recentSpikeCounts;
     this.sortIdx.sort((a, b) => counts[b] - counts[a]);
@@ -472,8 +472,8 @@ export class VisualCortex extends BrainRegion {
   }
 
   /**
-   * Métricas de aprendizaje en vivo para monitorización externa (dashboard).
-   * No muta estado: es seguro llamarla en cada broadcast.
+   * Live learning metrics for external monitoring (dashboard).
+   * Does not mutate state: it is safe to call on every broadcast.
    */
   getLearningMetrics(): {
     engram: number[];
@@ -496,12 +496,12 @@ export class VisualCortex extends BrainRegion {
   }
 
   /**
-   * Presenta un estímulo durante una ventana temporal y devuelve el engrama
-   * resultante (las neuronas que más dispararon). Es la API de referencia
-   * para experimentos deterministas de aprendizaje.
+   * Presents a stimulus during a temporal window and returns the resulting
+   * engram (the neurons that fired most). It is the reference API
+   * for deterministic learning experiments.
    *
-   * @param rates - Vector de tasas de entrada (0-1).
-   * @param opts - Opciones: ticks, learn, modulación.
+   * @param rates - Input rate vector (0-1).
+   * @param opts - Options: ticks, learn, modulation.
    */
   present(
     rates: Float32Array,
@@ -528,7 +528,7 @@ export class VisualCortex extends BrainRegion {
       }
     }
 
-    // Engrama = top-kWinners por conteo de spikes en la ventana
+    // Engram = top-kWinners by spike count in the window
     for (let i = 0; i < this.neuronCount; i++) this.sortIdx[i] = i;
     const counts = spikeCounts;
     this.sortIdx.sort((a, b) => counts[b] - counts[a]);
@@ -549,7 +549,7 @@ export class VisualCortex extends BrainRegion {
   }
 
   /**
-   * Overlap (índice de Jaccard) entre dos engramas. 1.0 = idénticos, 0 = disjuntos.
+   * Overlap (Jaccard index) between two engrams. 1.0 = identical, 0 = disjoint.
    */
   static engramOverlap(a: Int32Array, b: Int32Array): number {
     if (a.length === 0 && b.length === 0) return 1;
@@ -562,8 +562,8 @@ export class VisualCortex extends BrainRegion {
   }
 
   /**
-   * Aprende un patrón asociándolo a una etiqueta (envoltorio sobre present()).
-   * Mantiene compatibilidad con el flujo etiquetado previo.
+   * Learns a pattern by associating it with a label (wrapper around present()).
+   * Maintains compatibility with the previous labeled flow.
    */
   learn(
     input: Float32Array,
@@ -591,7 +591,7 @@ export class VisualCortex extends BrainRegion {
     };
   }
 
-  /** Predice sin aprender (solo inferencia). */
+  /** Predicts without learning (inference only). */
   predict(input: Float32Array, _dt: number, _timestamp: number): VisualProcessingResult {
     const result = this.present(input, { learn: false });
     return {
@@ -602,7 +602,7 @@ export class VisualCortex extends BrainRegion {
     };
   }
 
-  /** Compara un patrón de activación con las memorias almacenadas. */
+  /** Compares an activation pattern with the stored memories. */
   compareWithMemories(currentWinners: Int32Array): string[] {
     const matches: string[] = [];
     const seenLabels = new Set<string>();
@@ -621,7 +621,7 @@ export class VisualCortex extends BrainRegion {
     return matches;
   }
 
-  /** Envía la representación cortical actual al spike bus. */
+  /** Sends the current cortical representation to the spike bus. */
   emitToDownstream(timestamp: number, targets: string[] = ['hippocampus', 'amygdala']): void {
     if (!this.spikeBus) return;
     const outSpikes = new Float32Array(this.neuronCount);
@@ -645,7 +645,7 @@ export class VisualCortex extends BrainRegion {
     return this.lastWinners;
   }
 
-  /** Fracción de neuronas que dispararon en el último tick. */
+  /** Fraction of neurons that fired in the last tick. */
   getLocalActivity(): number {
     let active = 0;
     for (let i = 0; i < this.neuronCount; i++) if (this.spikes[i] > 0) active++;
@@ -676,7 +676,7 @@ export class VisualCortex extends BrainRegion {
     };
   }
 
-  /** Resetea la fatiga homeostática (efecto del sueño). */
+  /** Resets the homeostatic fatigue (effect of sleep). */
   resetFatigue(): void {
     this.winCounts.fill(0);
   }

@@ -1,21 +1,21 @@
 /**
- * SERVIDOR HTTP + WebSocket — Interfaz del cerebro digital
+ * HTTP + WebSocket SERVER — Digital brain interface
  * =========================================================
- * Servidor que expone el cerebro digital via HTTP API y WebSocket
- * para comunicación en tiempo real con el dashboard 3D.
- * 
+ * Server that exposes the digital brain via HTTP API and WebSocket
+ * for real-time communication with the 3D dashboard.
+ *
  * Endpoints:
- * - POST /api/input/text    → El cerebro lee texto
- * - POST /api/input/image   → El cerebro ve una imagen
- * - POST /api/input/audio   → El cerebro escucha audio
- * - GET  /api/state         → Estado completo del cerebro
- * - GET  /api/feel          → Estado emocional
- * - GET  /api/speak         → El cerebro habla
- * - GET  /api/imagine       → El cerebro imagina
- * - POST /api/modulator     → Inyectar neuromodulador manualmente
- * - WS   /ws                → Stream en tiempo real
- * 
- * El WebSocket envía updates del estado cada tick del cerebro.
+ * - POST /api/input/text    → The brain reads text
+ * - POST /api/input/image   → The brain sees an image
+ * - POST /api/input/audio   → The brain hears audio
+ * - GET  /api/state         → Complete brain state
+ * - GET  /api/feel          → Emotional state
+ * - GET  /api/speak         → The brain speaks
+ * - GET  /api/imagine       → The brain imagines
+ * - POST /api/modulator     → Inject a neuromodulator manually
+ * - WS   /ws                → Real-time stream
+ *
+ * The WebSocket sends state updates on every brain tick.
  */
 
 import http from 'http';
@@ -27,22 +27,22 @@ import { DigitalBrain, type BrainState } from './brain.js';
 import { ModulatorType } from './core/neuromodulators/modulator-system.js';
 
 // ================================================================
-// CONFIGURACIÓN
+// CONFIGURATION
 // ================================================================
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
-// import.meta.dirname solo existe en Node ≥20.11; derivarlo de import.meta.url
-// lo hace robusto también en Node 16/18 (si no, DASHBOARD_DIR cae a cwd y 404ea).
+// import.meta.dirname only exists in Node ≥20.11; deriving it from import.meta.url
+// also makes it robust on Node 16/18 (otherwise DASHBOARD_DIR falls back to cwd and 404s).
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DASHBOARD_DIR = path.resolve(SERVER_DIR, 'dashboard');
 const TICK_INTERVAL_MS = 100; // 10 Hz brain tick
 const BROADCAST_INTERVAL_MS = 500; // 2 Hz dashboard update (lighter)
-const IMAGE_THROTTLE_MS = 2000; // Max 1 frame cada 2 segundos
-const AUTOSAVE_INTERVAL_MS = 5 * 60_000; // Guardar el aprendizaje cada 5 min
+const IMAGE_THROTTLE_MS = 2000; // Max 1 frame every 2 seconds
+const AUTOSAVE_INTERVAL_MS = 5 * 60_000; // Save the learning every 5 min
 
-// Ruta del estado persistido. En Railway el FS es efímero salvo que haya un
-// volumen montado (RAILWAY_VOLUME_MOUNT_PATH); usarlo si existe para que el
-// aprendizaje sobreviva a redeploys. Override explícito vía BRAIN_STATE_PATH.
+// Path of the persisted state. On Railway the FS is ephemeral unless there is a
+// mounted volume (RAILWAY_VOLUME_MOUNT_PATH); use it if it exists so that
+// learning survives redeploys. Explicit override via BRAIN_STATE_PATH.
 const STATE_PATH =
   process.env.BRAIN_STATE_PATH ??
   (process.env.RAILWAY_VOLUME_MOUNT_PATH
@@ -65,15 +65,15 @@ const MIME_TYPES: Record<string, string> = {
 };
 
 // ================================================================
-// INICIALIZACIÓN
+// INITIALIZATION
 // ================================================================
 
 console.log(`\n🌐 Iniciando servidor del Cerebro Digital...\n`);
 
-// Crear el cerebro
+// Create the brain
 const brain = new DigitalBrain();
 
-// Restaurar aprendizaje previo si existe
+// Restore previous learning if it exists
 if (existsSync(STATE_PATH)) {
   try {
     const { loaded, skipped } = brain.loadState(STATE_PATH);
@@ -88,7 +88,7 @@ if (existsSync(STATE_PATH)) {
   console.log(`💾 Sin estado previo en ${STATE_PATH}; arrancando en limpio.`);
 }
 
-// Aviso si el almacenamiento es efímero en producción
+// Warn if storage is ephemeral in production
 if (process.env.RAILWAY_ENVIRONMENT && !process.env.RAILWAY_VOLUME_MOUNT_PATH) {
   console.warn(
     '⚠️  En Railway sin volumen montado: el estado se perderá en el próximo redeploy. ' +
@@ -96,7 +96,7 @@ if (process.env.RAILWAY_ENVIRONMENT && !process.env.RAILWAY_VOLUME_MOUNT_PATH) {
   );
 }
 
-/** Guarda el estado de forma reentrante-segura. */
+/** Saves the state in a reentrant-safe way. */
 let saving = false;
 function persist(reason: string): void {
   if (saving) return;
@@ -112,7 +112,7 @@ function persist(reason: string): void {
 }
 
 // ================================================================
-// SERVIDOR HTTP
+// HTTP SERVER
 // ================================================================
 
 const server = http.createServer(async (req, res) => {
@@ -158,7 +158,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 /**
- * Maneja rutas de la API.
+ * Handles API routes.
  */
 async function handleApiRoute(url: URL, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const sendJSON = (data: unknown, status: number = 200) => {
@@ -166,25 +166,25 @@ async function handleApiRoute(url: URL, req: http.IncomingMessage, res: http.Ser
     res.end(JSON.stringify(data, replacer));
   };
 
-  // GET /api/state — Estado completo del cerebro
+  // GET /api/state — Complete brain state
   if (url.pathname === '/api/state' && req.method === 'GET') {
     sendJSON(brain.getState());
     return;
   }
 
-  // GET /api/feel — Estado emocional
+  // GET /api/feel — Emotional state
   if (url.pathname === '/api/feel' && req.method === 'GET') {
     sendJSON(brain.feel());
     return;
   }
 
-  // GET /api/speak — El cerebro habla
+  // GET /api/speak — The brain speaks
   if (url.pathname === '/api/speak' && req.method === 'GET') {
     sendJSON(brain.speak());
     return;
   }
 
-  // GET /api/imagine — El cerebro imagina
+  // GET /api/imagine — The brain imagines
   if (url.pathname === '/api/imagine' && req.method === 'GET') {
     const image = brain.imagine();
     sendJSON({
@@ -196,7 +196,7 @@ async function handleApiRoute(url: URL, req: http.IncomingMessage, res: http.Ser
     return;
   }
 
-  // POST /api/input/text — Leer texto
+  // POST /api/input/text — Read text
   if (url.pathname === '/api/input/text' && req.method === 'POST') {
     const body = await parseBody(req);
     const { text } = JSON.parse(body) as { text: string };
@@ -205,7 +205,7 @@ async function handleApiRoute(url: URL, req: http.IncomingMessage, res: http.Ser
     return;
   }
 
-  // POST /api/input/image — Ver imagen
+  // POST /api/input/image — See image
   if (url.pathname === '/api/input/image' && req.method === 'POST') {
     const body = await parseBody(req);
     const { pixels, width, height } = JSON.parse(body) as { pixels: number[]; width: number; height: number };
@@ -214,7 +214,7 @@ async function handleApiRoute(url: URL, req: http.IncomingMessage, res: http.Ser
     return;
   }
 
-  // POST /api/input/audio — Escuchar audio (espectrograma)
+  // POST /api/input/audio — Hear audio (spectrogram)
   if (url.pathname === '/api/input/audio' && req.method === 'POST') {
     const body = await parseBody(req);
     const { spectrogram } = JSON.parse(body) as { spectrogram: number[] };
@@ -223,7 +223,7 @@ async function handleApiRoute(url: URL, req: http.IncomingMessage, res: http.Ser
     return;
   }
 
-  // POST /api/modulator — Inyectar neuromodulador
+  // POST /api/modulator — Inject a neuromodulator
   if (url.pathname === '/api/modulator' && req.method === 'POST') {
     const body = await parseBody(req);
     const { type, amount } = JSON.parse(body) as { type: string; amount: number };
@@ -233,21 +233,21 @@ async function handleApiRoute(url: URL, req: http.IncomingMessage, res: http.Ser
     return;
   }
 
-  // POST /api/tick — Ejecutar un tick manual
+  // POST /api/tick — Run a manual tick
   if (url.pathname === '/api/tick' && req.method === 'POST') {
     brain.tick();
     sendJSON({ ok: true, time: brain.time });
     return;
   }
 
-  // POST /api/sleep — Consolidación manual
+  // POST /api/sleep — Manual consolidation
   if (url.pathname === '/api/sleep' && req.method === 'POST') {
     brain.sleep();
     sendJSON({ ok: true, memoriesReplayed: 0 });
     return;
   }
 
-  // POST /api/save — Persistir el estado de aprendizaje a demanda
+  // POST /api/save — Persist the learning state on demand
   if (url.pathname === '/api/save' && req.method === 'POST') {
     try {
       brain.saveState(STATE_PATH);
@@ -262,7 +262,7 @@ async function handleApiRoute(url: URL, req: http.IncomingMessage, res: http.Ser
 }
 
 /**
- * Parsea el body de una request.
+ * Parses the body of a request.
  */
 function parseBody(req: http.IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -274,7 +274,7 @@ function parseBody(req: http.IncomingMessage): Promise<string> {
 }
 
 /**
- * JSON replacer para Float32Array.
+ * JSON replacer for Float32Array.
  */
 function replacer(_key: string, value: unknown): unknown {
   if (value instanceof Float32Array) {
@@ -289,7 +289,7 @@ function replacer(_key: string, value: unknown): unknown {
 
 const wss = new WebSocketServer({ noServer: true });
 
-// Manejar upgrade de HTTP → WebSocket en el mismo puerto
+// Handle the HTTP → WebSocket upgrade on the same port
 server.on('upgrade', (request, socket, head) => {
   wss.handleUpgrade(request, socket, head, (ws) => {
     wss.emit('connection', ws, request);
@@ -301,13 +301,13 @@ wss.on('connection', (ws: WebSocket) => {
   clients.add(ws);
   console.log(`🔌 WebSocket cliente conectado (total: ${clients.size})`);
 
-  // Enviar estado inicial
+  // Send initial state
   ws.send(JSON.stringify({
     type: 'init',
     data: brain.getState(),
   }, replacer));
 
-  // Manejar mensajes del cliente
+  // Handle messages from the client
   ws.on('message', (message: Buffer) => {
     try {
       const msg = JSON.parse(message.toString()) as { type: string; data?: Record<string, unknown> };
@@ -348,7 +348,7 @@ wss.on('connection', (ws: WebSocket) => {
 });
 
 // ================================================================
-// LOOP PRINCIPAL — Broadcast del estado
+// MAIN LOOP — State broadcast
 // ================================================================
 
 let tickTimer: ReturnType<typeof setInterval>;
@@ -357,12 +357,12 @@ let autosaveTimer: ReturnType<typeof setInterval>;
 let lastImageTime = 0;
 
 function startBrainLoop(): void {
-  // Brain tick — procesa neuronas (rápido, sin I/O)
+  // Brain tick — processes neurons (fast, no I/O)
   tickTimer = setInterval(() => {
     brain.tick();
   }, TICK_INTERVAL_MS);
 
-  // Broadcast separado — menos frecuente para no saturar
+  // Separate broadcast — less frequent to avoid saturation
   broadcastTimer = setInterval(() => {
     if (clients.size > 0) {
       const state = brain.getState();
@@ -376,12 +376,12 @@ function startBrainLoop(): void {
     }
   }, BROADCAST_INTERVAL_MS);
 
-  // Autosave — el aprendizaje sobrevive a reinicios incluso sin apagado limpio
+  // Autosave — learning survives restarts even without a clean shutdown
   autosaveTimer = setInterval(() => persist('autosave'), AUTOSAVE_INTERVAL_MS);
 }
 
 // ================================================================
-// ARRANQUE
+// STARTUP
 // ================================================================
 
 server.listen(PORT, '0.0.0.0', () => {
@@ -391,12 +391,12 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`   API State:         http://localhost:${PORT}/api/state`);
   console.log(`═══════════════════════════════════════════════\n`);
   
-  // Iniciar loop del cerebro
+  // Start the brain loop
   startBrainLoop();
 });
 
-// Graceful shutdown — guarda el aprendizaje antes de salir.
-// Railway envía SIGTERM en cada redeploy; capturarlo es clave para no perderlo.
+// Graceful shutdown — saves the learning before exiting.
+// Railway sends SIGTERM on every redeploy; capturing it is key to not losing it.
 let shuttingDown = false;
 function shutdown(signal: string): void {
   if (shuttingDown) return;

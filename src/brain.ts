@@ -1,23 +1,23 @@
 /**
- * CEREBRO DIGITAL — Orquestador Principal
+ * DIGITAL BRAIN — Main Orchestrator
  * ========================================
- * Clase principal que unifica todas las regiones cerebrales,
- * el bus de spikes, los neuromoduladores, y el sistema de memoria
- * en un único sistema coherente.
- * 
- * El cerebro funciona con un loop principal de percepción:
- * 1. PERCIBIR: Recibir inputs sensoriales (audio, imagen, texto)
- * 2. FILTRAR: El tálamo selecciona los inputs más relevantes
- * 3. PROCESAR: Las cortezas sensoriales extraen features
- * 4. EVALUAR: La amígdala asigna valencia emocional
- * 5. RECORDAR: El hipocampo almacena/recupera memorias
- * 6. DECIDIR: La corteza prefrontal integra y decide
- * 7. RESPONDER: Broca/Wernicke genera lenguaje
- * 8. MODULAR: Los neuromoduladores ajustan todo el sistema
- * 
- * Biología: Este loop imita el ciclo percepción-acción del cerebro real,
- * donde la información fluye desde las cortezas sensoriales primarias
- * hacia las áreas de asociación y el lóbulo frontal en ~300-500ms.
+ * Main class that unifies all brain regions,
+ * the spike bus, the neuromodulators, and the memory system
+ * into a single coherent system.
+ *
+ * The brain runs on a main perception loop:
+ * 1. PERCEIVE: Receive sensory inputs (audio, image, text)
+ * 2. FILTER: The thalamus selects the most relevant inputs
+ * 3. PROCESS: The sensory cortices extract features
+ * 4. EVALUATE: The amygdala assigns emotional valence
+ * 5. REMEMBER: The hippocampus stores/retrieves memories
+ * 6. DECIDE: The prefrontal cortex integrates and decides
+ * 7. RESPOND: Broca/Wernicke generates language
+ * 8. MODULATE: The neuromodulators adjust the whole system
+ *
+ * Biology: This loop mimics the perception-action cycle of the real brain,
+ * where information flows from the primary sensory cortices
+ * toward the association areas and the frontal lobe in ~300-500ms.
  */
 
 import { type BrainConfiguration, DEFAULT_BRAIN_CONFIG, getTotalNeurons, estimateMemoryUsage } from './brain.config.js';
@@ -35,7 +35,7 @@ import { EmotionDecoder, type EmotionalState, type ModulatorLevels } from './dec
 import { SpeechSynthesizer } from './decoders/speech-synthesizer.js';
 import { ImageGenerator } from './decoders/image-generator.js';
 
-// --- Regiones cerebrales ---
+// --- Brain regions ---
 import { Thalamus } from './regions/thalamus/thalamus.js';
 import { VisualCortex } from './regions/visual-cortex/visual-cortex.js';
 import { AuditoryCortex } from './regions/auditory-cortex/auditory-cortex.js';
@@ -46,32 +46,33 @@ import { BrocaArea, type LanguageResponse } from './regions/broca-wernicke/broca
 import { WernickeArea } from './regions/broca-wernicke/wernicke.js';
 import { Lexicon } from './regions/broca-wernicke/lexicon.js';
 import { seedSpanishLexicon, encodeSentenceToLexiconSpace } from './regions/broca-wernicke/spanish-lexicon.js';
+import { seedEnglishLexicon } from './regions/broca-wernicke/english-lexicon.js';
 
 // ================================================================
-// TIPOS
+// TYPES
 // ================================================================
 
-/** Estado completo del cerebro en un momento dado */
+/** Complete state of the brain at a given moment */
 export interface BrainState {
-  /** Tiempo de simulación actual (ms) */
+  /** Current simulation time (ms) */
   time: number;
-  /** Actividad de cada región */
+  /** Activity of each region */
   regions: Record<string, RegionActivity>;
-  /** Niveles de neuromoduladores */
+  /** Neuromodulator levels */
   modulators: ModulatorLevels;
-  /** Estado emocional actual */
+  /** Current emotional state */
   emotion: EmotionalState;
-  /** Número de memorias en el hipocampo */
+  /** Number of memories in the hippocampus */
   memoriesCount: number;
-  /** Tráfico del bus de spikes */
+  /** Spike bus traffic */
   busTraffic: Record<string, { sent: number; received: number }>;
-  /** Ticks totales procesados */
+  /** Total ticks processed */
   tickCount: number;
-  /** Última respuesta de Broca */
+  /** Last response from Broca */
   broca?: { lastResponse: string; words: string[]; confidence: number };
-  /** Tamaño del vocabulario */
+  /** Vocabulary size */
   vocabCount: number;
-  /** Métricas de aprendizaje de la corteza visual (engrama, estabilidad, convergencia). */
+  /** Visual cortex learning metrics (engram, stability, convergence). */
   learning?: {
     engram: number[];
     engramSize: number;
@@ -81,7 +82,7 @@ export interface BrainState {
     activity: number;
     neuronCount: number;
   };
-  /** Métricas de aprendizaje del hipocampo CA3 (engrama, estabilidad, episodios). */
+  /** Hippocampus CA3 learning metrics (engram, stability, episodes). */
   learningHippocampus?: {
     engram: number[];
     engramSize: number;
@@ -94,23 +95,23 @@ export interface BrainState {
   };
 }
 
-/** Resultado de una percepción */
+/** Result of a perception */
 export interface PerceptionResult {
-  /** Tipo de input procesado */
+  /** Type of input processed */
   inputType: 'visual' | 'auditory' | 'text' | 'image';
-  /** Estado emocional tras procesar */
+  /** Emotional state after processing */
   emotion: EmotionalState;
-  /** Respuesta textual generada (si aplica) */
+  /** Generated text response (if applicable) */
   textResponse?: string;
-  /** Parámetros de voz (si aplica) */
+  /** Speech parameters (if applicable) */
   speechParams?: { text: string; rate: number; pitch: number; volume: number };
-  /** Regiones que se activaron */
+  /** Regions that were activated */
   activeRegions: string[];
-  /** Tiempo de procesamiento (ms simulados) */
+  /** Processing time (simulated ms) */
   processingTime: number;
 }
 
-/** Evento emitido por el cerebro */
+/** Event emitted by the brain */
 export interface BrainEvent {
   type: 'spike' | 'emotion' | 'memory' | 'consolidation' | 'response';
   timestamp: number;
@@ -118,25 +119,25 @@ export interface BrainEvent {
 }
 
 // ================================================================
-// CLASE PRINCIPAL
+// MAIN CLASS
 // ================================================================
 
 /**
- * Cerebro Digital — Sistema principal.
- * Orquesta 7 regiones cerebrales con SNNs, neuromodulación y memoria jerárquica.
+ * Digital Brain — Main system.
+ * Orchestrates 7 brain regions with SNNs, neuromodulation and hierarchical memory.
  */
 export class DigitalBrain {
-  // --- Configuración ---
+  // --- Configuration ---
   private config: BrainConfiguration;
 
-  // --- Infraestructura core ---
+  // --- Core infrastructure ---
   private bus: SpikeBus;
   private connectome: Connectome;
   private modulators: NeuromodulatorSystem;
   private consolidationEngine: ConsolidationEngine;
   private persistence: BrainPersistence = new BrainPersistence();
 
-  // --- Regiones cerebrales ---
+  // --- Brain regions ---
   private regions: Map<string, BrainRegion> = new Map();
 
   // --- Encoders (inputs) ---
@@ -145,10 +146,10 @@ export class DigitalBrain {
   private textEncoder: BrainTextEncoder;
 
   /**
-   * Intención lingüística limpia del último `read()`, en el espacio del léxico.
-   * Permite que `speak()` regenere la respuesta de Broca de forma determinista
-   * (reproducible y discriminativa), sin que la dilución del bucle recurrente
-   * la sobrescriba con ruido de fondo.
+   * Clean linguistic intention from the last `read()`, in lexicon space.
+   * Allows `speak()` to regenerate Broca's response deterministically
+   * (reproducible and discriminative), without the dilution of the recurrent loop
+   * overwriting it with background noise.
    */
   private lastLinguisticIntention: Float32Array | null = null;
 
@@ -158,13 +159,13 @@ export class DigitalBrain {
   private speechSynthesizer: SpeechSynthesizer;
   private imageGenerator: ImageGenerator;
 
-  // --- Estado ---
+  // --- State ---
   private currentTime: number = 0;
   private tickCount: number = 0;
   private isRunning: boolean = false;
   private eventListeners: Map<string, Array<(event: BrainEvent) => void>> = new Map();
 
-  // --- Consolidación automática ---
+  // --- Automatic consolidation ---
   private lastConsolidation: number = 0;
 
   constructor(config: Partial<BrainConfiguration> = {}) {
@@ -177,19 +178,19 @@ export class DigitalBrain {
     console.log(`   Regiones: ${Object.keys(this.config.regions).length}`);
     console.log(`═══════════════════════════════════════════════\n`);
 
-    // 1. Inicializar bus de spikes
+    // 1. Initialize spike bus
     this.bus = new SpikeBus();
 
-    // 2. Inicializar conectoma
+    // 2. Initialize connectome
     this.connectome = new Connectome(this.config.connectome);
 
-    // 3. Inicializar neuromoduladores
+    // 3. Initialize neuromodulators
     this.modulators = new NeuromodulatorSystem();
 
-    // 4. Inicializar consolidación
+    // 4. Initialize consolidation
     this.consolidationEngine = new ConsolidationEngine();
 
-    // 5. Inicializar encoders
+    // 5. Initialize encoders
     this.visualEncoder = new VisualEncoder({
       processWidth: 32,
       processHeight: 32,
@@ -209,16 +210,16 @@ export class DigitalBrain {
       tokenization: 'word',
     });
 
-    // 6. Inicializar decoders
+    // 6. Initialize decoders
     this.textDecoder = new BrainTextDecoder(0.3);
     this.emotionDecoder = new EmotionDecoder();
     this.speechSynthesizer = new SpeechSynthesizer({ lang: 'es-ES' });
     this.imageGenerator = new ImageGenerator({ outputWidth: 32, outputHeight: 32 });
 
-    // 7. Registrar regiones en el bus
+    // 7. Register regions on the bus
     this.initializeRegions();
 
-    // 8. Configurar conectoma en el bus
+    // 8. Configure connectome on the bus
     this.setupConnectome();
 
     console.log(`✅ Cerebro inicializado correctamente.`);
@@ -227,30 +228,31 @@ export class DigitalBrain {
   }
 
   /**
-   * Inicializa las regiones cerebrales y las registra en el bus.
-   * Usa import dinámico para cargar las implementaciones concretas.
+   * Initializes the brain regions and registers them on the bus.
+   * Uses dynamic import to load the concrete implementations.
    */
-  /** Léxico compartido Broca↔Wernicke */
+  /** Shared Broca↔Wernicke lexicon */
   private lexicon!: Lexicon;
 
   private initializeRegions(): void {
-    // Registrar IDs del config en el bus (para el conectoma)
+    // Register the config IDs on the bus (for the connectome)
     for (const regionId of Object.keys(this.config.regions)) {
       this.bus.register(regionId);
     }
 
-    // Registrar Broca y Wernicke como regiones individuales
+    // Register Broca and Wernicke as individual regions
     this.bus.register('broca');
     this.bus.register('wernicke');
 
-    // Crear léxico compartido con vocabulario español
-    // Pattern size reducido a 1000 para eficiencia (matching con inputCount de Broca/Wernicke)
+    // Create shared lexicon with Spanish vocabulary
+    // Pattern size reduced to 1000 for efficiency (matching Broca/Wernicke inputCount)
     this.lexicon = new Lexicon(1000);
     seedSpanishLexicon(this.lexicon);
-    console.log(`  📚 Léxico inicializado: ${this.lexicon.size} palabras`);
+    seedEnglishLexicon(this.lexicon);
+    console.log(`  📚 Léxico inicializado (ES+EN): ${this.lexicon.size} palabras`);
 
-    // ── Instanciar regiones con tamaños reducidos ──
-    // Total: ~10K neuronas (vs 50K antes) → rendimiento fluido
+    // ── Instantiate regions with reduced sizes ──
+    // Total: ~10K neurons (vs 50K before) → smooth performance
     this.addRegion(new Thalamus({ neuronCount: 500, totalInputSize: 500, bottleneckSize: 100 }));
     this.addRegion(new VisualCortex({ neuronCount: 2000, inputCount: 1000 }));
     this.addRegion(new AuditoryCortex({ neuronCount: 1000, inputCount: 400 }));
@@ -260,8 +262,8 @@ export class DigitalBrain {
     this.addRegion(new BrocaArea(this.lexicon, 1000, 1000));
     this.addRegion(new WernickeArea(this.lexicon, 1000, 1000));
 
-    // Conectar Broca/Wernicke al bus como alias de 'brocaWernicke'
-    // para recibir paquetes del conectoma existente
+    // Connect Broca/Wernicke to the bus as an alias of 'brocaWernicke'
+    // to receive packets from the existing connectome
     this.bus.onReceive('brocaWernicke', (packet: SpikePacket) => {
       const broca = this.regions.get('broca');
       const wernicke = this.regions.get('wernicke');
@@ -269,7 +271,7 @@ export class DigitalBrain {
       if (broca) broca.feedInput(packet.spikes, packet.timestamp);
     });
 
-    // Calcular total real de neuronas
+    // Compute the real total number of neurons
     let totalNeurons = 0;
     for (const [, region] of this.regions) {
       totalNeurons += region.neurons;
@@ -278,7 +280,7 @@ export class DigitalBrain {
   }
 
   /**
-   * Añade una región implementada al cerebro.
+   * Adds an implemented region to the brain.
    */
   addRegion(region: BrainRegion): void {
     this.regions.set(region.id, region);
@@ -286,7 +288,7 @@ export class DigitalBrain {
       this.bus.register(region.id);
     }
 
-    // Suscribir la región al bus para recibir spikes
+    // Subscribe the region to the bus to receive spikes
     this.bus.onReceive(region.id, (packet: SpikePacket) => {
       region.feedInput(packet.spikes, packet.timestamp);
     });
@@ -295,7 +297,7 @@ export class DigitalBrain {
   }
 
   /**
-   * Configura los retardos y pesos del conectoma en el bus de spikes.
+   * Configures the connectome's delays and weights on the spike bus.
    */
   private setupConnectome(): void {
     const connections = this.connectome.getAllConnections();
@@ -307,46 +309,46 @@ export class DigitalBrain {
   }
 
   // ================================================================
-  // API DE ALTO NIVEL — INPUTS
+  // HIGH-LEVEL API — INPUTS
   // ================================================================
 
   /**
-   * El cerebro "ve" una imagen.
-   * 
-   * @param pixels - Datos de imagen (escala de grises, 0-255)
-   * @param width - Ancho
-   * @param height - Alto
+   * The brain "sees" an image.
+   *
+   * @param pixels - Image data (grayscale, 0-255)
+   * @param width - Width
+   * @param height - Height
    */
   see(pixels: number[] | Float32Array | Uint8Array, width: number, height: number): PerceptionResult {
     console.log(`👁️  Percibiendo imagen (${width}×${height})...`);
 
-    // Codificar a spikes
+    // Encode to spikes
     const spikes = this.visualEncoder.encode(pixels, width, height, this.config.snn.dt);
 
-    // Enviar al tálamo
+    // Send to the thalamus
     this.injectSensoryInput('visual', spikes);
 
-    // Procesar varios ticks para propagar por el cerebro
+    // Process several ticks to propagate through the brain
     return this.processPerception('visual');
   }
 
   /**
-   * El cerebro "escucha" audio.
-   * 
-   * @param audioSamples - Muestras PCM
+   * The brain "hears" audio.
+   *
+   * @param audioSamples - PCM samples
    */
   hear(audioSamples: Float32Array | number[]): PerceptionResult {
-    // Codificar a spikes via espectrograma
+    // Encode to spikes via spectrogram
     const spikes = this.audioEncoder.encode(audioSamples, this.config.snn.dt);
 
-    // Enviar al tálamo
+    // Send to the thalamus
     this.injectSensoryInput('auditory', spikes);
 
     return this.processPerception('auditory');
   }
 
   /**
-   * El cerebro "escucha" un espectrograma ya calculado (de 08_microphone_interaction).
+   * The brain "hears" an already-computed spectrogram (from 08_microphone_interaction).
    */
   hearSpectrogram(spectrogram: number[] | Float32Array): PerceptionResult {
     const spikes = this.audioEncoder.encodeSpectrogram(spectrogram, this.config.snn.dt);
@@ -355,17 +357,17 @@ export class DigitalBrain {
   }
 
   /**
-   * El cerebro "lee" texto.
-   * 
-   * @param text - Texto a procesar
+   * The brain "reads" text.
+   *
+   * @param text - Text to process
    */
   /**
-   * Mapa de palabras emocionales → efectos neuromoduladores.
-   * Biología: el área de Wernicke reconoce palabras con carga emocional
-   * y activa la amígdala, que a su vez libera neuromoduladores.
+   * Map of emotional words → neuromodulator effects.
+   * Biology: Wernicke's area recognizes emotionally charged words
+   * and activates the amygdala, which in turn releases neuromodulators.
    */
   private static readonly EMOTIONAL_WORDS: Record<string, { modulator: ModulatorType; amount: number }[]> = {
-    // Positivas → dopamina + serotonina
+    // Positive → dopamine + serotonin
     'feliz': [{ modulator: ModulatorType.Dopamine, amount: 0.15 }, { modulator: ModulatorType.Serotonin, amount: 0.1 }],
     'alegria': [{ modulator: ModulatorType.Dopamine, amount: 0.2 }],
     'amor': [{ modulator: ModulatorType.Oxytocin, amount: 0.2 }, { modulator: ModulatorType.Dopamine, amount: 0.1 }],
@@ -381,7 +383,7 @@ export class DigitalBrain {
     'curiosidad': [{ modulator: ModulatorType.Dopamine, amount: 0.1 }, { modulator: ModulatorType.Acetylcholine, amount: 0.1 }],
     'genial': [{ modulator: ModulatorType.Dopamine, amount: 0.15 }, { modulator: ModulatorType.Serotonin, amount: 0.1 }],
     'contento': [{ modulator: ModulatorType.Dopamine, amount: 0.1 }, { modulator: ModulatorType.Serotonin, amount: 0.1 }],
-    // Negativas → cortisol + norepinefrina
+    // Negative → cortisol + norepinephrine
     'triste': [{ modulator: ModulatorType.Cortisol, amount: 0.1 }],
     'tristeza': [{ modulator: ModulatorType.Cortisol, amount: 0.15 }],
     'miedo': [{ modulator: ModulatorType.Cortisol, amount: 0.2 }, { modulator: ModulatorType.Norepinephrine, amount: 0.15 }],
@@ -393,7 +395,7 @@ export class DigitalBrain {
     'feo': [{ modulator: ModulatorType.Cortisol, amount: 0.05 }],
     'soledad': [{ modulator: ModulatorType.Cortisol, amount: 0.1 }],
     'frustracion': [{ modulator: ModulatorType.Cortisol, amount: 0.15 }, { modulator: ModulatorType.Norepinephrine, amount: 0.1 }],
-    // Activación → acetilcolina + norepinefrina
+    // Activation → acetylcholine + norepinephrine
     'pensar': [{ modulator: ModulatorType.Acetylcholine, amount: 0.1 }],
     'aprender': [{ modulator: ModulatorType.Acetylcholine, amount: 0.15 }, { modulator: ModulatorType.Dopamine, amount: 0.05 }],
     'recordar': [{ modulator: ModulatorType.Acetylcholine, amount: 0.1 }],
@@ -405,26 +407,26 @@ export class DigitalBrain {
   read(text: string): PerceptionResult {
     console.log(`📖 Leyendo: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`);
 
-    // Codificar el texto en el ESPACIO DEL LÉXICO (no con el hash genérico del
-    // TextEncoder, que produce vectores ortogonales a los engramas y deja a
-    // Wernicke sin reconocer nada). Así Wernicke recupera las palabras reales
-    // y Broca puede producir una respuesta asociativa reproducible.
+    // Encode the text in LEXICON SPACE (not with the TextEncoder's generic
+    // hash, which produces vectors orthogonal to the engrams and leaves
+    // Wernicke unable to recognize anything). This way Wernicke retrieves the
+    // real words and Broca can produce a reproducible associative response.
     const spikes = encodeSentenceToLexiconSpace(text, this.lexicon.dimensions);
 
-    // Guardar la intención limpia para que speak() genere una respuesta
-    // reproducible (texto→Wernicke→Broca) sin dilución del bucle recurrente.
+    // Store the clean intention so speak() generates a reproducible
+    // response (text→Wernicke→Broca) without dilution from the recurrent loop.
     this.lastLinguisticIntention = spikes;
 
-    // Enviar al tálamo (ruta lingüística)
+    // Send to the thalamus (linguistic route)
     this.injectSensoryInput('linguistic', spikes);
 
-    // ── Detección emocional de palabras ──
-    // Biología: Wernicke reconoce palabras emocionales → activa amígdala
-    // → amígdala libera neuromoduladores según la valencia
+    // ── Emotional word detection ──
+    // Biology: Wernicke recognizes emotional words → activates the amygdala
+    // → the amygdala releases neuromodulators according to valence
     const words = text.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\w\sáéíóúüñ]/g, '').split(/\s+/).filter(w => w.length > 0);
     let emotionalHits = 0;
     for (const word of words) {
-      // También comparar sin acentos
+      // Also compare without accents
       const effects = DigitalBrain.EMOTIONAL_WORDS[word];
       if (effects) {
         for (const effect of effects) {
@@ -438,23 +440,23 @@ export class DigitalBrain {
       console.log(`  💭 ${emotionalHits} palabras emocionales detectadas`);
     }
 
-    // Novedad → norepinefrina
+    // Novelty → norepinephrine
     this.modulators.release(ModulatorType.Norepinephrine, 0.05);
 
     return this.processPerception('text');
   }
 
   // ================================================================
-  // API DE ALTO NIVEL — OUTPUTS
+  // HIGH-LEVEL API — OUTPUTS
   // ================================================================
 
   /**
-   * El cerebro "habla" — genera una respuesta textual.
+   * The brain "speaks" — generates a text response.
    */
   speak(): { text: string; speech?: { rate: number; pitch: number; volume: number } } {
     const emotion = this.feel();
 
-    // Obtener la respuesta de Broca
+    // Get Broca's response
     const brocaRegion = this.regions.get('broca') as BrocaArea | undefined;
     if (!brocaRegion) {
       return { text: '...' };
@@ -462,14 +464,14 @@ export class DigitalBrain {
 
     let text: string;
 
-    // Ruta determinista del lenguaje (texto→Wernicke→Broca):
-    // si hubo una lectura reciente, regeneramos la respuesta desde la intención
-    // LIMPIA en el espacio del léxico. Esto la hace reproducible para el mismo
-    // texto y discriminativa entre textos distintos, sin que el ruido recurrente
-    // del bucle la sobrescriba.
+    // Deterministic language route (text→Wernicke→Broca):
+    // if there was a recent read, regenerate the response from the CLEAN
+    // intention in lexicon space. This makes it reproducible for the same
+    // text and discriminative across different texts, without the loop's
+    // recurrent noise overwriting it.
     if (this.lastLinguisticIntention) {
       const wernicke = this.regions.get('wernicke') as WernickeArea | undefined;
-      // Construir la intención semántica desde lo que Wernicke comprende.
+      // Build the semantic intention from what Wernicke comprehends.
       const intention = new Float32Array(this.lexicon.dimensions);
       let understoodAny = false;
       if (wernicke) {
@@ -482,7 +484,7 @@ export class DigitalBrain {
           }
         }
       }
-      // Si no comprendió nada, usar la codificación limpia directamente.
+      // If it understood nothing, use the clean encoding directly.
       const semantic = understoodAny ? intention : this.lastLinguisticIntention;
       const response = brocaRegion.generateResponse(semantic, {
         valence: emotion.valence,
@@ -493,13 +495,13 @@ export class DigitalBrain {
       return { text, speech: speechParams };
     }
 
-    // Verificar si Broca generó una respuesta
+    // Check whether Broca generated a response
     const lastResponse = brocaRegion.getLastResponse();
 
     if (lastResponse && lastResponse.words.length > 0) {
       text = lastResponse.words.join(' ');
     } else {
-      // Forzar generación: crear intención desde la actividad del prefrontal
+      // Force generation: build an intention from the prefrontal activity
       const pfcRegion = this.regions.get('prefrontalCortex');
       const pfcActivity = pfcRegion?.getActivity();
       if (pfcActivity && pfcActivity.outputSpikes) {
@@ -513,14 +515,14 @@ export class DigitalBrain {
       }
     }
 
-    // Sintetizar parámetros de voz
+    // Synthesize voice parameters
     const speechParams = this.speechSynthesizer.synthesize(text, emotion);
 
     return { text, speech: speechParams };
   }
 
   /**
-   * El cerebro "siente" — retorna el estado emocional actual.
+   * The brain "feels" — returns the current emotional state.
    */
   feel(): EmotionalState {
     const levels: ModulatorLevels = {
@@ -536,7 +538,7 @@ export class DigitalBrain {
   }
 
   /**
-   * El cerebro "imagina" — genera una imagen desde la corteza visual.
+   * The brain "imagines" — generates an image from the visual cortex.
    */
   imagine(): { pixels: Float32Array; width: number; height: number; ascii: string } {
     const visualRegion = this.regions.get('visualCortex');
@@ -553,11 +555,11 @@ export class DigitalBrain {
   }
 
   // ================================================================
-  // PROCESAMIENTO INTERNO
+  // INTERNAL PROCESSING
   // ================================================================
 
   /**
-   * Inyecta input sensorial en el tálamo.
+   * Injects sensory input into the thalamus.
    */
   private injectSensoryInput(type: 'visual' | 'auditory' | 'linguistic', spikes: Float32Array): void {
     const thalamus = this.regions.get('thalamus');
@@ -565,7 +567,7 @@ export class DigitalBrain {
       thalamus.feedInput(spikes, this.currentTime);
     }
 
-    // También enviar directamente a la corteza apropiada via bus
+    // Also send directly to the appropriate cortex via the bus
     const targets = type === 'visual' ? ['visualCortex'] :
                     type === 'auditory' ? ['auditoryCortex'] :
                     ['wernicke', 'broca'];
@@ -580,21 +582,21 @@ export class DigitalBrain {
   }
 
   /**
-   * Procesa una percepción: ejecuta N ticks para propagar señales por el cerebro.
+   * Processes a perception: runs N ticks to propagate signals through the brain.
    */
   private processPerception(inputType: 'visual' | 'auditory' | 'text' | 'image'): PerceptionResult {
     const startTime = this.currentTime;
-    const processingTicks = 50; // ~50ms de procesamiento
+    const processingTicks = 50; // ~50ms of processing
 
-    // Ejecutar ticks
+    // Run ticks
     for (let i = 0; i < processingTicks; i++) {
       this.tick();
     }
 
-    // Obtener estado emocional resultante
+    // Get the resulting emotional state
     const emotion = this.feel();
 
-    // Identificar regiones activas
+    // Identify active regions
     const activeRegions: string[] = [];
     for (const [id, region] of this.regions) {
       const activity = region.getActivity();
@@ -612,22 +614,22 @@ export class DigitalBrain {
   }
 
   /**
-   * Ejecuta un tick del cerebro.
-   * Este es el loop principal de simulación.
+   * Runs one tick of the brain.
+   * This is the main simulation loop.
    */
   tick(): void {
     const dt = this.config.snn.dt;
     this.currentTime += dt;
     this.tickCount++;
 
-    // 1. Obtener efectos de neuromodulación
+    // 1. Get neuromodulation effects
     const effects = this.modulators.getEffects();
 
-    // 2. Procesar cada región
+    // 2. Process each region
     for (const [regionId, region] of this.regions) {
       const activity = region.step(dt, effects);
 
-      // 3. Enviar spikes de salida al bus
+      // 3. Send output spikes to the bus
       if (activity.activeNeurons.length > 0) {
         const outgoing = this.connectome.getOutgoing(regionId);
         if (outgoing.length > 0) {
@@ -641,27 +643,27 @@ export class DigitalBrain {
       }
     }
 
-    // 4. Despachar paquetes del bus (entrega diferida por retardos axonales)
+    // 4. Dispatch bus packets (delivery deferred by axonal delays)
     this.bus.tick(this.currentTime);
 
-    // 5. Decaimiento de neuromoduladores
+    // 5. Neuromodulator decay
     this.modulators.decay(dt);
 
-    // 6. Consolidación periódica ("sueño")
+    // 6. Periodic consolidation ("sleep")
     if (this.currentTime - this.lastConsolidation > this.config.memory.consolidationIntervalMs) {
       this.sleep();
     }
   }
 
   /**
-   * Proceso de consolidación ("sueño").
-   * Replay de memorias del hipocampo para fortalecer cortezas.
+   * Consolidation process ("sleep").
+   * Replay of hippocampus memories to strengthen the cortices.
    */
   sleep(): void {
     console.log(`💤 Consolidación iniciada (t=${this.currentTime.toFixed(0)}ms)...`);
     this.lastConsolidation = this.currentTime;
 
-    // La consolidación se delegaría al hippocampus
+    // Consolidation would be delegated to the hippocampus
     const hippocampus = this.regions.get('hippocampus');
     if (hippocampus) {
       const stats = this.consolidationEngine.consolidate([], this.regions);
@@ -669,7 +671,7 @@ export class DigitalBrain {
       console.log(`   Sinapsis fortalecidas: ${stats.synapsesStrengthened}`);
     }
 
-    // Emitir evento
+    // Emit event
     this.emitEvent({
       type: 'consolidation',
       timestamp: this.currentTime,
@@ -678,11 +680,11 @@ export class DigitalBrain {
   }
 
   // ================================================================
-  // ESTADO Y MONITORIZACIÓN
+  // STATE AND MONITORING
   // ================================================================
 
   /**
-   * Retorna el estado completo del cerebro.
+   * Returns the complete state of the brain.
    */
   getState(): BrainState {
     const regionsActivity: Record<string, RegionActivity> = {};
@@ -699,11 +701,11 @@ export class DigitalBrain {
     const brocaRegion = this.regions.get('broca') as BrocaArea | undefined;
     const brocaResponse = brocaRegion?.getLastResponse();
 
-    // Métricas de aprendizaje de la corteza visual
+    // Visual cortex learning metrics
     const visualRegion = this.regions.get('visualCortex') as VisualCortex | undefined;
     const learning = visualRegion?.getLearningMetrics();
 
-    // Métricas de aprendizaje del hipocampo CA3
+    // Hippocampus CA3 learning metrics
     const hippoRegion = this.regions.get('hippocampus') as Hippocampus | undefined;
     const learningHippocampus = hippoRegion?.getLearningMetrics();
 
@@ -734,23 +736,23 @@ export class DigitalBrain {
   }
 
   // ================================================================
-  // PERSISTENCIA (aprendizaje entre sesiones)
+  // PERSISTENCE (learning across sessions)
   // ================================================================
 
   /**
-   * Guarda el estado sináptico de todas las regiones + neuromoduladores a disco.
-   * Es lo que hace que el aprendizaje sobreviva a reinicios del proceso.
+   * Saves the synaptic state of all regions + neuromodulators to disk.
+   * This is what makes learning survive process restarts.
    */
   saveState(filePath: string): void {
     this.persistence.save(filePath, this.regions, this.modulators);
   }
 
   /**
-   * Restaura el estado desde un archivo previamente guardado. Aplica los pesos
-   * a cada región por id; salta (sin abortar) las regiones cuyas dimensiones no
-   * coincidan con el archivo —p. ej. si cambió neuronCount entre versiones—.
+   * Restores the state from a previously saved file. Applies the weights
+   * to each region by id; skips (without aborting) regions whose dimensions
+   * do not match the file —e.g. if neuronCount changed between versions—.
    *
-   * @returns Qué regiones se restauraron y cuáles se saltaron.
+   * @returns Which regions were restored and which were skipped.
    */
   loadState(filePath: string): { loaded: string[]; skipped: string[] } {
     const data = this.persistence.load(filePath);
@@ -772,39 +774,39 @@ export class DigitalBrain {
   }
 
   /**
-   * Obtiene el bus de spikes (para monitorización externa).
+   * Gets the spike bus (for external monitoring).
    */
   getBus(): SpikeBus {
     return this.bus;
   }
 
   /**
-   * Obtiene el sistema de neuromoduladores.
+   * Gets the neuromodulator system.
    */
   getModulators(): NeuromodulatorSystem {
     return this.modulators;
   }
 
   /**
-   * Obtiene una región por ID.
+   * Gets a region by ID.
    */
   getRegion(id: string): BrainRegion | undefined {
     return this.regions.get(id);
   }
 
   /**
-   * Obtiene todas las regiones.
+   * Gets all regions.
    */
   getRegions(): Map<string, BrainRegion> {
     return this.regions;
   }
 
   // ================================================================
-  // EVENTOS
+  // EVENTS
   // ================================================================
 
   /**
-   * Registra un listener para eventos del cerebro.
+   * Registers a listener for brain events.
    */
   on(eventType: string, callback: (event: BrainEvent) => void): void {
     if (!this.eventListeners.has(eventType)) {
@@ -814,14 +816,14 @@ export class DigitalBrain {
   }
 
   /**
-   * Emite un evento a todos los listeners registrados.
+   * Emits an event to all registered listeners.
    */
   private emitEvent(event: BrainEvent): void {
     const listeners = this.eventListeners.get(event.type) || [];
     for (const listener of listeners) {
       listener(event);
     }
-    // También emitir a listeners de '*'
+    // Also emit to '*' listeners
     const allListeners = this.eventListeners.get('*') || [];
     for (const listener of allListeners) {
       listener(event);
@@ -829,25 +831,25 @@ export class DigitalBrain {
   }
 
   // ================================================================
-  // CONFIGURACIÓN
+  // CONFIGURATION
   // ================================================================
 
   /**
-   * Retorna la configuración actual del cerebro.
+   * Returns the brain's current configuration.
    */
   getConfig(): BrainConfiguration {
     return { ...this.config };
   }
 
   /**
-   * Tiempo actual de simulación.
+   * Current simulation time.
    */
   get time(): number {
     return this.currentTime;
   }
 
   /**
-   * Número total de ticks procesados.
+   * Total number of ticks processed.
    */
   get ticks(): number {
     return this.tickCount;

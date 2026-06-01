@@ -1,104 +1,104 @@
 /**
- * Sistema de Neuromodulación
+ * Neuromodulation System
  * ===========================
- * Modela los 6 principales sistemas neuromoduladores del cerebro humano.
+ * Models the 6 main neuromodulator systems of the human brain.
  *
- * Biología: Los neuromoduladores son sustancias químicas liberadas por núcleos
- * subcorticales que afectan globalmente el procesamiento neural. A diferencia
- * de la neurotransmisión sináptica punto-a-punto, la neuromodulación actúa
- * de forma difusa ("volumétrica") sobre regiones enteras, alterando parámetros
- * como la excitabilidad neuronal, la plasticidad sináptica y la ganancia
- * de señales.
+ * Biology: Neuromodulators are chemical substances released by subcortical
+ * nuclei that globally affect neural processing. Unlike
+ * point-to-point synaptic neurotransmission, neuromodulation acts
+ * diffusely ("volumetrically") over entire regions, altering parameters
+ * such as neuronal excitability, synaptic plasticity and signal
+ * gain.
  *
- * Sistemas modelados:
- * 1. Dopamina (VTA/SNc): Recompensa, motivación, aprendizaje por refuerzo
- * 2. Serotonina (Núcleos del rafe): Regulación emocional, estabilidad
- * 3. Norepinefrina (Locus coeruleus): Alerta, atención, respuesta al estrés
- * 4. Cortisol (Eje HPA): Estrés crónico, supresión de consolidación
- * 5. Acetilcolina (Núcleo basal): Atención focalizada, consolidación mnémica
- * 6. Oxitocina (Hipotálamo): Cognición social, confianza, vinculación
+ * Modeled systems:
+ * 1. Dopamine (VTA/SNc): Reward, motivation, reinforcement learning
+ * 2. Serotonin (Raphe nuclei): Emotional regulation, stability
+ * 3. Norepinephrine (Locus coeruleus): Alertness, attention, stress response
+ * 4. Cortisol (HPA axis): Chronic stress, suppression of consolidation
+ * 5. Acetylcholine (Basal nucleus): Focused attention, memory consolidation
+ * 6. Oxytocin (Hypothalamus): Social cognition, trust, bonding
  */
 
 /**
- * Tipos de neuromoduladores implementados en el sistema.
+ * Types of neuromodulators implemented in the system.
  */
 export enum ModulatorType {
-  /** Dopamina: señal de recompensa y error de predicción */
+  /** Dopamine: reward signal and prediction error */
   Dopamine = 'dopamine',
-  /** Serotonina: regulación del ánimo y estabilidad conductual */
+  /** Serotonin: mood regulation and behavioral stability */
   Serotonin = 'serotonin',
-  /** Norepinefrina: alerta, vigilia y respuesta fight-or-flight */
+  /** Norepinephrine: alertness, wakefulness and fight-or-flight response */
   Norepinephrine = 'norepinephrine',
-  /** Cortisol: respuesta al estrés sostenido */
+  /** Cortisol: response to sustained stress */
   Cortisol = 'cortisol',
-  /** Acetilcolina: atención focalizada y formación de memorias */
+  /** Acetylcholine: focused attention and memory formation */
   Acetylcholine = 'acetylcholine',
-  /** Oxitocina: cognición social y vínculos afectivos */
+  /** Oxytocin: social cognition and affective bonds */
   Oxytocin = 'oxytocin',
 }
 
 /**
- * Estado instantáneo de un neuromodulador.
+ * Instantaneous state of a neuromodulator.
  */
 export interface ModulatorState {
-  /** Nivel actual del modulador (0.0 - 1.0) */
+  /** Current level of the modulator (0.0 - 1.0) */
   level: number;
-  /** Nivel basal al que tiende el modulador en reposo */
+  /** Baseline level the modulator tends toward at rest */
   baseline: number;
-  /** Tasa de decaimiento hacia el baseline (fracción por ms) */
+  /** Decay rate toward the baseline (fraction per ms) */
   decayRate: number;
-  /** Marca temporal de la última actualización (ms) */
+  /** Timestamp of the last update (ms) */
   lastUpdate: number;
 }
 
 /**
- * Efectos combinados de todos los neuromoduladores sobre los parámetros de la SNN.
- * Estos multiplicadores se aplican globalmente a todas las regiones cerebrales.
+ * Combined effects of all neuromodulators on the SNN parameters.
+ * These multipliers are applied globally to all brain regions.
  */
 export interface ModulationEffects {
-  /** Multiplicador de la tasa de aprendizaje (STDP/Hebbian). >1 = más plasticidad */
+  /** Learning rate multiplier (STDP/Hebbian). >1 = more plasticity */
   learningRateMultiplier: number;
-  /** Multiplicador del umbral de disparo. >1 = neuronas más difíciles de activar */
+  /** Firing threshold multiplier. >1 = neurons harder to activate */
   thresholdMultiplier: number;
-  /** Ganancia atencional. >1 = señales sensoriales amplificadas */
+  /** Attentional gain. >1 = amplified sensory signals */
   attentionGain: number;
-  /** Tasa de consolidación mnémica. >1 = memorias se fortalecen más rápido */
+  /** Memory consolidation rate. >1 = memories strengthen faster */
   consolidationRate: number;
-  /** Multiplicador de ganancia de spikes. >1 = actividad neural amplificada */
+  /** Spike gain multiplier. >1 = amplified neural activity */
   spikeGainMultiplier: number;
-  /** Boost de pesos relacionados con procesamiento social */
+  /** Boost of weights related to social processing */
   socialWeightBoost: number;
 }
 
 /**
- * Estado serializable del sistema completo de neuromodulación.
+ * Serializable state of the complete neuromodulation system.
  */
 export interface NeuromodulatorSnapshot {
-  /** Estado de cada modulador */
+  /** State of each modulator */
   modulators: Record<ModulatorType, ModulatorState>;
-  /** Marca temporal de la captura */
+  /** Timestamp of the capture */
   timestamp: number;
 }
 
 /**
- * Sistema central de neuromodulación del cerebro digital.
+ * Central neuromodulation system of the digital brain.
  *
- * Gestiona los niveles de 6 neuromoduladores y computa sus efectos
- * combinados sobre los parámetros globales de la red neuronal.
- * Cada modulador decae exponencialmente hacia su nivel basal,
- * modelando la recaptación y degradación enzimática biológica.
+ * Manages the levels of 6 neuromodulators and computes their combined
+ * effects on the global parameters of the neural network.
+ * Each modulator decays exponentially toward its baseline level,
+ * modeling biological reuptake and enzymatic degradation.
  */
 export class NeuromodulatorSystem {
-  /** Estado interno de todos los moduladores */
+  /** Internal state of all modulators */
   private readonly modulators: Map<ModulatorType, ModulatorState>;
 
   /**
-   * Crea el sistema de neuromodulación con niveles basales por defecto.
+   * Creates the neuromodulation system with default baseline levels.
    *
-   * Biología: Los niveles basales representan la actividad tónica
-   * (constante) de cada sistema neuromodulador en estado de vigilia
-   * tranquila. Los valores oscilan entre 0.3 y 0.5 reflejando
-   * actividad moderada.
+   * Biology: The baseline levels represent the tonic (constant)
+   * activity of each neuromodulator system in a quiet wakeful
+   * state. The values range between 0.3 and 0.5 reflecting
+   * moderate activity.
    */
   constructor() {
     this.modulators = new Map<ModulatorType, ModulatorState>([
@@ -130,51 +130,51 @@ export class NeuromodulatorSystem {
   }
 
   /**
-   * Libera una cantidad de neuromodulador (aumenta su nivel).
+   * Releases an amount of neuromodulator (increases its level).
    *
-   * Biología: Modela la liberación fásica (burst) de neuromodulador
-   * desde los núcleos subcorticales en respuesta a eventos relevantes.
-   * Ejemplo: Una recompensa inesperada causa un burst de dopamina.
+   * Biology: Models the phasic (burst) release of neuromodulator
+   * from the subcortical nuclei in response to relevant events.
+   * Example: An unexpected reward causes a dopamine burst.
    *
-   * @param type - Tipo de neuromodulador a liberar
-   * @param amount - Cantidad a liberar (0.0 - 1.0). Se suma al nivel actual.
+   * @param type - Type of neuromodulator to release
+   * @param amount - Amount to release (0.0 - 1.0). Added to the current level.
    */
   release(type: ModulatorType, amount: number): void {
     const state = this.modulators.get(type);
     if (!state) return;
 
-    // Clamp al rango [0, 1]
+    // Clamp to the range [0, 1]
     state.level = Math.min(1.0, Math.max(0, state.level + amount));
     state.lastUpdate = Date.now();
   }
 
   /**
-   * Aplica decaimiento temporal a todos los moduladores.
+   * Applies temporal decay to all modulators.
    *
-   * Biología: Los neuromoduladores son recaptados por transportadores
-   * presinápticos y degradados enzimáticamente (ej: MAO para dopamina,
-   * AChE para acetilcolina). Este proceso hace que los niveles retornen
-   * exponencialmente al baseline tónico.
+   * Biology: Neuromodulators are taken up by presynaptic
+   * transporters and degraded enzymatically (e.g. MAO for dopamine,
+   * AChE for acetylcholine). This process makes the levels return
+   * exponentially to the tonic baseline.
    *
-   * @param dt - Tiempo transcurrido desde el último tick (ms)
+   * @param dt - Time elapsed since the last tick (ms)
    */
   decay(dt: number): void {
     for (const [, state] of this.modulators) {
-      // Decaimiento exponencial hacia el baseline
+      // Exponential decay toward the baseline
       const diff = state.level - state.baseline;
       state.level = state.baseline + diff * Math.exp(-state.decayRate * dt);
     }
   }
 
   /**
-   * Computa los efectos combinados de todos los neuromoduladores.
+   * Computes the combined effects of all neuromodulators.
    *
-   * Biología: Los neuromoduladores interactúan de forma compleja. Por ejemplo,
-   * el cortisol alto inhibe la consolidación hipocampal y contrarresta los
-   * efectos potenciadores de la dopamina sobre el aprendizaje. La acetilcolina
-   * y la norepinefrina actúan sinérgicamente para amplificar la atención.
+   * Biology: Neuromodulators interact in complex ways. For example,
+   * high cortisol inhibits hippocampal consolidation and counteracts the
+   * potentiating effects of dopamine on learning. Acetylcholine
+   * and norepinephrine act synergistically to amplify attention.
    *
-   * @returns Efectos de modulación combinados para aplicar a la SNN
+   * @returns Combined modulation effects to apply to the SNN
    */
   getEffects(): ModulationEffects {
     const da = this.getLevel(ModulatorType.Dopamine);
@@ -185,51 +185,51 @@ export class NeuromodulatorSystem {
     const oxy = this.getLevel(ModulatorType.Oxytocin);
 
     return {
-      // Dopamina ↑ → aprendizaje ↑ | Cortisol ↑ → aprendizaje ↓
-      // DA potencia LTP en sinapsis corticoestriatales; cortisol bloquea NMDA hipocampal
+      // Dopamine ↑ → learning ↑ | Cortisol ↑ → learning ↓
+      // DA potentiates LTP at corticostriatal synapses; cortisol blocks hippocampal NMDA
       learningRateMultiplier: (1.0 + da * 0.8) * (1.0 - cort * 0.4),
 
-      // Serotonina ↑ → umbral ↑ (más estabilidad, menos impulsividad)
-      // Cortisol ↑ → umbral ↑ (inhibición por estrés)
-      // 5-HT eleva el umbral de disparo de neuronas piramidales vía receptores 5-HT1A
+      // Serotonin ↑ → threshold ↑ (more stability, less impulsivity)
+      // Cortisol ↑ → threshold ↑ (inhibition due to stress)
+      // 5-HT raises the firing threshold of pyramidal neurons via 5-HT1A receptors
       thresholdMultiplier: 1.0 + ser * 0.3 + cort * 0.2,
 
-      // Norepinefrina ↑ → atención ↑ | Acetilcolina ↑ → atención ↑
-      // NE del locus coeruleus modula la relación señal/ruido cortical
-      // ACh del núcleo basal amplifica selectivamente aferencias sensoriales
+      // Norepinephrine ↑ → attention ↑ | Acetylcholine ↑ → attention ↑
+      // NE from the locus coeruleus modulates the cortical signal/noise ratio
+      // ACh from the basal nucleus selectively amplifies sensory afferents
       attentionGain: 1.0 + ne * 0.6 + ach * 0.5,
 
-      // Acetilcolina ↑ → consolidación ↑ | Cortisol ↑ → consolidación ↓
-      // ACh facilita LTP hipocampal; cortisol crónico atrofia dendritas CA3
+      // Acetylcholine ↑ → consolidation ↑ | Cortisol ↑ → consolidation ↓
+      // ACh facilitates hippocampal LTP; chronic cortisol atrophies CA3 dendrites
       consolidationRate: (1.0 + ach * 0.7) * (1.0 - cort * 0.3),
 
-      // Norepinefrina ↑ → ganancia de spikes ↑ (más activación general)
-      // NE aumenta la excitabilidad neuronal vía receptores β-adrenérgicos
+      // Norepinephrine ↑ → spike gain ↑ (more general activation)
+      // NE increases neuronal excitability via β-adrenergic receptors
       spikeGainMultiplier: 1.0 + ne * 0.5,
 
-      // Oxitocina ↑ → boost social (procesamiento de caras, empatía, confianza)
-      // OXT potencia neuronas en el surco temporal superior y amígdala
+      // Oxytocin ↑ → social boost (face processing, empathy, trust)
+      // OXT potentiates neurons in the superior temporal sulcus and amygdala
       socialWeightBoost: 1.0 + oxy * 0.6,
     };
   }
 
   /**
-   * Obtiene el nivel actual de un neuromodulador específico.
+   * Gets the current level of a specific neuromodulator.
    *
-   * @param type - Tipo de neuromodulador
-   * @returns Nivel actual (0.0 - 1.0)
+   * @param type - Type of neuromodulator
+   * @returns Current level (0.0 - 1.0)
    */
   getLevel(type: ModulatorType): number {
     return this.modulators.get(type)?.level ?? 0;
   }
 
   /**
-   * Obtiene el estado completo de todos los moduladores.
+   * Gets the complete state of all modulators.
    *
-   * @returns Mapa con el estado de cada neuromodulador
+   * @returns Map with the state of each neuromodulator
    */
   getState(): Map<ModulatorType, ModulatorState> {
-    // Retornar copia profunda para evitar mutación externa
+    // Return a deep copy to avoid external mutation
     const copy = new Map<ModulatorType, ModulatorState>();
     for (const [type, state] of this.modulators) {
       copy.set(type, { ...state });
@@ -238,9 +238,9 @@ export class NeuromodulatorSystem {
   }
 
   /**
-   * Serializa el estado completo del sistema de neuromodulación.
+   * Serializes the complete state of the neuromodulation system.
    *
-   * @returns Snapshot serializable del estado actual
+   * @returns Serializable snapshot of the current state
    */
   serialize(): NeuromodulatorSnapshot {
     const modulators = {} as Record<ModulatorType, ModulatorState>;
@@ -254,9 +254,9 @@ export class NeuromodulatorSystem {
   }
 
   /**
-   * Restaura el estado del sistema desde un snapshot serializado.
+   * Restores the system state from a serialized snapshot.
    *
-   * @param snapshot - Estado previamente serializado
+   * @param snapshot - Previously serialized state
    */
   deserialize(snapshot: NeuromodulatorSnapshot): void {
     for (const [typeStr, state] of Object.entries(snapshot.modulators)) {
@@ -268,10 +268,10 @@ export class NeuromodulatorSystem {
   }
 
   /**
-   * Resetea todos los moduladores a sus niveles basales.
+   * Resets all modulators to their baseline levels.
    *
-   * Biología: Equivale al retorno al estado homeostático después de
-   * un período prolongado de reposo.
+   * Biology: Equivalent to the return to the homeostatic state after
+   * a prolonged period of rest.
    */
   reset(): void {
     for (const [, state] of this.modulators) {

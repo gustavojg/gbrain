@@ -1,33 +1,33 @@
 /**
- * ENCODER VISUAL — Codificación de imágenes a spikes
+ * VISUAL ENCODER — Image to spikes encoding
  * ===================================================
- * Transforma inputs visuales (webcam, imágenes estáticas) en trenes
- * de spikes para la corteza visual.
- * 
- * Pipeline bio-inspirado:
- * 1. Retina: Captura y preprocesa la imagen
- * 2. Células ganglionares: Detección de bordes/contraste (filtros Gabor simples)
- * 3. Foveación: Auto-centrado del patrón relevante
- * 4. Rate coding: Conversión a frecuencia de spikes
- * 
- * Basado en el pipeline visual existente de 06_visual_interface
+ * Transforms visual inputs (webcam, static images) into spike
+ * trains for the visual cortex.
+ *
+ * Bio-inspired pipeline:
+ * 1. Retina: Captures and preprocesses the image
+ * 2. Ganglion cells: Edge/contrast detection (simple Gabor filters)
+ * 3. Foveation: Auto-centering of the relevant pattern
+ * 4. Rate coding: Conversion to spike frequency
+ *
+ * Based on the existing visual pipeline from 06_visual_interface
  */
 
 import { encodeSpikeVector } from '../core/snn/spike-train.js';
 
-/** Configuración del encoder visual */
+/** Visual encoder configuration */
 export interface VisualEncoderConfig {
-  /** Resolución de entrada (ancho × alto) */
+  /** Input resolution (width × height) */
   inputWidth: number;
   inputHeight: number;
-  /** Resolución de procesamiento interna */
+  /** Internal processing resolution */
   processWidth: number;
   processHeight: number;
-  /** Si aplicar foveación (auto-centrado) */
+  /** Whether to apply foveation (auto-centering) */
   foveation: boolean;
-  /** Si aplicar detección de bordes */
+  /** Whether to apply edge detection */
   edgeDetection: boolean;
-  /** Número de orientaciones para filtros Gabor */
+  /** Number of orientations for Gabor filters */
   gaborOrientations: number;
 }
 
@@ -42,12 +42,12 @@ const DEFAULT_VISUAL_CONFIG: VisualEncoderConfig = {
 };
 
 /**
- * Encoder Visual — Simula la retina y el núcleo geniculado lateral.
- * Convierte imágenes en patrones de spikes para la corteza visual.
+ * Visual Encoder — Simulates the retina and the lateral geniculate nucleus.
+ * Converts images into spike patterns for the visual cortex.
  */
 export class VisualEncoder {
   private config: VisualEncoderConfig;
-  /** Tamaño del vector de output (spikes) */
+  /** Output vector size (spikes) */
   public outputSize: number;
 
   constructor(config: Partial<VisualEncoderConfig> = {}) {
@@ -60,34 +60,34 @@ export class VisualEncoder {
   }
 
   /**
-   * Codifica una imagen como vector de spikes.
-   * 
-   * @param pixels - Datos de imagen (escala de grises, 0-255)
-   * @param width - Ancho de la imagen de entrada
-   * @param height - Alto de la imagen de entrada
-   * @param dt - Paso temporal
-   * @returns Vector de spikes (Float32Array)
+   * Encodes an image as a spike vector.
+   *
+   * @param pixels - Image data (grayscale, 0-255)
+   * @param width - Width of the input image
+   * @param height - Height of the input image
+   * @param dt - Time step
+   * @returns Spike vector (Float32Array)
    */
   encode(pixels: number[] | Float32Array | Uint8Array, width: number, height: number, dt: number = 1.0): Float32Array {
-    // 1. Convertir a Float32Array normalizado (0-1)
+    // 1. Convert to normalized Float32Array (0-1)
     let normalized = new Float32Array(pixels.length);
     for (let i = 0; i < pixels.length; i++) {
       normalized[i] = (pixels[i] as number) / 255;
     }
 
-    // 2. Redimensionar a resolución de procesamiento
+    // 2. Resize to processing resolution
     let processed = this.resize(normalized, width, height, this.config.processWidth, this.config.processHeight);
 
-    // 3. Foveación (centrar el contenido)
+    // 3. Foveation (center the content)
     if (this.config.foveation) {
       processed = this.foveate(processed, this.config.processWidth, this.config.processHeight);
     }
 
-    // 4. Detección de bordes (filtros Gabor simplificados)
+    // 4. Edge detection (simplified Gabor filters)
     let output: Float32Array;
     if (this.config.edgeDetection) {
       const edges = this.detectEdges(processed, this.config.processWidth, this.config.processHeight);
-      // Concatenar imagen procesada + mapas de bordes
+      // Concatenate processed image + edge maps
       output = new Float32Array(processed.length + edges.length);
       output.set(processed, 0);
       output.set(edges, processed.length);
@@ -95,13 +95,13 @@ export class VisualEncoder {
       output = processed;
     }
 
-    // 5. Convertir a spikes via rate coding
+    // 5. Convert to spikes via rate coding
     return encodeSpikeVector(output, dt, 200);
   }
 
   /**
-   * Codifica un grid de dibujo (como el de proyecto 06) a spikes.
-   * Acepta directamente un array 2D de valores 0/1.
+   * Encodes a drawing grid (like the one in project 06) to spikes.
+   * Accepts a 2D array of 0/1 values directly.
    */
   encodeGrid(grid: number[][], dt: number = 1.0): Float32Array {
     const h = grid.length;
@@ -118,7 +118,7 @@ export class VisualEncoder {
   }
 
   /**
-   * Redimensiona una imagen usando interpolación bilineal.
+   * Resizes an image using bilinear interpolation.
    */
   private resize(src: Float32Array, srcW: number, srcH: number, dstW: number, dstH: number): Float32Array {
     const dst = new Float32Array(dstW * dstH);
@@ -136,7 +136,7 @@ export class VisualEncoder {
         const xFrac = srcX - x0;
         const yFrac = srcY - y0;
 
-        // Interpolación bilineal
+        // Bilinear interpolation
         const v00 = src[y0 * srcW + x0];
         const v10 = src[y0 * srcW + x1];
         const v01 = src[y1 * srcW + x0];
@@ -154,14 +154,14 @@ export class VisualEncoder {
   }
 
   /**
-   * Foveación: centra el contenido del patrón.
-   * Inspirado en las sacadas oculares — el ojo centra automáticamente
-   * el objeto de interés en la fóvea.
-   * 
-   * Refactorizado de 06_visual_interface/server.ts
+   * Foveation: centers the content of the pattern.
+   * Inspired by eye saccades — the eye automatically centers
+   * the object of interest on the fovea.
+   *
+   * Refactored from 06_visual_interface/server.ts
    */
   private foveate(img: Float32Array, w: number, h: number): Float32Array {
-    // Calcular centro de masa del contenido
+    // Compute the center of mass of the content
     let totalMass = 0;
     let cx = 0;
     let cy = 0;
@@ -175,12 +175,12 @@ export class VisualEncoder {
       }
     }
 
-    if (totalMass < 0.01) return img; // Sin contenido, no centrar
+    if (totalMass < 0.01) return img; // No content, don't center
 
     cx /= totalMass;
     cy /= totalMass;
 
-    // Desplazar para centrar
+    // Shift to center
     const dx = Math.round(w / 2 - cx);
     const dy = Math.round(h / 2 - cy);
 
@@ -201,18 +201,18 @@ export class VisualEncoder {
   }
 
   /**
-   * Detección de bordes con filtros Gabor simplificados.
-   * 
-   * En V1 del cerebro real, las neuronas responden selectivamente a bordes
-   * en orientaciones específicas (descubrimiento de Hubel & Wiesel, Nobel 1981).
-   * 
-   * Aquí usamos convoluciones simples tipo Sobel para 4 orientaciones.
+   * Edge detection with simplified Gabor filters.
+   *
+   * In V1 of the real brain, neurons respond selectively to edges
+   * at specific orientations (discovery by Hubel & Wiesel, Nobel 1981).
+   *
+   * Here we use simple Sobel-type convolutions for 4 orientations.
    */
   private detectEdges(img: Float32Array, w: number, h: number): Float32Array {
     const orientations = this.config.gaborOrientations;
     const result = new Float32Array(w * h * orientations);
 
-    // Kernels para diferentes orientaciones
+    // Kernels for different orientations
     const kernels = [
       // 0° — Horizontal
       [-1, -2, -1, 0, 0, 0, 1, 2, 1],
@@ -238,7 +238,7 @@ export class VisualEncoder {
               ki++;
             }
           }
-          // Normalizar a 0-1 y tomar valor absoluto
+          // Normalize to 0-1 and take the absolute value
           result[offset + y * w + x] = Math.min(1, Math.abs(sum) / 4);
         }
       }

@@ -1,30 +1,30 @@
 /**
- * TÁLAMO — Filtro Atencional y Relé Sensorial
+ * THALAMUS — Attentional Filter and Sensory Relay
  * =============================================
- * Refactorizado de 05_attention_scale/attention_brain_system.ts
+ * Refactored from 05_attention_scale/attention_brain_system.ts
  *
- * Base biológica:
- *   El tálamo es la "estación de relé" central del cerebro. Casi toda la
- *   información sensorial (excepto el olfato) pasa por el tálamo antes de
- *   llegar a la corteza. No es un relé pasivo: filtra activamente las señales,
- *   seleccionando las más salientes según el estado atencional.
+ * Biological basis:
+ *   The thalamus is the brain's central "relay station". Almost all
+ *   sensory information (except smell) passes through the thalamus before
+ *   reaching the cortex. It is not a passive relay: it actively filters signals,
+ *   selecting the most salient ones according to the attentional state.
  *
- *   El núcleo reticular talámico (NRT) actúa como compuerta inhibitoria,
- *   permitiendo pasar solo las señales más fuertes o relevantes. La
- *   acetilcolina del núcleo basal de Meynert modula esta compuerta:
- *   más ACh → compuerta más permisiva → más inputs pasan al córtex.
+ *   The thalamic reticular nucleus (TRN) acts as an inhibitory gate,
+ *   letting only the strongest or most relevant signals pass. The
+ *   acetylcholine from the basal nucleus of Meynert modulates this gate:
+ *   more ACh → more permissive gate → more inputs pass to the cortex.
  *
- *   Implementamos esto como un filtro top-K con umbral de ruido,
- *   donde K (el bottleneck) se modula por los niveles de acetilcolina.
+ *   We implement this as a top-K filter with a noise threshold,
+ *   where K (the bottleneck) is modulated by acetylcholine levels.
  *
- * Escalabilidad:
- *   Diseñado para manejar 50,000+ inputs sensoriales y filtrarlos
- *   a ~200 señales salientes usando un pase de umbral + sort parcial,
- *   evitando el costo de O(N log N) en el caso promedio.
+ * Scalability:
+ *   Designed to handle 50,000+ sensory inputs and filter them
+ *   down to ~200 salient signals using a threshold pass + partial sort,
+ *   avoiding the O(N log N) cost in the average case.
  */
 
 // ====================================================================
-// Importaciones del core (existentes en el proyecto)
+// Core imports (existing in the project)
 // ====================================================================
 
 import type { SpikePacket } from '../../core/bus/spike-bus.js';
@@ -35,45 +35,45 @@ import { SpikingNeuron, createNeuronPopulation } from '../../core/snn/neuron.js'
 import type { NeuronTypeName } from '../../core/snn/neuron.js';
 
 // ====================================================================
-// Tipos del Tálamo
+// Thalamus types
 // ====================================================================
 
 /**
- * Tipo de señal sensorial para enrutamiento.
- * El tálamo enruta señales a diferentes cortezas según la modalidad.
+ * Sensory signal type for routing.
+ * The thalamus routes signals to different cortices according to modality.
  */
 export type SensoryModality = 'visual' | 'auditory' | 'linguistic';
 
 /**
- * Resultado del procesamiento talámico.
- * Contiene los índices salientes y el vector filtrado.
+ * Result of the thalamic processing.
+ * Contains the salient indices and the filtered vector.
  */
 export interface ThalamusOutput {
-  /** Índices de los inputs más salientes seleccionados */
+  /** Indices of the most salient selected inputs */
   salientIndices: Int32Array;
-  /** Vector filtrado con solo los valores salientes (resto en 0) */
+  /** Filtered vector with only the salient values (rest at 0) */
   filteredInput: Float32Array;
-  /** Número de inputs que superaron el umbral de ruido */
+  /** Number of inputs that exceeded the noise threshold */
   candidateCount: number;
-  /** Tamaño del bottleneck efectivo (modulado por ACh) */
+  /** Effective bottleneck size (modulated by ACh) */
   effectiveBottleneck: number;
 }
 
 /**
- * Configuración específica del tálamo.
+ * Thalamus-specific configuration.
  */
 export interface ThalamusConfig {
-  /** Número de neuronas talámicas */
+  /** Number of thalamic neurons */
   neuronCount: number;
-  /** Tamaño total del vector de entrada sensorial */
+  /** Total size of the sensory input vector */
   totalInputSize: number;
-  /** Número máximo de señales que pasan el filtro atencional */
+  /** Maximum number of signals that pass the attentional filter */
   bottleneckSize: number;
-  /** Umbral de ruido de fondo (señales por debajo se ignoran) */
+  /** Background noise threshold (signals below are ignored) */
   noiseFloor: number;
-  /** Tipo de neurona (default: FastSpiking para respuesta rápida) */
+  /** Neuron type (default: FastSpiking for fast response) */
   neuronType: NeuronTypeName;
-  /** Sparsity de la codificación (fracción de neuronas activas) */
+  /** Encoding sparsity (fraction of active neurons) */
   sparsity: number;
 }
 
@@ -87,54 +87,54 @@ const DEFAULT_THALAMUS_CONFIG: ThalamusConfig = {
 };
 
 // ====================================================================
-// Clase Thalamus
+// Thalamus class
 // ====================================================================
 
 /**
- * Tálamo — Filtro atencional y relé sensorial del cerebro digital.
+ * Thalamus — Attentional filter and sensory relay of the digital brain.
  *
- * Base biológica:
- *   El tálamo recibe ~50,000 inputs sensoriales simultáneos y los filtra
- *   a ~200 señales salientes que se envían a las cortezas especializadas.
- *   Este filtrado es modulado por:
+ * Biological basis:
+ *   The thalamus receives ~50,000 simultaneous sensory inputs and filters them
+ *   down to ~200 salient signals that are sent to the specialized cortices.
+ *   This filtering is modulated by:
  *
- *   1. **Acetilcolina** (ACh): Aumenta el bottleneck → más información pasa.
- *      Biológicamente, ACh del núcleo basal facilita la transmisión talámica
- *      al despolarizar neuronas de relé y inhibir al NRT.
+ *   1. **Acetylcholine** (ACh): Increases the bottleneck → more information passes.
+ *      Biologically, ACh from the basal nucleus facilitates thalamic transmission
+ *      by depolarizing relay neurons and inhibiting the TRN.
  *
- *   2. **Ganancia atencional** (NE + ACh): Amplifica las señales salientes.
- *      Norepinefrina del locus coeruleus aumenta la relación señal/ruido.
+ *   2. **Attentional gain** (NE + ACh): Amplifies the salient signals.
+ *      Norepinephrine from the locus coeruleus increases the signal/noise ratio.
  *
- *   3. **Umbral de ruido**: Filtra señales subliminales (< 0.1).
- *      Modela el umbral de disparo del NRT.
+ *   3. **Noise threshold**: Filters subliminal signals (< 0.1).
+ *      Models the firing threshold of the TRN.
  *
- * Rendimiento:
- *   Para 50K inputs, usa un pase de umbral O(N) seguido de sort O(M log M)
- *   donde M << N (solo candidatos supraumbral), evitando sort completo.
+ * Performance:
+ *   For 50K inputs, it uses an O(N) threshold pass followed by an O(M log M) sort
+ *   where M << N (only suprathreshold candidates), avoiding a full sort.
  */
 export class Thalamus extends BrainRegion {
-  /** Número máximo base de señales que pasan el filtro */
+  /** Base maximum number of signals that pass the filter */
   private attentionBottleneck: number;
 
-  /** Umbral de ruido — señales por debajo se consideran ruido de fondo */
+  /** Noise threshold — signals below are considered background noise */
   private noiseFloor: number;
 
-  /** Sparsity de la codificación interna */
+  /** Sparsity of the internal encoding */
   private thalamusSparsity: number;
 
-  /** Referencia al spike bus para enrutar señales a cortezas */
+  /** Reference to the spike bus to route signals to cortices */
   private spikeBus: SpikeBus | null = null;
 
-  /** Último output calculado (para consultas externas) */
+  /** Last computed output (for external queries) */
   private lastOutput: ThalamusOutput | null = null;
 
-  /** Neuronas spiking locales del tálamo (modelo Izhikevich) */
+  /** Local spiking neurons of the thalamus (Izhikevich model) */
   private localNeurons: SpikingNeuron[];
 
   /**
-   * Crea una nueva instancia del tálamo.
+   * Creates a new thalamus instance.
    *
-   * @param config - Configuración parcial (se mezcla con defaults)
+   * @param config - Partial configuration (merged with defaults)
    */
   constructor(config: Partial<ThalamusConfig> = {}) {
     const cfg = { ...DEFAULT_THALAMUS_CONFIG, ...config };
@@ -149,12 +149,12 @@ export class Thalamus extends BrainRegion {
   }
 
   /**
-   * Inicializa los pesos sinápticos con conectividad sparse.
+   * Initializes the synaptic weights with sparse connectivity.
    *
-   * Base biológica:
-   *   Las neuronas talámicas de relé no están conectadas a TODOS los inputs,
-   *   sino que cada neurona recibe aferencias de un subconjunto de fibras
-   *   sensoriales. Inicializamos ~1000 conexiones aleatorias por neurona.
+   * Biological basis:
+   *   Thalamic relay neurons are not connected to ALL inputs,
+   *   rather each neuron receives afferents from a subset of sensory
+   *   fibers. We initialize ~1000 random connections per neuron.
    */
   private initializeThalamusWeights(): void {
     const INITIAL_CONNECTIONS = Math.min(1000, this.inputCount);
@@ -169,9 +169,9 @@ export class Thalamus extends BrainRegion {
   }
 
   /**
-   * Conecta el tálamo al spike bus para enrutamiento inter-regional.
+   * Connects the thalamus to the spike bus for inter-regional routing.
    *
-   * @param bus - Instancia del SpikeBus central
+   * @param bus - Instance of the central SpikeBus
    */
   connectBus(bus: SpikeBus): void {
     this.spikeBus = bus;
@@ -179,30 +179,30 @@ export class Thalamus extends BrainRegion {
   }
 
   /**
-   * Filtra un vector masivo de entrada sensorial a las top-K señales salientes.
+   * Filters a massive sensory input vector down to the top-K salient signals.
    *
-   * Base biológica:
-   *   El núcleo reticular talámico (NRT) inhibe las neuronas de relé
-   *   cuyos inputs son débiles, permitiendo pasar solo las señales que
-   *   superan un umbral. La acetilcolina modula este umbral:
-   *   - ACh alto → umbral más bajo → más señales pasan (atención amplia)
-   *   - ACh bajo → umbral más alto → menos señales (atención focalizada)
+   * Biological basis:
+   *   The thalamic reticular nucleus (TRN) inhibits relay neurons
+   *   whose inputs are weak, letting only the signals that
+   *   exceed a threshold pass. Acetylcholine modulates this threshold:
+   *   - High ACh → lower threshold → more signals pass (broad attention)
+   *   - Low ACh → higher threshold → fewer signals (focused attention)
    *
-   *   Este proceso es análogo a la inhibición lateral en el NRT,
-   *   implementado aquí como thresholding + selección top-K.
+   *   This process is analogous to lateral inhibition in the TRN,
+   *   implemented here as thresholding + top-K selection.
    *
-   * @param rawInputs - Vector de entrada sensorial completo (50K+ valores, 0.0-1.0)
-   * @param modulationEffects - Efectos de neuromodulación actuales
-   * @returns Resultado del filtro atencional
+   * @param rawInputs - Complete sensory input vector (50K+ values, 0.0-1.0)
+   * @param modulationEffects - Current neuromodulation effects
+   * @returns Result of the attentional filter
    */
   processAttention(rawInputs: Float32Array, modulationEffects?: ModulationEffects): ThalamusOutput {
-    // --- Modulación del bottleneck por acetilcolina ---
-    // ACh alto → attentionGain alto → K más grande → más inputs pasan
+    // --- Bottleneck modulation by acetylcholine ---
+    // High ACh → high attentionGain → larger K → more inputs pass
     const achGain = modulationEffects?.attentionGain ?? 1.0;
     const effectiveK = Math.floor(this.attentionBottleneck * achGain);
 
-    // --- Pase 1: Umbral de ruido (O(N), filtra ~90% de los inputs) ---
-    // Estructura para candidatos: índice + valor para sort
+    // --- Pass 1: Noise threshold (O(N), filters ~90% of the inputs) ---
+    // Structure for candidates: index + value for sort
     const candidateIndices = new Int32Array(rawInputs.length);
     const candidateValues = new Float32Array(rawInputs.length);
     let candidateCount = 0;
@@ -215,15 +215,15 @@ export class Thalamus extends BrainRegion {
       }
     }
 
-    // --- Pase 2: Selección Top-K (sort parcial de M candidatos) ---
-    // Crear array de índices para sorting (solo los M candidatos)
+    // --- Pass 2: Top-K selection (partial sort of M candidates) ---
+    // Create an index array for sorting (only the M candidates)
     const sortIndices = new Int32Array(candidateCount);
     for (let i = 0; i < candidateCount; i++) sortIndices[i] = i;
 
-    // Sort descendente por valor
+    // Descending sort by value
     sortIndices.sort((a, b) => candidateValues[b] - candidateValues[a]);
 
-    // --- Construir output filtrado ---
+    // --- Build the filtered output ---
     const k = Math.min(effectiveK, candidateCount);
     const salientIndices = new Int32Array(k);
     const filteredInput = new Float32Array(rawInputs.length);
@@ -233,7 +233,7 @@ export class Thalamus extends BrainRegion {
       const originalIdx = candidateIndices[candidateIdx];
       salientIndices[i] = originalIdx;
 
-      // Escalar por ganancia atencional (NE + ACh amplifican señales salientes)
+      // Scale by attentional gain (NE + ACh amplify salient signals)
       const spikeGain = modulationEffects?.spikeGainMultiplier ?? 1.0;
       filteredInput[originalIdx] = rawInputs[originalIdx] * spikeGain;
     }
@@ -249,17 +249,17 @@ export class Thalamus extends BrainRegion {
   }
 
   /**
-   * Determina a qué región cortical enrutar la señal según su modalidad.
+   * Determines which cortical region to route the signal to according to its modality.
    *
-   * Base biológica:
-   *   El tálamo tiene núcleos especializados para cada modalidad:
-   *   - Núcleo geniculado lateral (NGL) → Corteza visual V1
-   *   - Núcleo geniculado medial (NGM) → Corteza auditiva A1
-   *   - Núcleo ventral posterior → Corteza somatosensorial
-   *   - Pulvinar → Áreas de asociación (aquí: Broca-Wernicke)
+   * Biological basis:
+   *   The thalamus has specialized nuclei for each modality:
+   *   - Lateral geniculate nucleus (LGN) → Visual cortex V1
+   *   - Medial geniculate nucleus (MGN) → Auditory cortex A1
+   *   - Ventral posterior nucleus → Somatosensory cortex
+   *   - Pulvinar → Association areas (here: Broca-Wernicke)
    *
-   * @param inputType - Modalidad de la señal sensorial
-   * @returns Identificador de la región destino
+   * @param inputType - Modality of the sensory signal
+   * @returns Identifier of the destination region
    */
   routeToRegion(inputType: SensoryModality): string {
     switch (inputType) {
@@ -271,49 +271,49 @@ export class Thalamus extends BrainRegion {
   }
 
   /**
-   * Procesa un input sensorial completo: filtra y enruta.
+   * Processes a complete sensory input: filters and routes.
    *
-   * Base biológica:
-   *   Pipeline completo del relé talámico:
-   *   1. Recibe input sensorial crudo (retina, cóclea, etc.)
-   *   2. Aplica filtro atencional (NRT + modulación ACh)
-   *   3. Procesa a través de neuronas de relé (SNN interna)
-   *   4. Envía spikes resultantes a cortezas via tractos axonales
+   * Biological basis:
+   *   Complete pipeline of the thalamic relay:
+   *   1. Receives raw sensory input (retina, cochlea, etc.)
+   *   2. Applies attentional filter (TRN + ACh modulation)
+   *   3. Processes through relay neurons (internal SNN)
+   *   4. Sends the resulting spikes to cortices via axonal tracts
    *
-   * @param input - Vector de entrada sensorial crudo
-   * @param dt - Paso temporal (ms)
-   * @param timestamp - Tiempo actual de simulación (ms)
-   * @returns Vector filtrado por la atención
+   * @param input - Raw sensory input vector
+   * @param dt - Time step (ms)
+   * @param timestamp - Current simulation time (ms)
+   * @returns Vector filtered by attention
    */
   processInput(spikes: Float32Array, _modulationEffects: ModulationEffects): Float32Array {
-    // 1. Aplicar filtro atencional (sin modulación por ahora)
+    // 1. Apply attentional filter (without modulation for now)
     const attentionResult = this.processAttention(spikes);
 
-    // 2. Procesar a través de neuronas talámicas (computación sparse)
+    // 2. Process through thalamic neurons (sparse computation)
     const localPotentials = new Float32Array(this.neuronCount);
 
     for (let n = 0; n < this.neuronCount; n++) {
       let excitation = 0;
       const offset = n * this.inputCount;
 
-      // Producto punto sparse: solo calcular para índices salientes
+      // Sparse dot product: only compute for salient indices
       for (let i = 0; i < attentionResult.salientIndices.length; i++) {
         const idx = attentionResult.salientIndices[i];
         excitation += this.weights[offset + idx] * attentionResult.filteredInput[idx];
       }
 
-      // Ruido neuronal (variabilidad intrínseca)
+      // Neuronal noise (intrinsic variability)
       excitation += Math.random() * 0.01;
       localPotentials[n] = excitation;
     }
 
-    // 3. Winner-Take-All (inhibición lateral via NRT)
+    // 3. Winner-Take-All (lateral inhibition via TRN)
     const k = Math.max(1, Math.floor(this.neuronCount * this.thalamusSparsity));
     const indices = new Int32Array(this.neuronCount);
     for (let i = 0; i < this.neuronCount; i++) indices[i] = i;
     indices.sort((a, b) => localPotentials[b] - localPotentials[a]);
 
-    // Activar solo top-k neuronas
+    // Activate only the top-k neurons
     const activeSpikes = new Float32Array(this.neuronCount);
     for (let i = 0; i < k; i++) {
       const winnerIdx = indices[i];
@@ -321,7 +321,7 @@ export class Thalamus extends BrainRegion {
       activeSpikes[winnerIdx] = 1.0;
     }
 
-    // Resetear no-ganadores
+    // Reset non-winners
     for (let i = k; i < this.neuronCount; i++) {
       this.localNeurons[indices[i]].fired = false;
     }
@@ -330,13 +330,13 @@ export class Thalamus extends BrainRegion {
   }
 
   /**
-   * Procesa y envía señal filtrada a una corteza específica via spike bus.
+   * Processes and sends the filtered signal to a specific cortex via the spike bus.
    *
-   * @param rawInput - Input sensorial crudo
-   * @param modality - Tipo de señal (visual, auditory, linguistic)
-   * @param dt - Paso temporal
-   * @param timestamp - Tiempo de simulación
-   * @param modulationEffects - Efectos neuromoduladores opcionales
+   * @param rawInput - Raw sensory input
+   * @param modality - Signal type (visual, auditory, linguistic)
+   * @param dt - Time step
+   * @param timestamp - Simulation time
+   * @param modulationEffects - Optional neuromodulator effects
    */
   processAndRoute(
     rawInput: Float32Array,
@@ -345,10 +345,10 @@ export class Thalamus extends BrainRegion {
     timestamp: number,
     modulationEffects?: ModulationEffects,
   ): ThalamusOutput {
-    // 1. Filtro atencional con modulación
+    // 1. Attentional filter with modulation
     const attentionResult = this.processAttention(rawInput, modulationEffects);
 
-    // 2. Procesar neuronas talámicas
+    // 2. Process thalamic neurons
     const defaultMod: ModulationEffects = {
       learningRateMultiplier: 1.0,
       thresholdMultiplier: 1.0,
@@ -359,7 +359,7 @@ export class Thalamus extends BrainRegion {
     };
     const activeSpikes = this.processInput(rawInput, modulationEffects ?? defaultMod);
 
-    // 3. Enrutar via spike bus
+    // 3. Route via spike bus
     if (this.spikeBus) {
       const targetRegion = this.routeToRegion(modality);
 
@@ -382,16 +382,16 @@ export class Thalamus extends BrainRegion {
   }
 
   /**
-   * Envía un broadcast a múltiples cortezas simultáneamente.
+   * Sends a broadcast to multiple cortices simultaneously.
    *
-   * Base biológica:
-   *   Algunos estímulos (ej: un sonido fuerte repentino) activan
-   *   múltiples vías talámicas simultáneamente, incluyendo la vía
-   *   rápida tálamo→amígdala para respuesta emocional inmediata.
+   * Biological basis:
+   *   Some stimuli (e.g. a sudden loud sound) activate
+   *   multiple thalamic pathways simultaneously, including the
+   *   fast thalamus→amygdala pathway for an immediate emotional response.
    *
-   * @param rawInput - Input sensorial
-   * @param targets - Lista de regiones destino
-   * @param timestamp - Tiempo de simulación
+   * @param rawInput - Sensory input
+   * @param targets - List of destination regions
+   * @param timestamp - Simulation time
    */
   broadcastToRegions(
     rawInput: Float32Array,
@@ -417,17 +417,17 @@ export class Thalamus extends BrainRegion {
   }
 
   /**
-   * Obtiene el último resultado del filtro atencional.
+   * Gets the last result of the attentional filter.
    */
   getLastOutput(): ThalamusOutput | null {
     return this.lastOutput;
   }
 
   /**
-   * Obtiene estadísticas del tálamo para monitoreo.
+   * Gets statistics of the thalamus for monitoring.
    */
   /**
-   * Obtiene la fracción de actividad local (0-1) basada en las neuronas spiking.
+   * Gets the fraction of local activity (0-1) based on the spiking neurons.
    */
   getLocalActivity(): number {
     let active = 0;

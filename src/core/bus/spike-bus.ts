@@ -1,121 +1,121 @@
 /**
- * Bus Central de Comunicación de Spikes
+ * Central Spike Communication Bus
  * =======================================
- * Sistema de mensajería inter-regional para el cerebro digital.
+ * Inter-regional messaging system for the digital brain.
  *
- * Biología: En el cerebro real, las señales entre regiones viajan como
- * potenciales de acción (spikes) a través de axones mielinizados con
- * velocidades de conducción de 1-100 m/s. El retardo axonal depende de
- * la distancia y el grado de mielinización del tracto. Este bus modela
- * esa latencia usando una cola de prioridad ordenada por tiempo de entrega.
+ * Biology: In the real brain, signals between regions travel as
+ * action potentials (spikes) through myelinated axons with
+ * conduction velocities of 1-100 m/s. The axonal delay depends on
+ * the distance and the degree of myelination of the tract. This bus models
+ * that latency using a priority queue ordered by delivery time.
  *
- * Arquitectura: Basado en EventEmitter de Node.js para notificación
- * asíncrona a regiones suscritas. Los paquetes de spikes se encolan
- * con un tiempo de entrega futuro (timestamp + delay) y se despachan
- * en cada tick del simulador cuando su tiempo ha llegado.
+ * Architecture: Based on Node.js EventEmitter for asynchronous
+ * notification to subscribed regions. Spike packets are enqueued
+ * with a future delivery time (timestamp + delay) and are dispatched
+ * on each simulator tick when their time has arrived.
  */
 
 import { EventEmitter } from 'events';
 
 /**
- * Paquete de spikes transmitido entre regiones cerebrales.
- * Modela un volley de potenciales de acción viajando por un tracto axonal.
+ * Spike packet transmitted between brain regions.
+ * Models a volley of action potentials traveling through an axonal tract.
  */
 export interface SpikePacket {
-  /** Identificador de la región emisora */
+  /** Identifier of the emitting region */
   source: string;
-  /** Identificadores de las regiones destino */
+  /** Identifiers of the target regions */
   targets: string[];
-  /** Vector de spikes (0.0 = silencio, 1.0 = spike) */
+  /** Spike vector (0.0 = silence, 1.0 = spike) */
   spikes: Float32Array;
-  /** Marca temporal de emisión (ms del reloj de simulación) */
+  /** Emission timestamp (ms of the simulation clock) */
   timestamp: number;
-  /** Metadatos opcionales (ej: tipo de señal, modulación, prioridad) */
+  /** Optional metadata (e.g. signal type, modulation, priority) */
   metadata?: Record<string, unknown>;
 }
 
 /**
- * Paquete en tránsito con tiempo de entrega calculado.
- * Incluye el retardo axonal y peso sináptico de la conexión.
+ * Packet in transit with computed delivery time.
+ * Includes the axonal delay and synaptic weight of the connection.
  */
 interface DelayedPacket {
-  /** Paquete original de spikes */
+  /** Original spike packet */
   packet: SpikePacket;
-  /** Región destino específica (un paquete puede tener múltiples targets) */
+  /** Specific target region (a packet may have multiple targets) */
   target: string;
-  /** Tiempo de entrega = timestamp + delay axonal */
+  /** Delivery time = timestamp + axonal delay */
   deliveryTime: number;
-  /** Peso de la conexión para escalar los spikes */
+  /** Connection weight to scale the spikes */
   connectionWeight: number;
 }
 
 /**
- * Estadísticas de tráfico por región.
+ * Traffic statistics per region.
  */
 export interface RegionTrafficStats {
-  /** Número de paquetes enviados desde esta región */
+  /** Number of packets sent from this region */
   packetsSent: number;
-  /** Número de paquetes recibidos por esta región */
+  /** Number of packets received by this region */
   packetsReceived: number;
-  /** Número total de spikes (sum de spikes > 0) enviados */
+  /** Total number of spikes (sum of spikes > 0) sent */
   totalSpikesEmitted: number;
-  /** Último timestamp de actividad */
+  /** Last activity timestamp */
   lastActivity: number;
 }
 
 /**
- * Bus central de comunicación de spikes entre regiones cerebrales.
+ * Central spike communication bus between brain regions.
  *
- * Gestiona el enrutamiento de señales neurales con retardos axonales
- * realistas. Las regiones se registran, envían paquetes de spikes,
- * y reciben entregas diferidas según el conectoma.
+ * Manages the routing of neural signals with realistic axonal
+ * delays. Regions register, send spike packets,
+ * and receive deferred deliveries according to the connectome.
  *
- * Uso:
+ * Usage:
  * ```typescript
  * const bus = new SpikeBus();
  * bus.register('visualCortex');
  * bus.register('hippocampus');
  * bus.onReceive('hippocampus', (packet) => { ... });
  * bus.send({ source: 'visualCortex', targets: ['hippocampus'], spikes, timestamp: 100 });
- * bus.tick(110); // Entrega paquetes cuyo deliveryTime <= 110
+ * bus.tick(110); // Delivers packets whose deliveryTime <= 110
  * ```
  */
 export class SpikeBus extends EventEmitter {
-  /** Regiones registradas con sus stats de tráfico */
+  /** Registered regions with their traffic stats */
   private readonly regions: Map<string, RegionTrafficStats> = new Map();
 
   /**
-   * Cola de prioridad de paquetes retrasados.
-   * Ordenada por deliveryTime ascendente para despacho eficiente.
-   * Se usa inserción binaria para mantener el orden.
+   * Priority queue of delayed packets.
+   * Ordered by ascending deliveryTime for efficient dispatch.
+   * Binary insertion is used to maintain the order.
    */
   private readonly delayQueue: DelayedPacket[] = [];
 
-  /** Retardos axonales por defecto por par de regiones (ms) */
+  /** Default axonal delays per region pair (ms) */
   private readonly defaultDelay: number = 10;
 
-  /** Pesos de conexión por defecto */
+  /** Default connection weights */
   private readonly defaultWeight: number = 1.0;
 
-  /** Mapa de retardos personalizados: "from->to" → delay */
+  /** Map of custom delays: "from->to" → delay */
   private readonly customDelays: Map<string, number> = new Map();
 
-  /** Mapa de pesos personalizados: "from->to" → weight */
+  /** Map of custom weights: "from->to" → weight */
   private readonly customWeights: Map<string, number> = new Map();
 
-  /** Contador total de paquetes procesados (para estadísticas) */
+  /** Total counter of processed packets (for statistics) */
   private totalPacketsProcessed: number = 0;
 
   constructor() {
     super();
-    // Aumentar límite de listeners para muchas regiones
+    // Increase the listener limit for many regions
     this.setMaxListeners(100);
   }
 
   /**
-   * Registra una región cerebral en el bus de comunicación.
+   * Registers a brain region on the communication bus.
    *
-   * @param regionId - Identificador único de la región
+   * @param regionId - Unique identifier of the region
    */
   register(regionId: string): void {
     if (this.regions.has(regionId)) return;
@@ -129,49 +129,49 @@ export class SpikeBus extends EventEmitter {
   }
 
   /**
-   * Configura el retardo axonal para una conexión específica.
+   * Configures the axonal delay for a specific connection.
    *
-   * @param from - Región de origen
-   * @param to - Región destino
-   * @param delay - Retardo en milisegundos
+   * @param from - Source region
+   * @param to - Target region
+   * @param delay - Delay in milliseconds
    */
   setDelay(from: string, to: string, delay: number): void {
     this.customDelays.set(`${from}->${to}`, delay);
   }
 
   /**
-   * Configura el peso sináptico para una conexión específica.
+   * Configures the synaptic weight for a specific connection.
    *
-   * @param from - Región de origen
-   * @param to - Región destino
-   * @param weight - Peso sináptico (0.0 - 2.0)
+   * @param from - Source region
+   * @param to - Target region
+   * @param weight - Synaptic weight (0.0 - 2.0)
    */
   setWeight(from: string, to: string, weight: number): void {
     this.customWeights.set(`${from}->${to}`, weight);
   }
 
   /**
-   * Obtiene el retardo configurado para una conexión.
+   * Gets the configured delay for a connection.
    */
   private getDelay(from: string, to: string): number {
     return this.customDelays.get(`${from}->${to}`) ?? this.defaultDelay;
   }
 
   /**
-   * Obtiene el peso configurado para una conexión.
+   * Gets the configured weight for a connection.
    */
   private getWeight(from: string, to: string): number {
     return this.customWeights.get(`${from}->${to}`) ?? this.defaultWeight;
   }
 
   /**
-   * Envía un paquete de spikes desde una región a sus targets.
+   * Sends a spike packet from a region to its targets.
    *
-   * Biología: Modela la propagación de un volley de potenciales de acción
-   * desde una región cortical hacia sus proyecciones axonales. El paquete
-   * se encola con un retardo calculado según el conectoma.
+   * Biology: Models the propagation of a volley of action potentials
+   * from a cortical region toward its axonal projections. The packet
+   * is enqueued with a delay computed according to the connectome.
    *
-   * @param packet - Paquete de spikes a transmitir
+   * @param packet - Spike packet to transmit
    */
   send(packet: SpikePacket): void {
     const sourceStats = this.regions.get(packet.source);
@@ -181,7 +181,7 @@ export class SpikeBus extends EventEmitter {
       );
     }
 
-    // Contar spikes activos
+    // Count active spikes
     let spikeCount = 0;
     for (let i = 0; i < packet.spikes.length; i++) {
       if (packet.spikes[i] > 0) spikeCount++;
@@ -191,9 +191,9 @@ export class SpikeBus extends EventEmitter {
     sourceStats.totalSpikesEmitted += spikeCount;
     sourceStats.lastActivity = packet.timestamp;
 
-    // Encolar paquete para cada target con su retardo específico
+    // Enqueue a packet for each target with its specific delay
     for (const target of packet.targets) {
-      if (!this.regions.has(target)) continue; // Ignorar targets no registrados
+      if (!this.regions.has(target)) continue; // Ignore unregistered targets
 
       const delay = this.getDelay(packet.source, target);
       const weight = this.getWeight(packet.source, target);
@@ -206,14 +206,14 @@ export class SpikeBus extends EventEmitter {
         connectionWeight: weight,
       };
 
-      // Inserción binaria para mantener orden por deliveryTime
+      // Binary insertion to keep the order by deliveryTime
       this.insertSorted(delayed);
     }
   }
 
   /**
-   * Inserta un paquete en la cola manteniendo orden ascendente por deliveryTime.
-   * Usa búsqueda binaria para eficiencia O(log n).
+   * Inserts a packet into the queue keeping ascending order by deliveryTime.
+   * Uses binary search for O(log n) efficiency.
    */
   private insertSorted(item: DelayedPacket): void {
     let lo = 0;
@@ -232,10 +232,10 @@ export class SpikeBus extends EventEmitter {
   }
 
   /**
-   * Suscribe una región para recibir paquetes de spikes.
+   * Subscribes a region to receive spike packets.
    *
-   * @param regionId - Identificador de la región receptora
-   * @param callback - Función a invocar cuando llega un paquete
+   * @param regionId - Identifier of the receiving region
+   * @param callback - Function to invoke when a packet arrives
    */
   onReceive(
     regionId: string,
@@ -245,20 +245,20 @@ export class SpikeBus extends EventEmitter {
   }
 
   /**
-   * Despacha todos los paquetes cuyo tiempo de entrega ha llegado.
+   * Dispatches all packets whose delivery time has arrived.
    *
-   * Biología: Simula el paso del tiempo en el simulador. Los paquetes
-   * que han completado su viaje axonal se entregan a las regiones destino.
-   * El peso de la conexión escala los spikes, modelando la eficacia
-   * sináptica del tracto.
+   * Biology: Simulates the passage of time in the simulator. Packets
+   * that have completed their axonal journey are delivered to the target regions.
+   * The connection weight scales the spikes, modeling the synaptic
+   * efficacy of the tract.
    *
-   * @param currentTime - Tiempo actual de simulación (ms)
-   * @returns Número de paquetes entregados en este tick
+   * @param currentTime - Current simulation time (ms)
+   * @returns Number of packets delivered in this tick
    */
   tick(currentTime: number): number {
     let delivered = 0;
 
-    // La cola está ordenada, así que procesamos desde el inicio
+    // The queue is ordered, so we process from the start
     while (
       this.delayQueue.length > 0 &&
       this.delayQueue[0].deliveryTime <= currentTime
@@ -271,7 +271,7 @@ export class SpikeBus extends EventEmitter {
         targetStats.lastActivity = currentTime;
       }
 
-      // Escalar spikes por peso de conexión si es distinto de 1.0
+      // Scale spikes by connection weight if it differs from 1.0
       let deliveredSpikes = delayed.packet.spikes;
       if (delayed.connectionWeight !== 1.0) {
         deliveredSpikes = new Float32Array(delayed.packet.spikes.length);
@@ -281,7 +281,7 @@ export class SpikeBus extends EventEmitter {
         }
       }
 
-      // Emitir evento con paquete ajustado
+      // Emit event with adjusted packet
       const deliveredPacket: SpikePacket = {
         source: delayed.packet.source,
         targets: [delayed.target],
@@ -299,9 +299,9 @@ export class SpikeBus extends EventEmitter {
   }
 
   /**
-   * Retorna estadísticas de tráfico actuales por región.
+   * Returns current traffic statistics per region.
    *
-   * @returns Mapa de regionId → estadísticas de tráfico
+   * @returns Map of regionId → traffic statistics
    */
   getTraffic(): Map<string, RegionTrafficStats> {
     const copy = new Map<string, RegionTrafficStats>();
@@ -312,35 +312,35 @@ export class SpikeBus extends EventEmitter {
   }
 
   /**
-   * Retorna el número de paquetes pendientes en la cola de retardo.
+   * Returns the number of pending packets in the delay queue.
    */
   get pendingCount(): number {
     return this.delayQueue.length;
   }
 
   /**
-   * Retorna el número total de paquetes procesados desde la creación del bus.
+   * Returns the total number of packets processed since the bus was created.
    */
   get processedCount(): number {
     return this.totalPacketsProcessed;
   }
 
   /**
-   * Verifica si una región está registrada.
+   * Checks whether a region is registered.
    */
   isRegistered(regionId: string): boolean {
     return this.regions.has(regionId);
   }
 
   /**
-   * Limpia la cola de paquetes pendientes.
+   * Clears the queue of pending packets.
    */
   clearQueue(): void {
     this.delayQueue.length = 0;
   }
 
   /**
-   * Resetea todas las estadísticas de tráfico.
+   * Resets all traffic statistics.
    */
   resetStats(): void {
     for (const [, stats] of this.regions) {

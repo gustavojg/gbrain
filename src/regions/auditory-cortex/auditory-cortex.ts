@@ -1,32 +1,32 @@
 /**
- * CORTEZA AUDITIVA — Procesamiento de patrones sonoros
+ * AUDITORY CORTEX — Processing of sound patterns
  * =====================================================
- * Refactorizado de 07_audio_cortex/server.ts
+ * Refactored from 07_audio_cortex/server.ts
  *
- * Base biológica:
- *   La corteza auditiva primaria (A1) está organizada tonotópicamente:
- *   las neuronas se disponen según la frecuencia a la que responden
- *   preferentemente, creando un mapa de frecuencias sobre la superficie
- *   cortical (análogo al mapa retinotópico de V1).
+ * Biological basis:
+ *   The primary auditory cortex (A1) is organized tonotopically:
+ *   the neurons are arranged according to the frequency to which they
+ *   preferentially respond, creating a frequency map over the cortical
+ *   surface (analogous to the retinotopic map of V1).
  *
- *   La organización tonotópica se hereda de la membrana basilar coclear,
- *   donde las frecuencias altas activan la base y las bajas el ápex.
- *   Las conexiones tálamo→A1 preservan esta organización.
+ *   The tonotopic organization is inherited from the cochlear basilar
+ *   membrane, where high frequencies activate the base and low ones the apex.
+ *   The thalamus→A1 connections preserve this organization.
  *
- *   Esta implementación incluye:
- *   - Organización tonotópica: neuronas prefieren frecuencias específicas
- *   - Detección de voz: modula el procesamiento según presencia de voz
- *   - Aprendizaje contrastivo: lateral inhibition sharpens representations
- *   - Auto-aprendizaje: detecta patrones repetidos y les asigna etiquetas
- *   - Buffer de corto plazo: memoria ecoica para detección de repetición
+ *   This implementation includes:
+ *   - Tonotopic organization: neurons prefer specific frequencies
+ *   - Voice detection: modulates processing according to the presence of voice
+ *   - Contrastive learning: lateral inhibition sharpens representations
+ *   - Self-learning: detects repeated patterns and assigns them labels
+ *   - Short-term buffer: echoic memory for repetition detection
  *
- * Escalabilidad:
- *   5,000 neuronas × 800 inputs = 4M pesos (16MB Float32).
- *   Ligero comparado con corteza visual.
+ * Scalability:
+ *   5,000 neurons × 800 inputs = 4M weights (16MB Float32).
+ *   Light compared to the visual cortex.
  */
 
 // ====================================================================
-// Importaciones del core (existentes en el proyecto)
+// Core imports (existing in the project)
 // ====================================================================
 
 import type { SpikePacket } from '../../core/bus/spike-bus.js';
@@ -37,102 +37,102 @@ import { SpikingNeuron, createNeuronPopulation } from '../../core/snn/neuron.js'
 import type { NeuronTypeName } from '../../core/snn/neuron.js';
 
 // ====================================================================
-// Tipos de la Corteza Auditiva
+// Auditory Cortex Types
 // ====================================================================
 
 /**
- * Características de voz extraídas del espectrograma.
+ * Voice features extracted from the spectrogram.
  *
- * Base biológica:
- *   El sistema auditivo detecta la voz humana mediante la combinación
- *   de energía en el rango de frecuencias fundamentales de la voz
- *   (~85-300 Hz para adultos) y sus armónicos. Las neuronas de A1
- *   responden selectivamente a estos patrones espectro-temporales.
+ * Biological basis:
+ *   The auditory system detects the human voice through the combination
+ *   of energy in the range of the voice's fundamental frequencies
+ *   (~85-300 Hz for adults) and its harmonics. A1 neurons
+ *   respond selectively to these spectro-temporal patterns.
  */
 export interface VoiceFeatures {
-  /** Si se detecta voz humana en la señal */
+  /** Whether a human voice is detected in the signal */
   hasVoice: boolean;
-  /** Centroide espectral (centro de masa frecuencial) */
+  /** Spectral centroid (frequency center of mass) */
   centroid: number;
-  /** Energía total de la señal */
+  /** Total energy of the signal */
   energy: number;
 }
 
 /**
- * Memoria auditiva: patrón de neuronas asociado a un sonido.
+ * Auditory memory: neuron pattern associated with a sound.
  */
 export interface AuditoryMemory {
-  /** Índices de neuronas activas para este patrón */
+  /** Indices of active neurons for this pattern */
   pattern: Int32Array;
-  /** Etiqueta del sonido */
+  /** Label of the sound */
   label: string;
-  /** Fuerza de la memoria (correlaciona con energía vocal) */
+  /** Strength of the memory (correlates with vocal energy) */
   strength: number;
-  /** Timestamp de creación */
+  /** Creation timestamp */
   createdAt: number;
 }
 
 /**
- * Resultado del procesamiento auditivo.
+ * Result of auditory processing.
  */
 export interface AuditoryProcessingResult {
-  /** Tipo de resultado */
+  /** Result type */
   type: 'KNOWN' | 'UNKNOWN' | 'NEW_LEARNING' | 'NO_VOICE';
-  /** Neuronas ganadoras */
+  /** Winning neurons */
   winners: Int32Array;
-  /** Predicción (label reconocido o '?') */
+  /** Prediction (recognized label or '?') */
   prediction: string;
-  /** Características de voz detectadas */
+  /** Detected voice features */
   voiceFeatures: VoiceFeatures;
-  /** Puntuación de repetición (para auto-aprendizaje) */
+  /** Repetition score (for self-learning) */
   repetitionScore: number;
 }
 
 /**
- * Configuración de la corteza auditiva.
+ * Auditory cortex configuration.
  */
 export interface AuditoryCortexConfig {
-  /** Número de neuronas corticales */
+  /** Number of cortical neurons */
   neuronCount: number;
-  /** Tamaño del input (numBands × numFrames del espectrograma) */
+  /** Input size (numBands × numFrames of the spectrogram) */
   inputCount: number;
-  /** Número de bandas de frecuencia en el espectrograma */
+  /** Number of frequency bands in the spectrogram */
   numBands: number;
-  /** Número de frames temporales */
+  /** Number of temporal frames */
   numFrames: number;
-  /** Sparsity de la codificación */
+  /** Sparsity of the encoding */
   sparsity: number;
-  /** Número de neuronas ganadoras en k-WTA */
+  /** Number of winning neurons in k-WTA */
   kWinners: number;
-  /** Factor de fatiga homeostática */
+  /** Homeostatic fatigue factor */
   fatigueFactor: number;
-  /** Tasa de aprendizaje base */
+  /** Base learning rate */
   learningRate: number;
-  /** Boost de aprendizaje para frecuencias vocales */
+  /** Learning boost for vocal frequencies */
   voiceFreqBoost: number;
-  /** Presupuesto máximo de peso por neurona */
+  /** Maximum weight budget per neuron */
   maxWeightBudget: number;
-  /** Factor de inhibición contrastiva */
+  /** Contrastive inhibition factor */
   contrastiveInhibitionFactor: number;
-  /** Umbral de energía mínima para procesar */
+  /** Minimum energy threshold for processing */
   minEnergyThreshold: number;
-  /** Umbral de repetición para auto-aprendizaje */
+  /** Repetition threshold for self-learning */
   autoLearnThreshold: number;
-  /** Tamaño del buffer de corto plazo */
+  /** Size of the short-term buffer */
   shortTermBufferSize: number;
-  /** Rango de bandas vocales [inicio, fin] */
+  /** Vocal band range [start, end] */
   voiceBandRange: [number, number];
-  /** Rango de bandas de alta frecuencia [inicio, fin] */
+  /** High-frequency band range [start, end] */
   highFreqRange: [number, number];
-  /** Umbral de overlap para reconocimiento */
+  /** Overlap threshold for recognition */
   recognitionOverlap: number;
-  /** Tipo de neurona */
+  /** Neuron type */
   neuronType: NeuronTypeName;
 }
 
 const DEFAULT_AUDITORY_CONFIG: AuditoryCortexConfig = {
   neuronCount: 5000,
-  inputCount: 800,           // 40 bandas × 20 frames
+  inputCount: 800,           // 40 bands × 20 frames
   numBands: 40,
   numFrames: 20,
   sparsity: 0.1,
@@ -152,88 +152,88 @@ const DEFAULT_AUDITORY_CONFIG: AuditoryCortexConfig = {
 };
 
 // ====================================================================
-// Clase AuditoryCortex
+// AuditoryCortex class
 // ====================================================================
 
 /**
- * Corteza Auditiva — Procesamiento de patrones sonoros con especialización vocal.
+ * Auditory Cortex — Processing of sound patterns with vocal specialization.
  *
- * Base biológica:
- *   La corteza auditiva procesa sonidos con organización tonotópica
- *   (cada neurona "prefiere" un rango de frecuencias). Se especializa
- *   en detectar patrones temporospectrales como la voz humana.
+ * Biological basis:
+ *   The auditory cortex processes sounds with tonotopic organization
+ *   (each neuron "prefers" a range of frequencies). It specializes
+ *   in detecting spectro-temporal patterns such as the human voice.
  *
- *   Mecanismos implementados:
+ *   Implemented mechanisms:
  *
- *   1. **Organización tonotópica**: Neuronas organizadas por frecuencia
- *      preferida. Las neuronas del 10% inferior responden a graves,
- *      las del 10% superior a agudos.
- *      Biología: A1 tiene un mapa tonotópico heredado de la cóclea.
+ *   1. **Tonotopic organization**: Neurons organized by preferred
+ *      frequency. The neurons in the lower 10% respond to low pitches,
+ *      those in the upper 10% to high pitches.
+ *      Biology: A1 has a tonotopic map inherited from the cochlea.
  *
- *   2. **Detección de voz**: Las frecuencias vocales (bandas 4-24 de 40)
- *      reciben un boost de aprendizaje ×1.5. La voz se detecta cuando
- *      la energía low-mid domina sobre el ruido de alta frecuencia.
- *      Biología: El surco temporal superior tiene neuronas selectivas a voz.
+ *   2. **Voice detection**: The vocal frequencies (bands 4-24 of 40)
+ *      receive a learning boost of ×1.5. Voice is detected when
+ *      the low-mid energy dominates over the high-frequency noise.
+ *      Biology: The superior temporal sulcus has voice-selective neurons.
  *
- *   3. **Aprendizaje contrastivo**: Los no-ganadores con activación
- *      residual reciben una inhibición que reduce sus pesos para el
- *      input actual. Esto sharpens la separación entre representaciones
- *      de sonidos distintos (ej: "A" vs "O").
- *      Biología: Inhibición lateral via interneuronas GABAérgicas.
+ *   3. **Contrastive learning**: Non-winners with residual
+ *      activation receive an inhibition that reduces their weights for the
+ *      current input. This sharpens the separation between representations
+ *      of distinct sounds (e.g.: "A" vs "O").
+ *      Biology: Lateral inhibition via GABAergic interneurons.
  *
- *   4. **Auto-aprendizaje**: Cuando un patrón desconocido se repite
- *      consistentemente (score ≥ 25), se aprende automáticamente con
- *      una etiqueta generada ("Voice-N"). Modela el aprendizaje
- *      implícito de fonemas en bebés.
- *      Biología: Aprendizaje estadístico en la corteza auditiva.
+ *   4. **Self-learning**: When an unknown pattern repeats
+ *      consistently (score ≥ 25), it is learned automatically with
+ *      a generated label ("Voice-N"). Models the implicit
+ *      learning of phonemes in infants.
+ *      Biology: Statistical learning in the auditory cortex.
  */
 export class AuditoryCortex extends BrainRegion {
   /**
-   * Contador de victorias por neurona (homeostasis).
+   * Win counter per neuron (homeostasis).
    *
-   * Base biológica:
-   *   Previene el "winner dominance" donde pocas neuronas acaparan
-   *   todas las representaciones. Análogo al escalado sináptico
-   *   homeostático observado en cultivos de neuronas corticales.
+   * Biological basis:
+   *   Prevents "winner dominance" where a few neurons monopolize
+   *   all the representations. Analogous to the homeostatic synaptic
+   *   scaling observed in cultures of cortical neurons.
    */
   private winCounts: Int32Array;
 
-  /** Memorias auditivas almacenadas */
+  /** Stored auditory memories */
   private memories: AuditoryMemory[] = [];
 
-  /** Configuración de la corteza */
+  /** Cortex configuration */
   private config: AuditoryCortexConfig;
 
-  /** Referencia al spike bus */
+  /** Reference to the spike bus */
   private spikeBus: SpikeBus | null = null;
 
   /**
-   * Buffer de corto plazo (memoria ecoica).
+   * Short-term buffer (echoic memory).
    *
-   * Base biológica:
-   *   La memoria ecoica es un buffer sensorial auditivo que retiene
-   *   los últimos ~2-4 segundos de audio para comparación.
-   *   Aquí almacenamos los últimos ~60 patrones de ganadores para
-   *   detectar repeticiones que indican un patrón consistente.
+   * Biological basis:
+   *   Echoic memory is an auditory sensory buffer that retains
+   *   the last ~2-4 seconds of audio for comparison.
+   *   Here we store the last ~60 winner patterns to
+   *   detect repetitions that indicate a consistent pattern.
    */
   private shortTermBuffer: Int32Array[] = [];
 
-  /** Contador de auto-aprendizajes realizados */
+  /** Counter of self-learning events performed */
   private autoLearnCounter: number = 0;
 
-  /** Últimos ganadores calculados */
+  /** Last computed winners */
   private lastWinners: Int32Array = new Int32Array(0);
 
-  /** Últimos potenciales calculados (para contrastive learning) */
+  /** Last computed potentials (for contrastive learning) */
   private lastPotentials: Float32Array = new Float32Array(0);
 
-  /** Neuronas spiking locales de la corteza auditiva (modelo Izhikevich) */
+  /** Local spiking neurons of the auditory cortex (Izhikevich model) */
   private localNeurons: SpikingNeuron[];
 
   /**
-   * Crea una nueva corteza auditiva.
+   * Creates a new auditory cortex.
    *
-   * @param config - Configuración parcial (se mezcla con defaults)
+   * @param config - Partial configuration (merged with defaults)
    */
   constructor(config: Partial<AuditoryCortexConfig> = {}) {
     const cfg = { ...DEFAULT_AUDITORY_CONFIG, ...config };
@@ -246,12 +246,12 @@ export class AuditoryCortex extends BrainRegion {
   }
 
   /**
-   * Inicializa pesos con valores pequeños.
+   * Initializes weights with small values.
    *
-   * Base biológica:
-   *   Inicialización débil simula sinapsis inmaduras pre-experiencia.
-   *   Valores más bajos (0.05) que corteza visual para evitar saturación
-   *   con el rango dinámico más amplio del audio.
+   * Biological basis:
+   *   Weak initialization simulates immature pre-experience synapses.
+   *   Lower values (0.05) than the visual cortex to avoid saturation
+   *   with the wider dynamic range of audio.
    */
   private initializeAuditoryWeights(): void {
     for (let i = 0; i < this.weights.length; i++) {
@@ -260,7 +260,7 @@ export class AuditoryCortex extends BrainRegion {
   }
 
   /**
-   * Conecta la corteza auditiva al spike bus.
+   * Connects the auditory cortex to the spike bus.
    */
   connectBus(bus: SpikeBus): void {
     this.spikeBus = bus;
@@ -268,35 +268,35 @@ export class AuditoryCortex extends BrainRegion {
   }
 
   /**
-   * Calcula características de voz a partir del espectrograma.
+   * Computes voice features from the spectrogram.
    *
-   * Base biológica:
-   *   Las neuronas del surco temporal superior (STS) son selectivas
-   *   a la voz humana. Detectan la combinación de:
-   *   - Energía suficiente (señal > ruido de fondo)
-   *   - Concentración en frecuencias low-mid (voz humana: 85-3000 Hz)
-   *   - Baja energía relativa en altas frecuencias (no es ruido blanco)
+   * Biological basis:
+   *   The neurons of the superior temporal sulcus (STS) are selective
+   *   to the human voice. They detect the combination of:
+   *   - Sufficient energy (signal > background noise)
+   *   - Concentration in low-mid frequencies (human voice: 85-3000 Hz)
+   *   - Low relative energy in high frequencies (it is not white noise)
    *
-   * @param inputPattern - Espectrograma flat [time × freq]
-   * @returns Características vocales detectadas
+   * @param inputPattern - Flat spectrogram [time × freq]
+   * @returns Detected vocal features
    */
   calculateVoiceFeatures(inputPattern: Float32Array): VoiceFeatures {
     const { numBands, voiceBandRange, highFreqRange } = this.config;
 
-    // Último frame del espectrograma (más reciente)
+    // Last frame of the spectrogram (most recent)
     const lastFrameStart = inputPattern.length - numBands;
     const lastFrame = inputPattern.subarray(
       Math.max(0, lastFrameStart),
       inputPattern.length,
     );
 
-    // 1. Energía total
+    // 1. Total energy
     let energy = 0;
     for (let i = 0; i < lastFrame.length; i++) {
       energy += lastFrame[i];
     }
 
-    // 2. Centroide espectral (centro de masa frecuencial)
+    // 2. Spectral centroid (frequency center of mass)
     let weightedSum = 0;
     let sum = 0;
     for (let i = 0; i < lastFrame.length; i++) {
@@ -305,19 +305,19 @@ export class AuditoryCortex extends BrainRegion {
     }
     const centroid = sum > 0 ? weightedSum / sum : 0;
 
-    // 3. Energía en bandas vocales (low-mid)
+    // 3. Energy in vocal bands (low-mid)
     let lowMidEnergy = 0;
     for (let i = voiceBandRange[0]; i <= voiceBandRange[1] && i < lastFrame.length; i++) {
       lowMidEnergy += lastFrame[i];
     }
 
-    // 4. Energía en altas frecuencias (ruido)
+    // 4. Energy in high frequencies (noise)
     let highFreqEnergy = 0;
     for (let i = highFreqRange[0]; i <= highFreqRange[1] && i < lastFrame.length; i++) {
       highFreqEnergy += lastFrame[i];
     }
 
-    // Criterios de voz
+    // Voice criteria
     const isNotJustNoise = highFreqEnergy < (energy * 0.6);
     const hasVoice = energy > this.config.minEnergyThreshold &&
       lowMidEnergy > (energy * 0.25) &&
@@ -327,27 +327,27 @@ export class AuditoryCortex extends BrainRegion {
   }
 
   /**
-   * Procesa un input auditivo recibido del tálamo.
+   * Processes an auditory input received from the thalamus.
    *
    * Pipeline:
-   * 1. Detección de voz (gate: si no hay voz, no procesar)
-   * 2. Feed-forward con ponderación por voz y homeostasis
+   * 1. Voice detection (gate: if there is no voice, do not process)
+   * 2. Feed-forward with voice weighting and homeostasis
    * 3. k-WTA (winner-take-all)
    *
-   * @param input - Espectrograma como vector de spikes (Float32Array)
-   * @param dt - Paso temporal (ms)
-   * @param timestamp - Tiempo de simulación (ms)
-   * @returns Vector de activación cortical
+   * @param input - Spectrogram as a spike vector (Float32Array)
+   * @param dt - Time step (ms)
+   * @param timestamp - Simulation time (ms)
+   * @returns Cortical activation vector
    */
   processInput(spikes: Float32Array, _modulationEffects: ModulationEffects): Float32Array {
-    // Gate: solo procesar si hay señal significativa
+    // Gate: only process if there is a significant signal
     const voiceFeatures = this.calculateVoiceFeatures(spikes);
 
     const localPotentials = new Float32Array(this.neuronCount);
     const activeSpikes = new Float32Array(this.neuronCount);
 
     if (!voiceFeatures.hasVoice) {
-      // Sin voz → corteza silente (todas las neuronas en reposo)
+      // No voice → silent cortex (all neurons at rest)
       for (let i = 0; i < this.localNeurons.length; i++) {
         this.localNeurons[i].fired = false;
       }
@@ -356,19 +356,19 @@ export class AuditoryCortex extends BrainRegion {
       return activeSpikes;
     }
 
-    // --- Feed-forward con umbral de activación ---
+    // --- Feed-forward with activation threshold ---
     for (let n = 0; n < this.neuronCount; n++) {
       let sum = 0;
       const offset = n * this.inputCount;
 
-      // Producto punto sparse: solo valores significativos (> 0.1)
+      // Sparse dot product: only significant values (> 0.1)
       for (let i = 0; i < this.inputCount; i++) {
         if (spikes[i] > 0.1) {
           sum += spikes[i] * this.weights[offset + i];
         }
       }
 
-      // Homeostasis: fatiga más suave que corteza visual
+      // Homeostasis: softer fatigue than the visual cortex
       const fatigue = this.winCounts[n] * this.config.fatigueFactor;
       localPotentials[n] = Math.max(0, sum - fatigue);
     }
@@ -383,7 +383,7 @@ export class AuditoryCortex extends BrainRegion {
       winners[i] = indices[i];
     }
 
-    // Actualizar estado neuronal
+    // Update neuronal state
     for (let i = 0; i < this.localNeurons.length; i++) {
       this.localNeurons[i].fired = false;
     }
@@ -399,34 +399,34 @@ export class AuditoryCortex extends BrainRegion {
   }
 
   /**
-   * Aprende un patrón auditivo con etiqueta.
+   * Learns an auditory pattern with a label.
    *
-   * Base biológica:
-   *   Aprendizaje supervisado de patrones auditivos con:
+   * Biological basis:
+   *   Supervised learning of auditory patterns with:
    *
-   *   1. **Boost vocal**: Las frecuencias en el rango de voz humana
-   *      (bandas 4-24) reciben un aprendizaje ×1.5 más fuerte,
-   *      modelando la especialización del STS para voz.
+   *   1. **Vocal boost**: The frequencies in the human voice range
+   *      (bands 4-24) receive ×1.5 stronger learning,
+   *      modeling the specialization of the STS for voice.
    *
-   *   2. **Modulación por dopamina**: La recompensa (dopamina alta)
-   *      amplifica la tasa de aprendizaje. Biológicamente, la dopamina
-   *      facilita LTP en vías corticostriatales.
+   *   2. **Dopamine modulation**: Reward (high dopamine)
+   *      amplifies the learning rate. Biologically, dopamine
+   *      facilitates LTP in corticostriatal pathways.
    *
-   *   3. **Inhibición contrastiva (lateral inhibition)**:
-   *      Los no-ganadores que tenían activación residual reciben
-   *      una supresión de sus pesos. Esto sharpens la distinción
-   *      entre fonemas similares (ej: /b/ vs /d/).
-   *      Biología: Inhibición lateral via interneuronas PV+.
+   *   3. **Contrastive inhibition (lateral inhibition)**:
+   *      The non-winners that had residual activation receive
+   *      a suppression of their weights. This sharpens the distinction
+   *      between similar phonemes (e.g.: /b/ vs /d/).
+   *      Biology: Lateral inhibition via PV+ interneurons.
    *
-   *   4. **Decaimiento global**: Todos los pesos decaen lentamente
-   *      (×0.995), modelando la degradación sináptica natural.
+   *   4. **Global decay**: All weights decay slowly
+   *      (×0.995), modeling natural synaptic degradation.
    *
-   * @param input - Espectrograma como vector
-   * @param label - Etiqueta del sonido
-   * @param dt - Paso temporal
-   * @param timestamp - Tiempo de simulación
-   * @param modulationEffects - Efectos de neuromodulación
-   * @returns Resultado del procesamiento
+   * @param input - Spectrogram as a vector
+   * @param label - Label of the sound
+   * @param dt - Time step
+   * @param timestamp - Simulation time
+   * @param modulationEffects - Neuromodulation effects
+   * @returns Processing result
    */
   learn(
     input: Float32Array,
@@ -435,7 +435,7 @@ export class AuditoryCortex extends BrainRegion {
     timestamp: number,
     modulationEffects?: ModulationEffects,
   ): AuditoryProcessingResult {
-    // Verificar tamaño de input
+    // Check input size
     if (input.length !== this.inputCount) {
       return {
         type: 'NO_VOICE',
@@ -457,7 +457,7 @@ export class AuditoryCortex extends BrainRegion {
       };
     }
 
-    // 1. Procesar input
+    // 1. Process input
     const defaultMod: ModulationEffects = {
       learningRateMultiplier: 1.0,
       thresholdMultiplier: 1.0,
@@ -470,11 +470,11 @@ export class AuditoryCortex extends BrainRegion {
     const winners = this.lastWinners;
     const potentials = this.lastPotentials;
 
-    // 2. Tasa de aprendizaje modulada por dopamina
+    // 2. Learning rate modulated by dopamine
     const lrMultiplier = modulationEffects?.learningRateMultiplier ?? 1.0;
     const effectiveLR = this.config.learningRate + (lrMultiplier - 1.0) * 0.4;
 
-    // 3. Aprendizaje selectivo con boost vocal
+    // 3. Selective learning with vocal boost
     const { numBands, voiceBandRange } = this.config;
 
     for (let w = 0; w < winners.length; w++) {
@@ -486,24 +486,24 @@ export class AuditoryCortex extends BrainRegion {
 
       for (let i = 0; i < this.inputCount; i++) {
         if (input[i] > 0.15) {
-          // Determinar si este bin está en el rango vocal
+          // Determine whether this bin is in the vocal range
           const freqIndex = i % numBands;
           const isVoiceFreq = freqIndex >= voiceBandRange[0] && freqIndex <= voiceBandRange[1];
           const boost = isVoiceFreq ? this.config.voiceFreqBoost : 0.5;
 
-          // LTP con boost vocal
+          // LTP with vocal boost
           this.weights[offset + i] += input[i] * effectiveLR * boost;
         }
 
-        // Decaimiento global (degradación sináptica natural)
+        // Global decay (natural synaptic degradation)
         this.weights[offset + i] *= 0.995;
 
-        // Clamp a no-negativo (la corteza auditiva no usa pesos negativos)
+        // Clamp to non-negative (the auditory cortex does not use negative weights)
         if (this.weights[offset + i] < 0) this.weights[offset + i] = 0;
         totalWeight += this.weights[offset + i];
       }
 
-      // Normalización sináptica
+      // Synaptic normalization
       if (totalWeight > this.config.maxWeightBudget) {
         const factor = this.config.maxWeightBudget / totalWeight;
         for (let i = 0; i < this.inputCount; i++) {
@@ -512,7 +512,7 @@ export class AuditoryCortex extends BrainRegion {
       }
     }
 
-    // 4. Almacenar memoria auditiva
+    // 4. Store auditory memory
     this.memories.push({
       pattern: new Int32Array(winners),
       label,
@@ -520,10 +520,10 @@ export class AuditoryCortex extends BrainRegion {
       createdAt: timestamp,
     });
 
-    // 5. Aprendizaje contrastivo (inhibición lateral)
+    // 5. Contrastive learning (lateral inhibition)
     this.applyContrastiveInhibition(input, winners, potentials, effectiveLR);
 
-    // 6. Reconocimiento
+    // 6. Recognition
     const predictions = this.recognizePattern(winners);
 
     return {
@@ -536,19 +536,19 @@ export class AuditoryCortex extends BrainRegion {
   }
 
   /**
-   * Aplica inhibición contrastiva a los no-ganadores.
+   * Applies contrastive inhibition to the non-winners.
    *
-   * Base biológica:
-   *   Las interneuronas inhibitorias PV+ (parvalbumin-positivas) en
-   *   la corteza auditiva proporcionan inhibición feedforward y lateral
-   *   que sharpens la selectividad frecuencial. Los no-ganadores que
-   *   tenían activación residual son suprimidos, reforzando la
-   *   separación entre representaciones de fonemas.
+   * Biological basis:
+   *   The inhibitory PV+ (parvalbumin-positive) interneurons in
+   *   the auditory cortex provide feedforward and lateral inhibition
+   *   that sharpens frequency selectivity. The non-winners that
+   *   had residual activation are suppressed, reinforcing the
+   *   separation between phoneme representations.
    *
-   * @param input - Input del espectrograma
-   * @param winners - Índices de neuronas ganadoras
-   * @param potentials - Potenciales de todas las neuronas
-   * @param learningRate - Tasa de aprendizaje efectiva
+   * @param input - Spectrogram input
+   * @param winners - Indices of winning neurons
+   * @param potentials - Potentials of all neurons
+   * @param learningRate - Effective learning rate
    */
   private applyContrastiveInhibition(
     input: Float32Array,
@@ -563,11 +563,11 @@ export class AuditoryCortex extends BrainRegion {
     }
 
     for (let n = 0; n < this.neuronCount; n++) {
-      // Solo afectar neuronas que tenían activación pero no ganaron
+      // Only affect neurons that had activation but did not win
       if (!winnerSet.has(n) && potentials[n] > 0) {
         const offset = n * this.inputCount;
 
-        // Reducir levemente los pesos para inputs activos
+        // Slightly reduce the weights for active inputs
         for (let i = 0; i < this.inputCount; i++) {
           if (input[i] > 0.1) {
             this.weights[offset + i] -= input[i] * inhibitionFactor;
@@ -581,15 +581,15 @@ export class AuditoryCortex extends BrainRegion {
   }
 
   /**
-   * Reconoce un patrón comparando con memorias almacenadas.
+   * Recognizes a pattern by comparing it with stored memories.
    *
-   * Base biológica:
-   *   El reconocimiento auditivo usa overlap de engramas con umbral
-   *   dinámico basado en la fuerza de la memoria. Memorias más fuertes
-   *   (aprendidas con más energía vocal) requieren menos overlap.
+   * Biological basis:
+   *   Auditory recognition uses engram overlap with a dynamic
+   *   threshold based on the strength of the memory. Stronger memories
+   *   (learned with more vocal energy) require less overlap.
    *
-   * @param currentWinners - Neuronas activas actualmente
-   * @returns Lista de etiquetas reconocidas
+   * @param currentWinners - Currently active neurons
+   * @returns List of recognized labels
    */
   private recognizePattern(currentWinners: Int32Array): string[] {
     const matches: string[] = [];
@@ -607,7 +607,7 @@ export class AuditoryCortex extends BrainRegion {
         }
       }
 
-      // Umbral dinámico basado en fuerza de la memoria
+      // Dynamic threshold based on the strength of the memory
       const threshold = Math.max(
         this.config.recognitionOverlap,
         3 - (mem.strength / 10),
@@ -623,28 +623,28 @@ export class AuditoryCortex extends BrainRegion {
   }
 
   /**
-   * Procesamiento automático sin supervisión (auto-aprendizaje).
+   * Automatic unsupervised processing (self-learning).
    *
-   * Base biológica:
-   *   Los bebés aprenden a distinguir fonemas de su lengua materna
-   *   sin supervisión explícita, mediante exposición repetida.
-   *   El cerebro detecta regularidades estadísticas en el input
-   *   auditivo y forma categorías perceptuales automáticamente.
+   * Biological basis:
+   *   Infants learn to distinguish the phonemes of their native language
+   *   without explicit supervision, through repeated exposure.
+   *   The brain detects statistical regularities in the auditory
+   *   input and forms perceptual categories automatically.
    *
-   *   Implementamos esto detectando patrones que se repiten
-   *   consistentemente en un buffer de corto plazo (memoria ecoica).
-   *   Cuando la puntuación de repetición supera un umbral, se
-   *   auto-aprende con una etiqueta generada.
+   *   We implement this by detecting patterns that repeat
+   *   consistently in a short-term buffer (echoic memory).
+   *   When the repetition score exceeds a threshold, it is
+   *   self-learned with a generated label.
    *
-   * @param input - Espectrograma como vector
-   * @param dt - Paso temporal
-   * @param timestamp - Tiempo de simulación
-   * @returns Resultado del procesamiento con detección de repetición
+   * @param input - Spectrogram as a vector
+   * @param dt - Time step
+   * @param timestamp - Simulation time
+   * @returns Processing result with repetition detection
    */
   autoProcess(input: Float32Array, dt: number, timestamp: number): AuditoryProcessingResult {
     const voiceFeatures = this.calculateVoiceFeatures(input);
 
-    // Sin voz o muy poca energía → ignorar
+    // No voice or very little energy → ignore
     if (!voiceFeatures.hasVoice || voiceFeatures.energy < this.config.minEnergyThreshold * 1.6) {
       return {
         type: 'NO_VOICE',
@@ -655,7 +655,7 @@ export class AuditoryCortex extends BrainRegion {
       };
     }
 
-    // Procesar input
+    // Process input
     const defaultMod2: ModulationEffects = {
       learningRateMultiplier: 1.0,
       thresholdMultiplier: 1.0,
@@ -667,7 +667,7 @@ export class AuditoryCortex extends BrainRegion {
     this.processInput(input, defaultMod2);
     const winners = this.lastWinners;
 
-    // Verificar si ya es conocido
+    // Check whether it is already known
     const predictions = this.recognizePattern(winners);
     if (predictions.length > 0) {
       return {
@@ -679,14 +679,14 @@ export class AuditoryCortex extends BrainRegion {
       };
     }
 
-    // --- Detección de repetición para auto-aprendizaje ---
+    // --- Repetition detection for self-learning ---
     this.shortTermBuffer.push(new Int32Array(winners));
     if (this.shortTermBuffer.length > this.config.shortTermBufferSize) {
       this.shortTermBuffer.shift();
     }
 
     let repetitionScore = 0;
-    // Examinar historial reciente (~1.5 segundos)
+    // Examine recent history (~1.5 seconds)
     const recentCount = Math.min(30, this.shortTermBuffer.length);
     const recentStart = this.shortTermBuffer.length - recentCount;
 
@@ -703,23 +703,23 @@ export class AuditoryCortex extends BrainRegion {
         }
       }
 
-      // Sistema de puntuación granular
+      // Granular scoring system
       if (overlap >= 2) {
-        repetitionScore += 3;     // Coincidencia fuerte
+        repetitionScore += 3;     // Strong match
       } else if (overlap >= 1) {
-        repetitionScore += 1.5;   // Coincidencia parcial
+        repetitionScore += 1.5;   // Partial match
       }
     }
 
-    // Auto-aprender si se repite consistentemente
+    // Self-learn if it repeats consistently
     if (repetitionScore >= this.config.autoLearnThreshold) {
       this.autoLearnCounter++;
       const newLabel = `Voice-${this.autoLearnCounter}`;
 
-      // Aprender con etiqueta automática
+      // Learn with an automatic label
       this.learn(input, newLabel, dt, timestamp);
 
-      // Limpiar buffer parcialmente para no reaprender inmediatamente
+      // Partially clear the buffer to avoid relearning immediately
       this.shortTermBuffer = this.shortTermBuffer.slice(
         -Math.floor(this.config.shortTermBufferSize / 4),
       );
@@ -743,10 +743,10 @@ export class AuditoryCortex extends BrainRegion {
   }
 
   /**
-   * Envía la representación cortical actual al spike bus.
+   * Sends the current cortical representation to the spike bus.
    *
-   * @param timestamp - Tiempo de simulación
-   * @param targets - Regiones destino (default: hippocampus + amygdala)
+   * @param timestamp - Simulation time
+   * @param targets - Destination regions (default: hippocampus + amygdala)
    */
   emitToDownstream(timestamp: number, targets: string[] = ['hippocampus', 'amygdala']): void {
     if (!this.spikeBus) return;
@@ -770,10 +770,10 @@ export class AuditoryCortex extends BrainRegion {
   }
 
   /**
-   * Obtiene estadísticas de la corteza auditiva.
+   * Gets statistics of the auditory cortex.
    */
   /**
-   * Obtiene la fracción de actividad local (0-1) basada en las neuronas spiking.
+   * Gets the fraction of local activity (0-1) based on the spiking neurons.
    */
   getLocalActivity(): number {
     let active = 0;
@@ -811,24 +811,24 @@ export class AuditoryCortex extends BrainRegion {
     };
   }
 
-  /** Número de memorias almacenadas */
+  /** Number of stored memories */
   get memoryCount(): number {
     return this.memories.length;
   }
 
   /**
-   * Resetea la fatiga homeostática.
+   * Resets the homeostatic fatigue.
    *
-   * Base biológica:
-   *   Equivalente al efecto restaurador del sueño sobre la
-   *   homeostasis sináptica de la corteza auditiva.
+   * Biological basis:
+   *   Equivalent to the restorative effect of sleep on the
+   *   synaptic homeostasis of the auditory cortex.
    */
   resetFatigue(): void {
     this.winCounts.fill(0);
   }
 
   /**
-   * Limpia el buffer de corto plazo (memoria ecoica).
+   * Clears the short-term buffer (echoic memory).
    */
   clearShortTermBuffer(): void {
     this.shortTermBuffer = [];

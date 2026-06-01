@@ -1,35 +1,35 @@
 /**
- * ENCODER AUDITIVO — Codificación de audio a spikes
+ * AUDITORY ENCODER — Audio to spikes encoding
  * ==================================================
- * Transforma señales de audio (micrófono, archivos) en trenes de spikes
- * para la corteza auditiva.
- * 
- * Pipeline bio-inspirado (cóclea artificial):
- * 1. FFT: Descomposición en frecuencias (análogo a la membrana basilar)
- * 2. Bandas cocleares: Agrupación logarítmica de frecuencias
- * 3. Sliding window: Espectrograma temporal
- * 4. Rate coding: Conversión a frecuencia de spikes
- * 
- * Refactorizado de 08_microphone_interaction/client.ts y 07_audio_cortex/server.ts
+ * Transforms audio signals (microphone, files) into spike trains
+ * for the auditory cortex.
+ *
+ * Bio-inspired pipeline (artificial cochlea):
+ * 1. FFT: Decomposition into frequencies (analogous to the basilar membrane)
+ * 2. Cochlear bands: Logarithmic grouping of frequencies
+ * 3. Sliding window: Temporal spectrogram
+ * 4. Rate coding: Conversion to spike frequency
+ *
+ * Refactored from 08_microphone_interaction/client.ts and 07_audio_cortex/server.ts
  */
 
 import { encodeSpikeVector } from '../core/snn/spike-train.js';
 
-/** Configuración del encoder auditivo */
+/** Auditory encoder configuration */
 export interface AudioEncoderConfig {
-  /** Frecuencia de muestreo del audio (Hz) */
+  /** Audio sample rate (Hz) */
   sampleRate: number;
-  /** Tamaño de la FFT (potencia de 2) */
+  /** FFT size (power of 2) */
   fftSize: number;
-  /** Número de bandas cocleares */
+  /** Number of cochlear bands */
   numBands: number;
-  /** Número de frames temporales en el espectrograma */
+  /** Number of temporal frames in the spectrogram */
   numFrames: number;
-  /** Frecuencia mínima del rango auditivo (Hz) */
+  /** Minimum frequency of the auditory range (Hz) */
   minFrequency: number;
-  /** Frecuencia máxima del rango auditivo (Hz) */
+  /** Maximum frequency of the auditory range (Hz) */
   maxFrequency: number;
-  /** Si aplicar ventana Hanning */
+  /** Whether to apply a Hanning window */
   useHanningWindow: boolean;
 }
 
@@ -44,31 +44,31 @@ const DEFAULT_AUDIO_CONFIG: AudioEncoderConfig = {
 };
 
 /**
- * Encoder Auditivo — Simula la cóclea y el núcleo coclear.
- * Convierte audio en patrones de spikes para la corteza auditiva.
+ * Auditory Encoder — Simulates the cochlea and the cochlear nucleus.
+ * Converts audio into spike patterns for the auditory cortex.
  */
 export class AudioEncoder {
   private config: AudioEncoderConfig;
-  /** Tamaño del vector de output (numBands × numFrames) */
+  /** Output vector size (numBands × numFrames) */
   public outputSize: number;
-  /** Bordes de frecuencia de las bandas cocleares (Hz) */
+  /** Frequency edges of the cochlear bands (Hz) */
   private bandEdges: number[];
-  /** Índices FFT correspondientes a los bordes de frecuencia */
+  /** FFT indices corresponding to the frequency edges */
   private bandBins: number[];
-  /** Ventana Hanning precalculada */
+  /** Precomputed Hanning window */
   private hanningWindow: Float32Array;
-  /** Buffer de frames del espectrograma (sliding window) */
+  /** Spectrogram frame buffer (sliding window) */
   private spectrogramBuffer: Float32Array[];
   
   constructor(config: Partial<AudioEncoderConfig> = {}) {
     this.config = { ...DEFAULT_AUDIO_CONFIG, ...config };
     this.outputSize = this.config.numBands * this.config.numFrames;
     
-    // Precalcular bordes de bandas cocleares (escala logarítmica)
+    // Precompute cochlear band edges (logarithmic scale)
     this.bandEdges = this.calculateCochlearBands();
     this.bandBins = this.frequencyToBins(this.bandEdges);
-    
-    // Precalcular ventana Hanning
+
+    // Precompute Hanning window
     this.hanningWindow = new Float32Array(this.config.fftSize);
     if (this.config.useHanningWindow) {
       for (let i = 0; i < this.config.fftSize; i++) {
@@ -78,20 +78,20 @@ export class AudioEncoder {
       this.hanningWindow.fill(1.0);
     }
     
-    // Buffer de espectrograma vacío
+    // Empty spectrogram buffer
     this.spectrogramBuffer = [];
   }
 
   /**
-   * Calcula los bordes de las bandas cocleares en escala logarítmica.
-   * Imita la distribución tonotópica de la membrana basilar,
-   * donde las frecuencias bajas tienen mayor resolución.
+   * Computes the cochlear band edges on a logarithmic scale.
+   * Mimics the tonotopic distribution of the basilar membrane,
+   * where low frequencies have higher resolution.
    */
   private calculateCochlearBands(): number[] {
     const { numBands, minFrequency, maxFrequency } = this.config;
     const edges: number[] = [];
     
-    // Escala Mel (logarítmica) — imita la percepción auditiva humana
+    // Mel scale (logarithmic) — mimics human auditory perception
     const melMin = 2595 * Math.log10(1 + minFrequency / 700);
     const melMax = 2595 * Math.log10(1 + maxFrequency / 700);
     
@@ -105,7 +105,7 @@ export class AudioEncoder {
   }
 
   /**
-   * Convierte frecuencias en Hz a índices del bin FFT.
+   * Converts frequencies in Hz to FFT bin indices.
    */
   private frequencyToBins(frequencies: number[]): number[] {
     return frequencies.map(f => 
@@ -114,67 +114,67 @@ export class AudioEncoder {
   }
 
   /**
-   * Codifica un chunk de audio PCM como vector de spikes.
-   * 
-   * @param audioSamples - Muestras PCM (Float32 o Int16 normalizado)
-   * @param dt - Paso temporal
-   * @returns Vector de spikes del espectrograma completo
+   * Encodes a chunk of PCM audio as a spike vector.
+   *
+   * @param audioSamples - PCM samples (Float32 or normalized Int16)
+   * @param dt - Time step
+   * @returns Spike vector of the full spectrogram
    */
   encode(audioSamples: Float32Array | number[], dt: number = 1.0): Float32Array {
-    // 1. Aplicar ventana y calcular FFT
+    // 1. Apply window and compute FFT
     const frame = this.computeFrame(audioSamples);
-    
-    // 2. Agrupar en bandas cocleares
+
+    // 2. Group into cochlear bands
     const bands = this.applyBands(frame);
-    
-    // 3. Añadir al buffer de espectrograma (sliding window)
+
+    // 3. Add to the spectrogram buffer (sliding window)
     this.spectrogramBuffer.push(bands);
     if (this.spectrogramBuffer.length > this.config.numFrames) {
       this.spectrogramBuffer.shift();
     }
-    
-    // 4. Construir espectrograma flat
+
+    // 4. Build flat spectrogram
     const spectrogram = this.getSpectrogram();
-    
-    // 5. Convertir a spikes
+
+    // 5. Convert to spikes
     return encodeSpikeVector(spectrogram, dt, 150);
   }
 
   /**
-   * Codifica un espectrograma ya calculado (ej: recibido de 08_microphone_interaction).
-   * 
+   * Encodes an already-computed spectrogram (e.g. received from 08_microphone_interaction).
+   *
    * @param spectrogram - Flat array [time0_band0..band39, time1_band0..band39, ...]
-   * @param dt - Paso temporal
+   * @param dt - Time step
    */
   encodeSpectrogram(spectrogram: number[] | Float32Array, dt: number = 1.0): Float32Array {
     const values = new Float32Array(spectrogram.length);
-    
+
     for (let i = 0; i < spectrogram.length; i++) {
-      // Escala logarítmica para imitar respuesta coclear
+      // Logarithmic scale to mimic cochlear response
       values[i] = Math.log1p(Math.abs(spectrogram[i] as number));
       values[i] = Math.min(1, values[i]);
     }
-    
+
     return encodeSpikeVector(values, dt, 150);
   }
 
   /**
-   * Calcula un frame FFT con ventana Hanning.
-   * FFT simplificada (DFT) — en producción se usaría fft.js
+   * Computes an FFT frame with a Hanning window.
+   * Simplified FFT (DFT) — in production fft.js would be used
    */
   private computeFrame(samples: Float32Array | number[]): Float32Array {
     const N = this.config.fftSize;
     const magnitudes = new Float32Array(N / 2);
-    
-    // Aplicar ventana
+
+    // Apply window
     const windowed = new Float32Array(N);
     for (let i = 0; i < Math.min(samples.length, N); i++) {
       windowed[i] = (samples[i] as number) * this.hanningWindow[i];
     }
-    
-    // DFT simplificada (solo magnitudes, no fase)
-    // Para rendimiento real, usar FFT (O(N log N)), aquí O(N²) simplificado
-    // Solo calculamos las frecuencias relevantes (hasta maxFrequency)
+
+    // Simplified DFT (magnitudes only, no phase)
+    // For real performance, use FFT (O(N log N)); here a simplified O(N²)
+    // We only compute the relevant frequencies (up to maxFrequency)
     const maxBin = Math.min(
       N / 2,
       Math.ceil(this.config.maxFrequency * N / this.config.sampleRate) + 1
@@ -195,8 +195,8 @@ export class AudioEncoder {
   }
 
   /**
-   * Agrupa las magnitudes FFT en bandas cocleares.
-   * Cada banda suma las energías de los bins correspondientes.
+   * Groups the FFT magnitudes into cochlear bands.
+   * Each band sums the energies of the corresponding bins.
    */
   private applyBands(magnitudes: Float32Array): Float32Array {
     const bands = new Float32Array(this.config.numBands);
@@ -208,14 +208,14 @@ export class AudioEncoder {
       let energy = 0;
       let count = 0;
       for (let i = startBin; i < endBin && i < magnitudes.length; i++) {
-        energy += magnitudes[i] * magnitudes[i]; // Energía = magnitud²
+        energy += magnitudes[i] * magnitudes[i]; // Energy = magnitude²
         count++;
       }
-      
+
       bands[b] = count > 0 ? Math.sqrt(energy / count) : 0; // RMS
     }
-    
-    // Normalizar
+
+    // Normalize
     let max = 0;
     for (let i = 0; i < bands.length; i++) {
       if (bands[i] > max) max = bands[i];
@@ -230,12 +230,12 @@ export class AudioEncoder {
   }
 
   /**
-   * Construye el espectrograma flat actual a partir del buffer.
+   * Builds the current flat spectrogram from the buffer.
    */
   getSpectrogram(): Float32Array {
     const result = new Float32Array(this.outputSize);
-    
-    // Rellenar con frames disponibles (pad con ceros si no hay suficientes)
+
+    // Fill with available frames (pad with zeros if there aren't enough)
     const startIdx = Math.max(0, this.config.numFrames - this.spectrogramBuffer.length);
     
     for (let t = 0; t < this.spectrogramBuffer.length; t++) {
@@ -250,19 +250,19 @@ export class AudioEncoder {
   }
 
   /**
-   * Detecta si el audio contiene voz humana.
-   * Refactorizado de 07_audio_cortex/server.ts
+   * Detects whether the audio contains human voice.
+   * Refactored from 07_audio_cortex/server.ts
    */
   detectVoice(spectrogram: Float32Array): { hasVoice: boolean; energy: number; centroid: number } {
     const lastFrame = spectrogram.slice(-this.config.numBands);
-    
-    // Energía total
+
+    // Total energy
     let energy = 0;
     for (let i = 0; i < lastFrame.length; i++) {
       energy += lastFrame[i];
     }
-    
-    // Centroide espectral
+
+    // Spectral centroid
     let weightedSum = 0;
     let sum = 0;
     for (let i = 0; i < lastFrame.length; i++) {
@@ -270,14 +270,14 @@ export class AudioEncoder {
       sum += lastFrame[i];
     }
     const centroid = sum > 0 ? weightedSum / sum : 0;
-    
-    // Voz: energía concentrada en frecuencias low-mid (bandas 4-24 de 40)
+
+    // Voice: energy concentrated in low-mid frequencies (bands 4-24 of 40)
     let lowMidEnergy = 0;
     for (let i = 4; i < 25 && i < lastFrame.length; i++) {
       lowMidEnergy += lastFrame[i];
     }
-    
-    // Ruido de alta frecuencia
+
+    // High-frequency noise
     let highEnergy = 0;
     for (let i = 30; i < lastFrame.length; i++) {
       highEnergy += lastFrame[i];
@@ -290,7 +290,7 @@ export class AudioEncoder {
     return { hasVoice, energy, centroid };
   }
 
-  /** Limpia el buffer del espectrograma */
+  /** Clears the spectrogram buffer */
   reset(): void {
     this.spectrogramBuffer = [];
   }

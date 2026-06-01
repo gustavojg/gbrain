@@ -1,8 +1,8 @@
 /**
- * CEREBRO DIGITAL — Dashboard Interactivo
+ * DIGITAL BRAIN — Interactive Dashboard
  * =========================================
- * Visualización 3D del cerebro con Canvas 2D,
- * conexión WebSocket en tiempo real, y paneles interactivos.
+ * 3D visualization of the brain with Canvas 2D,
+ * real-time WebSocket connection, and interactive panels.
  */
 
 // ================================================================
@@ -13,12 +13,12 @@ const WS_URL = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.h
 const API_URL = '/api';
 
 const REGION_COLORS = {
-  thalamus:         { h: 200, s: 80, l: 60, label: 'Tálamo' },
-  visualCortex:     { h: 280, s: 70, l: 65, label: 'C. Visual' },
-  auditoryCortex:   { h: 170, s: 70, l: 55, label: 'C. Auditiva' },
-  hippocampus:      { h: 45,  s: 85, l: 55, label: 'Hipocampo' },
-  amygdala:         { h: 0,   s: 80, l: 60, label: 'Amígdala' },
-  prefrontalCortex: { h: 220, s: 75, l: 65, label: 'C. Prefrontal' },
+  thalamus:         { h: 200, s: 80, l: 60, label: 'Thalamus' },
+  visualCortex:     { h: 280, s: 70, l: 65, label: 'Visual Ctx' },
+  auditoryCortex:   { h: 170, s: 70, l: 55, label: 'Auditory Ctx' },
+  hippocampus:      { h: 45,  s: 85, l: 55, label: 'Hippocampus' },
+  amygdala:         { h: 0,   s: 80, l: 60, label: 'Amygdala' },
+  prefrontalCortex: { h: 220, s: 75, l: 65, label: 'Prefrontal Ctx' },
   wernicke:         { h: 130, s: 65, l: 55, label: 'Wernicke' },
   broca:            { h: 95,  s: 70, l: 50, label: 'Broca' },
 };
@@ -80,15 +80,15 @@ function connectWebSocket() {
   try {
     ws = new WebSocket(WS_URL);
   } catch (e) {
-    status.textContent = 'Error de conexión';
-    addLog('error', 'No se pudo conectar al WebSocket');
+    status.textContent = 'Connection error';
+    addLog('error', 'Could not connect to WebSocket');
     return;
   }
 
   ws.onopen = () => {
     dot.classList.add('connected');
-    status.textContent = 'Conectado — en vivo';
-    addLog('info', 'WebSocket conectado');
+    status.textContent = 'Connected — live';
+    addLog('info', 'WebSocket connected');
   };
 
   ws.onmessage = (event) => {
@@ -105,13 +105,13 @@ function connectWebSocket() {
 
   ws.onclose = () => {
     dot.classList.remove('connected');
-    status.textContent = 'Desconectado — reconectando...';
-    addLog('error', 'WebSocket desconectado');
+    status.textContent = 'Disconnected — reconnecting...';
+    addLog('error', 'WebSocket disconnected');
     setTimeout(connectWebSocket, 3000);
   };
 
   ws.onerror = () => {
-    status.textContent = 'Sin conexión al servidor';
+    status.textContent = 'No connection to server';
   };
 }
 
@@ -171,7 +171,7 @@ function updateDashboard(state) {
 }
 
 // ================================================================
-// LEARNING PANEL (Corteza Visual)
+// LEARNING PANEL (Visual Cortex)
 // ================================================================
 
 let learnEngramCells = [];
@@ -186,27 +186,27 @@ function updateLearningPanel(m) {
   const engramEl = document.getElementById('learnEngram');
   if (!stabilityBar) return;
 
-  // Estabilidad: 0-1 → 0-100%
+  // Stability: 0-1 → 0-100%
   const stability = Math.max(0, Math.min(1, m.stability || 0));
   stabilityBar.style.width = `${(stability * 100).toFixed(0)}%`;
   stabilityVal.textContent = `${(stability * 100).toFixed(0)}%`;
 
-  // Convergencia: Σ|Δw| por tick. Barra inversa — cuanto MENOR, más consolidado.
-  // Escala logarítmica suave contra una referencia (~5 = aprendizaje activo).
+  // Convergence: Σ|Δw| per tick. Inverse bar — the LOWER it is, the more consolidated.
+  // Soft logarithmic scale against a reference (~5 = active learning).
   const dw = Math.max(0, m.weightChange || 0);
   const dwPct = Math.min(100, (dw / 5) * 100);
   weightBar.style.width = `${dwPct.toFixed(0)}%`;
   weightVal.textContent = dw.toFixed(2);
 
-  // Actividad cortical
-  const act = Math.max(0, Math.min(1, (m.activity || 0) * 10)); // 10% ≈ lleno
+  // Cortical activity
+  const act = Math.max(0, Math.min(1, (m.activity || 0) * 10)); // 10% ≈ full
   activityBar.style.width = `${(act * 100).toFixed(0)}%`;
   activityVal.textContent = `${((m.activity || 0) * 100).toFixed(1)}%`;
 
-  // Engrama: cuadrícula de celdas, una por neurona ganadora.
+  // Engram: grid of cells, one per winning neuron.
   engramSize.textContent = m.engramSize || 0;
   const engram = m.engram || [];
-  // Reconstruir celdas solo si cambia el número (evita thrash del DOM)
+  // Rebuild cells only if the count changes (avoids DOM thrashing)
   if (learnEngramCells.length !== engram.length) {
     engramEl.innerHTML = '';
     learnEngramCells = engram.map(() => {
@@ -220,7 +220,7 @@ function updateLearningPanel(m) {
     const cell = learnEngramCells[i];
     if (cell) {
       cell.title = `neurona ${id}`;
-      // Tono por ID para que cada neurona tenga color estable y reconocible
+      // Hue by ID so each neuron has a stable, recognizable color
       const hue = (id * 47) % 360;
       cell.style.background = `hsl(${hue}, 70%, 55%)`;
     }
@@ -228,7 +228,7 @@ function updateLearningPanel(m) {
 }
 
 // ================================================================
-// LEARNING PANEL (Hipocampo CA3)
+// LEARNING PANEL (Hippocampus CA3)
 // ================================================================
 
 let hippoEngramCells = [];
@@ -244,26 +244,26 @@ function updateLearningHippoPanel(m) {
   const memCount = document.getElementById('hippoMemCount');
   if (!stabilityBar) return;
 
-  // Estabilidad del atractor: 0-1 → 0-100%
+  // Attractor stability: 0-1 → 0-100%
   const stability = Math.max(0, Math.min(1, m.stability || 0));
   stabilityBar.style.width = `${(stability * 100).toFixed(0)}%`;
   stabilityVal.textContent = `${(stability * 100).toFixed(0)}%`;
 
-  // Plasticidad: Σ|Δw| por tick al imprimir un episodio nuevo.
+  // Plasticity: Σ|Δw| per tick when imprinting a new episode.
   const dw = Math.max(0, m.weightChange || 0);
   const dwPct = Math.min(100, (dw / 5) * 100);
   weightBar.style.width = `${dwPct.toFixed(0)}%`;
   weightVal.textContent = dw.toFixed(2);
 
-  // Actividad CA3 (código disperso ~2%)
-  const act = Math.max(0, Math.min(1, (m.activity || 0) * 20)); // 5% ≈ lleno
+  // CA3 activity (sparse code ~2%)
+  const act = Math.max(0, Math.min(1, (m.activity || 0) * 20)); // 5% ≈ full
   activityBar.style.width = `${(act * 100).toFixed(0)}%`;
   activityVal.textContent = `${((m.activity || 0) * 100).toFixed(1)}%`;
 
-  // Episodios almacenados
+  // Stored episodes
   if (memCount) memCount.textContent = m.memoryCount || 0;
 
-  // Engrama recuperado: cuadrícula de celdas, una por neurona del atractor.
+  // Recovered engram: grid of cells, one per attractor neuron.
   engramSize.textContent = m.engramSize || 0;
   const engram = m.engram || [];
   if (hippoEngramCells.length !== engram.length) {
@@ -363,7 +363,7 @@ function drawBrain() {
     let activity = 0;
     if (brainState && brainState.regions && brainState.regions[id]) {
       const r = brainState.regions[id];
-      activity = Math.min(1, (r.firingRate || 0) * 4); // mismo realce que las barras
+      activity = Math.min(1, (r.firingRate || 0) * 4); // same emphasis as the bars
     }
     projected.push({ id, pos, p, color, size: pos.size, activity });
   }
@@ -571,10 +571,10 @@ function drawEmotionSpace(emotion) {
   ctx.fillStyle = 'rgba(148, 163, 184, 0.5)';
   ctx.font = '9px Inter, sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillText('Placer ↑', cx + r - 20, cy - 5);
-  ctx.fillText('↓ Displacer', cx - r + 25, cy - 5);
-  ctx.fillText('Alta activación', cx, cy - r + 12);
-  ctx.fillText('Baja activación', cx, cy + r - 4);
+  ctx.fillText('Pleasure ↑', cx + r - 20, cy - 5);
+  ctx.fillText('↓ Displeasure', cx - r + 25, cy - 5);
+  ctx.fillText('High arousal', cx, cy - r + 12);
+  ctx.fillText('Low arousal', cx, cy + r - 4);
 
   // Current emotion point
   if (emotion) {
@@ -634,9 +634,9 @@ function updateRegionActivity(regions) {
   }
 
   // Update values
-  // `firingRate` es ahora el output REAL de cada región (antes varias regiones
-  // —tálamo, amígdala…— no actualizaban this.spikes y salían congeladas a 0%).
-  // Lo escalamos x4 para que las tasas dispersas (k-WTA) sean visibles.
+  // `firingRate` is now the REAL output of each region (previously several regions
+  // —thalamus, amygdala…— did not update this.spikes and showed up frozen at 0%).
+  // We scale it x4 so the sparse rates (k-WTA) are visible.
   for (const [id, data] of Object.entries(regions)) {
     const bar = document.getElementById(`rbar-${id}`);
     const rate = document.getElementById(`rrate-${id}`);
@@ -715,7 +715,7 @@ function sendText() {
   const text = input.value.trim();
   if (!text) return;
 
-  addLog('input', `Texto: "${text}"`);
+  addLog('input', `Text: "${text}"`);
   input.value = '';
 
   if (ws && ws.readyState === 1) {
@@ -748,7 +748,7 @@ document.getElementById('sendDrawing')?.addEventListener('click', () => {
     pixels.push(Math.round(gray));
   }
 
-  addLog('input', 'Imagen enviada (64×64)');
+  addLog('input', 'Image sent (64×64)');
 
   if (ws && ws.readyState === 1) {
     ws.send(JSON.stringify({ type: 'input:image', data: { pixels, width: 64, height: 64 } }));
@@ -774,7 +774,7 @@ document.getElementById('clearDrawing')?.addEventListener('click', () => {
 document.querySelectorAll('.inject-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     const type = btn.dataset.type;
-    addLog('info', `Inyectando ${type} +0.2`);
+    addLog('info', `Injecting ${type} +0.2`);
 
     if (ws && ws.readyState === 1) {
       ws.send(JSON.stringify({ type: 'modulator', data: { type, amount: 0.2 } }));
@@ -826,19 +826,19 @@ function updateResponseBox(result) {
   let html = '';
   if (result.emotion) {
     html += `<div style="font-size: 1.2rem; margin-bottom: 0.5rem">${result.emotion.emoji} ${result.emotion.primaryEmotion}</div>`;
-    html += `<div style="font-size: 0.75rem; color: var(--text-muted)">Valencia: ${result.emotion.valence?.toFixed(2)} | Arousal: ${result.emotion.arousal?.toFixed(2)}</div>`;
+    html += `<div style="font-size: 0.75rem; color: var(--text-muted)">Valence: ${result.emotion.valence?.toFixed(2)} | Arousal: ${result.emotion.arousal?.toFixed(2)}</div>`;
   }
   if (result.broca && result.broca.words) {
     html += `<div style="font-size: 0.8rem; margin-top: 0.3rem">🗣️ ${result.broca.words.join(' ')}</div>`;
   }
   if (result.activeRegions && result.activeRegions.length > 0) {
-    html += `<div style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 0.3rem">Regiones activas: ${result.activeRegions.join(', ')}</div>`;
+    html += `<div style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 0.3rem">Active regions: ${result.activeRegions.join(', ')}</div>`;
   }
   if (result.processingTime) {
-    html += `<div style="font-size: 0.65rem; color: var(--text-muted); margin-top: 0.2rem">Procesado en ${result.processingTime.toFixed(0)}ms</div>`;
+    html += `<div style="font-size: 0.65rem; color: var(--text-muted); margin-top: 0.2rem">Processed in ${result.processingTime.toFixed(0)}ms</div>`;
   }
 
-  box.innerHTML = html || '<p class="placeholder">Sin respuesta</p>';
+  box.innerHTML = html || '<p class="placeholder">No response</p>';
 }
 
 // ================================================================
@@ -849,7 +849,7 @@ function addLog(type, message) {
   const box = document.getElementById('logBox');
   if (!box) return;
 
-  const time = new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const time = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   const entry = document.createElement('div');
   entry.className = `log-entry log-${type}`;
   entry.innerHTML = `<span class="log-time">${time}</span> <span class="log-msg">${message}</span>`;
@@ -881,18 +881,18 @@ document.getElementById('toggleWebcam')?.addEventListener('click', async () => {
     clearInterval(webcamInterval);
     webcamInterval = null;
     video.srcObject = null;
-    btn.textContent = '▶ Activar';
-    status.textContent = 'Inactiva';
-    addLog('info', '📷 Webcam desactivada');
+    btn.textContent = '▶ Enable';
+    status.textContent = 'Inactive';
+    addLog('info', '📷 Webcam disabled');
     return;
   }
 
   try {
     webcamStream = await navigator.mediaDevices.getUserMedia({ video: { width: 64, height: 64, facingMode: 'user' } });
     video.srcObject = webcamStream;
-    btn.textContent = '⏹ Desactivar';
-    status.textContent = 'Activa — enviando frames';
-    addLog('info', '📷 Webcam activada');
+    btn.textContent = '⏹ Disable';
+    status.textContent = 'Active — sending frames';
+    addLog('info', '📷 Webcam enabled');
 
     const wCanvas = document.getElementById('webcamCanvas');
     const wCtx = wCanvas.getContext('2d');
@@ -910,7 +910,7 @@ document.getElementById('toggleWebcam')?.addEventListener('click', async () => {
     }, 500);
   } catch (err) {
     status.textContent = 'Error: ' + err.message;
-    addLog('error', '📷 Error webcam: ' + err.message);
+    addLog('error', '📷 Webcam error: ' + err.message);
   }
 });
 
@@ -932,9 +932,9 @@ document.getElementById('toggleMic')?.addEventListener('click', async () => {
     micAnalyser = null;
     clearInterval(micInterval);
     micInterval = null;
-    btn.textContent = '▶ Activar';
-    status.textContent = 'Inactivo';
-    addLog('info', '🎤 Micrófono desactivado');
+    btn.textContent = '▶ Enable';
+    status.textContent = 'Inactive';
+    addLog('info', '🎤 Microphone disabled');
     return;
   }
 
@@ -946,9 +946,9 @@ document.getElementById('toggleMic')?.addEventListener('click', async () => {
     micAnalyser.fftSize = 256;
     source.connect(micAnalyser);
 
-    btn.textContent = '⏹ Desactivar';
-    status.textContent = 'Activo — analizando audio';
-    addLog('info', '🎤 Micrófono activado');
+    btn.textContent = '⏹ Disable';
+    status.textContent = 'Active — analyzing audio';
+    addLog('info', '🎤 Microphone enabled');
 
     const micCanvas = document.getElementById('micCanvas');
     const micCtx = micCanvas.getContext('2d');
@@ -985,7 +985,7 @@ document.getElementById('toggleMic')?.addEventListener('click', async () => {
     }, 250);
   } catch (err) {
     status.textContent = 'Error: ' + err.message;
-    addLog('error', '🎤 Error mic: ' + err.message);
+    addLog('error', '🎤 Mic error: ' + err.message);
   }
 });
 
@@ -1009,7 +1009,7 @@ function updateBrocaChat(state) {
   const placeholder = chat.querySelector('.placeholder');
   if (placeholder) placeholder.remove();
 
-  const time = new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const time = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   const msgEl = document.createElement('div');
   msgEl.className = 'broca-msg';
   msgEl.innerHTML = `<div>${text}</div><div class="broca-time">${time}</div>`;
@@ -1024,14 +1024,14 @@ function updateBrocaChat(state) {
 
 document.getElementById('sleepBtn')?.addEventListener('click', () => {
   const status = document.getElementById('sleepStatus');
-  status.textContent = 'Durmiendo...';
-  addLog('info', '💤 Iniciando consolidación...');
+  status.textContent = 'Sleeping...';
+  addLog('info', '💤 Starting consolidation...');
 
   fetch(`${API_URL}/sleep`, { method: 'POST' })
     .then(r => r.json())
     .then(result => {
-      status.textContent = 'Despierto';
-      addLog('info', `💤 Consolidación completa: ${result.memoriesReplayed || 0} memorias`);
+      status.textContent = 'Awake';
+      addLog('info', `💤 Consolidation complete: ${result.memoriesReplayed || 0} memories`);
     })
     .catch(err => {
       status.textContent = 'Error';
@@ -1050,4 +1050,4 @@ resizeBrainCanvas();
 drawBrain();
 connectWebSocket();
 
-addLog('info', '🧠 Dashboard iniciado');
+addLog('info', '🧠 Dashboard started');

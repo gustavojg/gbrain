@@ -1,33 +1,33 @@
 /**
- * AMÍGDALA — Centro de Procesamiento Emocional
+ * AMYGDALA — Emotional Processing Center
  * ===============================================
- * Modela el complejo amigdalino del lóbulo temporal, responsable de
- * la evaluación emocional de estímulos y la generación de respuestas
- * afectivas que modulan todo el procesamiento cerebral.
+ * Models the amygdaloid complex of the temporal lobe, responsible for
+ * the emotional evaluation of stimuli and the generation of affective
+ * responses that modulate all brain processing.
  *
- * Base biológica:
- *   La amígdala humana contiene ~12 millones de neuronas organizadas en
- *   varios núcleos con funciones específicas:
+ * Biological basis:
+ *   The human amygdala contains ~12 million neurons organized into
+ *   several nuclei with specific functions:
  *
- *   - Núcleo lateral (LA): Puerta de entrada. Recibe aferencias sensoriales
- *     del tálamo (vía rápida subcortical, "low road") y de cortezas
- *     sensoriales (vía lenta cortical, "high road"). Evalúa la relevancia
- *     emocional del estímulo.
+ *   - Lateral nucleus (LA): Entry gate. Receives sensory afferents
+ *     from the thalamus (fast subcortical pathway, "low road") and from
+ *     sensory cortices (slow cortical pathway, "high road"). Evaluates the
+ *     emotional relevance of the stimulus.
  *
- *   - Núcleo basolateral (BLA): Integra información sensorial con memoria
- *     emocional. Almacena asociaciones estímulo-emoción aprendidas
- *     (condicionamiento clásico, LeDoux 2000).
+ *   - Basolateral nucleus (BLA): Integrates sensory information with
+ *     emotional memory. Stores learned stimulus-emotion associations
+ *     (classical conditioning, LeDoux 2000).
  *
- *   - Núcleo central (CeA): Salida eferente. Proyecta a:
- *     * Hipotálamo → respuestas autonómicas (frecuencia cardíaca, cortisol)
- *     * Tronco encefálico → respuestas motoras (congelamiento, lucha/huida)
- *     * Núcleos neuromoduladores → modulación global (DA, NE, 5-HT, cortisol)
+ *   - Central nucleus (CeA): Efferent output. Projects to:
+ *     * Hypothalamus → autonomic responses (heart rate, cortisol)
+ *     * Brainstem → motor responses (freezing, fight/flight)
+ *     * Neuromodulatory nuclei → global modulation (DA, NE, 5-HT, cortisol)
  *
- *   La amígdala es el "centro de alarma" emocional del cerebro: puede
- *   secuestrar la atención y los recursos cognitivos cuando detecta
- *   estímulos potencialmente amenazantes o muy salientes.
+ *   The amygdala is the brain's emotional "alarm center": it can
+ *   hijack attention and cognitive resources when it detects
+ *   potentially threatening or highly salient stimuli.
  *
- * Referencia: LeDoux, J. (2000). "Emotion circuits in the brain."
+ * Reference: LeDoux, J. (2000). "Emotion circuits in the brain."
  *             Annual Review of Neuroscience, 23, 155-184.
  */
 
@@ -39,131 +39,131 @@ import type { ModulationEffects } from '../../core/neuromodulators/modulator-sys
 // ==================================================================
 
 /**
- * Estado emocional bidimensional basado en el modelo circumplejo de Russell.
+ * Two-dimensional emotional state based on Russell's circumplex model.
  *
- * Base biológica:
- *   Las emociones se representan como puntos en un espacio bidimensional:
- *   - Valencia (valence): dimensión placer/displacer, codificada por el
- *     balance de actividad entre núcleos BLA positivos y negativos
- *   - Arousal: nivel de activación fisiológica, codificado por la tasa
- *     de disparo del CeA y sus proyecciones autonómicas
+ * Biological basis:
+ *   Emotions are represented as points in a two-dimensional space:
+ *   - Valence (valence): pleasure/displeasure dimension, encoded by the
+ *     balance of activity between positive and negative BLA nuclei
+ *   - Arousal: level of physiological activation, encoded by the firing
+ *     rate of the CeA and its autonomic projections
  *
  *   Russell, J.A. (1980). "A circumplex model of affect."
  */
 export interface EmotionalState {
   /**
-   * Valencia emocional: -1 (muy negativo/aversivo) a +1 (muy positivo/placentero).
+   * Emotional valence: -1 (very negative/aversive) to +1 (very positive/pleasant).
    * Neutral = 0.
    */
   valence: number;
   /**
-   * Nivel de activación/arousal: 0 (calma profunda) a 1 (activación máxima).
-   * Modula la intensidad de la respuesta emocional.
+   * Activation/arousal level: 0 (deep calm) to 1 (maximum activation).
+   * Modulates the intensity of the emotional response.
    */
   arousal: number;
 }
 
 /**
- * Memoria emocional condicionada almacenada en la amígdala.
+ * Conditioned emotional memory stored in the amygdala.
  *
- * Base biológica:
- *   El condicionamiento del miedo (y otras emociones) ocurre por potenciación
- *   a largo plazo (LTP) en las sinapsis del núcleo lateral de la amígdala.
- *   Estas memorias son muy resistentes a la extinción y pueden reactivarse
- *   incluso años después (ej: PTSD).
+ * Biological basis:
+ *   Fear conditioning (and that of other emotions) occurs through long-term
+ *   potentiation (LTP) at the synapses of the lateral nucleus of the amygdala.
+ *   These memories are highly resistant to extinction and can be reactivated
+ *   even years later (e.g.: PTSD).
  */
 export interface EmotionalMemory {
-  /** Patrón de estímulo condicionado (CS) */
+  /** Conditioned stimulus pattern (CS) */
   pattern: Float32Array;
-  /** Respuesta emocional condicionada (CR) */
+  /** Conditioned emotional response (CR) */
   emotion: EmotionalState;
   /**
-   * Fuerza de la asociación estímulo-emoción (0–1).
-   * Aumenta con repetición, disminuye con extinción.
+   * Strength of the stimulus-emotion association (0–1).
+   * Increases with repetition, decreases with extinction.
    */
   strength: number;
 }
 
 /**
- * Liberaciones neuromoduladoras producidas por la amígdala.
+ * Neuromodulatory releases produced by the amygdala.
  *
- * Base biológica:
- *   La amígdala modula la actividad de los principales sistemas
- *   neuromoduladores del cerebro a través de sus proyecciones
- *   eferentes al hipotálamo, VTA, locus coeruleus y núcleos del rafe.
+ * Biological basis:
+ *   The amygdala modulates the activity of the brain's main
+ *   neuromodulatory systems through its efferent projections
+ *   to the hypothalamus, VTA, locus coeruleus and raphe nuclei.
  */
 export interface NeuromodulatorRelease {
-  /** Dopamina: recompensa, motivación. VTA/SNc. */
+  /** Dopamine: reward, motivation. VTA/SNc. */
   dopamine: number;
-  /** Serotonina: regulación emocional, bienestar. Núcleos del rafe. */
+  /** Serotonin: emotional regulation, well-being. Raphe nuclei. */
   serotonin: number;
-  /** Norepinefrina: alerta, atención. Locus coeruleus. */
+  /** Norepinephrine: alertness, attention. Locus coeruleus. */
   norepinephrine: number;
-  /** Cortisol: respuesta al estrés. Eje HPA (hipotálamo). */
+  /** Cortisol: stress response. HPA axis (hypothalamus). */
   cortisol: number;
-  /** Acetilcolina: atención focalizada. Núcleo basal de Meynert. */
+  /** Acetylcholine: focused attention. Nucleus basalis of Meynert. */
   acetylcholine: number;
-  /** Oxitocina: vinculación social, confianza. Hipotálamo. */
+  /** Oxytocin: social bonding, trust. Hypothalamus. */
   oxytocin: number;
 }
 
 // ==================================================================
-// Clase Amygdala
+// Amygdala class
 // ==================================================================
 
 /**
- * Amígdala — Centro de evaluación emocional y modulación afectiva.
+ * Amygdala — Center of emotional evaluation and affective modulation.
  *
- * Base biológica:
- *   Implementa las tres funciones principales del complejo amigdalino:
- *   1. Evaluación rápida de valencia emocional de estímulos (LA/BLA)
- *   2. Almacenamiento de memorias emocionales condicionadas (BLA)
- *   3. Producción de señales neuromoduladoras que afectan todo el cerebro (CeA)
+ * Biological basis:
+ *   Implements the three main functions of the amygdaloid complex:
+ *   1. Fast evaluation of the emotional valence of stimuli (LA/BLA)
+ *   2. Storage of conditioned emotional memories (BLA)
+ *   3. Production of neuromodulatory signals that affect the whole brain (CeA)
  *
- *   La amígdala opera en dos modos:
- *   - Reactivo: evaluación rápida de estímulos novedosos o previamente
- *     condicionados (latencia ~12ms vía tálamo-amígdala directa)
- *   - Modulatorio: ajuste continuo del tono emocional del procesamiento
- *     cerebral vía neuromoduladores
+ *   The amygdala operates in two modes:
+ *   - Reactive: fast evaluation of novel or previously conditioned
+ *     stimuli (latency ~12ms via the direct thalamo-amygdala pathway)
+ *   - Modulatory: continuous adjustment of the emotional tone of brain
+ *     processing via neuromodulators
  */
 export class Amygdala extends BrainRegion {
-  /** Estado emocional actual del sistema */
+  /** Current emotional state of the system */
   private emotionalState: EmotionalState = { valence: 0, arousal: 0.2 };
 
-  /** Memorias emocionales condicionadas (asociaciones estímulo-emoción) */
+  /** Conditioned emotional memories (stimulus-emotion associations) */
   private emotionalMemories: EmotionalMemory[] = [];
 
-  /** Última liberación de neuromoduladores producida */
+  /** Last neuromodulator release produced */
   private lastRelease: NeuromodulatorRelease = {
     dopamine: 0, serotonin: 0, norepinephrine: 0,
     cortisol: 0, acetylcholine: 0, oxytocin: 0,
   };
 
   /**
-   * Capacidad máxima de memorias emocionales.
-   * Biología: la amígdala tiene capacidad prácticamente ilimitada para
-   * condicionamiento del miedo, pero modelamos un límite práctico.
+   * Maximum capacity of emotional memories.
+   * Biology: the amygdala has a practically unlimited capacity for
+   * fear conditioning, but we model a practical limit.
    */
   private readonly maxEmotionalMemories: number = 5000;
 
   /**
-   * Umbral de novedad: si ninguna memoria emocional tiene similitud
-   * superior a este valor, el estímulo se considera "nuevo".
+   * Novelty threshold: if no emotional memory has a similarity
+   * above this value, the stimulus is considered "new".
    */
   private readonly noveltyThreshold: number = 0.3;
 
   /**
-   * Inercia emocional: cuánto del estado anterior se preserva en cada tick.
-   * Biología: las emociones no cambian instantáneamente; hay inercia
-   * debida a la liberación lenta de neuropéptidos y hormonas.
+   * Emotional inertia: how much of the previous state is preserved on each tick.
+   * Biology: emotions do not change instantaneously; there is inertia
+   * due to the slow release of neuropeptides and hormones.
    */
   private readonly emotionalInertia: number = 0.7;
 
   /**
-   * Crea la amígdala.
+   * Creates the amygdala.
    *
-   * @param neuronCount - Número de neuronas (default: 2000)
-   * @param inputCount - Dimensionalidad del input (default: 3000)
+   * @param neuronCount - Number of neurons (default: 2000)
+   * @param inputCount - Dimensionality of the input (default: 3000)
    */
   constructor(neuronCount: number = 2000, inputCount: number = 3000) {
     super(
@@ -175,35 +175,35 @@ export class Amygdala extends BrainRegion {
   }
 
   // ----------------------------------------------------------------
-  // Evaluación Emocional
+  // Emotional Evaluation
   // ----------------------------------------------------------------
 
   /**
-   * Evalúa la valencia y arousal emocional de un estímulo.
+   * Evaluates the emotional valence and arousal of a stimulus.
    *
-   * Base biológica:
-   *   El núcleo lateral (LA) de la amígdala recibe inputs convergentes del
-   *   tálamo sensorial y las cortezas de asociación. Las neuronas del LA
-   *   responden a estímulos que:
-   *   1. Coinciden con memorias emocionales previas (respuesta condicionada)
-   *   2. Son novedosos o inesperados (respuesta de orientación)
-   *   3. Tienen propiedades intrínsecamente aversivas (ej: dolor, sonidos fuertes)
+   * Biological basis:
+   *   The lateral nucleus (LA) of the amygdala receives convergent inputs from
+   *   the sensory thalamus and the association cortices. LA neurons
+   *   respond to stimuli that:
+   *   1. Match previous emotional memories (conditioned response)
+   *   2. Are novel or unexpected (orienting response)
+   *   3. Have intrinsically aversive properties (e.g.: pain, loud sounds)
    *
-   *   Luego el BLA integra esta evaluación con el contexto y el estado
-   *   motivacional actual para producir una respuesta emocional modulada.
+   *   The BLA then integrates this evaluation with the context and the current
+   *   motivational state to produce a modulated emotional response.
    *
-   * @param input - Vector de spikes del estímulo a evaluar
-   * @param modulationEffects - Efectos de neuromodulación actuales
-   * @returns Estado emocional evaluado para este estímulo
+   * @param input - Spike vector of the stimulus to evaluate
+   * @param modulationEffects - Current neuromodulation effects
+   * @returns Emotional state evaluated for this stimulus
    */
   evaluateStimulus(
     input: Float32Array,
     modulationEffects: ModulationEffects,
   ): EmotionalState {
     let newValence = 0;
-    let newArousal = 0.1; // Arousal base mínimo (estado de vigilia)
+    let newArousal = 0.1; // Minimum baseline arousal (wakeful state)
 
-    // --- Búsqueda en memorias emocionales (respuesta condicionada) ---
+    // --- Search in emotional memories (conditioned response) ---
     let bestMatchSimilarity = 0;
     let bestMatchEmotion: EmotionalState | null = null;
 
@@ -218,27 +218,27 @@ export class Amygdala extends BrainRegion {
     }
 
     if (bestMatchEmotion && bestMatchSimilarity > this.noveltyThreshold) {
-      // --- Estímulo familiar con asociación emocional ---
+      // --- Familiar stimulus with emotional association ---
       newValence = bestMatchEmotion.valence * bestMatchSimilarity;
       newArousal = bestMatchEmotion.arousal * bestMatchSimilarity;
 
-      // Amplificar arousal para patrones negativos familiares
-      // Biología: la amígdala es especialmente sensible a amenazas conocidas
+      // Amplify arousal for familiar negative patterns
+      // Biology: the amygdala is especially sensitive to known threats
       if (bestMatchEmotion.valence < -0.3) {
         newArousal = Math.min(1.0, newArousal * 1.5);
       }
     } else {
-      // --- Estímulo novedoso ---
-      // Biología: la novedad genera una leve respuesta positiva (curiosidad)
-      // mediada por el sistema dopaminérgico mesolímbico
-      newValence = 0.1; // Leve sesgo positivo (curiosidad)
-      newArousal = 0.3 + (1 - bestMatchSimilarity) * 0.2; // Más novedad = más arousal
+      // --- Novel stimulus ---
+      // Biology: novelty generates a slight positive response (curiosity)
+      // mediated by the mesolimbic dopaminergic system
+      newValence = 0.1; // Slight positive bias (curiosity)
+      newArousal = 0.3 + (1 - bestMatchSimilarity) * 0.2; // More novelty = more arousal
 
-      // La atención modulada aumenta el arousal ante novedad
+      // Modulated attention increases arousal in response to novelty
       newArousal *= modulationEffects.attentionGain;
     }
 
-    // Aplicar inercia emocional (suavizado temporal)
+    // Apply emotional inertia (temporal smoothing)
     const finalValence =
       this.emotionalState.valence * this.emotionalInertia +
       newValence * (1 - this.emotionalInertia);
@@ -246,7 +246,7 @@ export class Amygdala extends BrainRegion {
       this.emotionalState.arousal * this.emotionalInertia +
       newArousal * (1 - this.emotionalInertia);
 
-    // Clamp a rangos válidos
+    // Clamp to valid ranges
     this.emotionalState = {
       valence: Math.max(-1, Math.min(1, finalValence)),
       arousal: Math.max(0, Math.min(1, finalArousal)),
@@ -256,61 +256,61 @@ export class Amygdala extends BrainRegion {
   }
 
   // ----------------------------------------------------------------
-  // Producción de Neuromoduladores
+  // Neuromodulator Production
   // ----------------------------------------------------------------
 
   /**
-   * Produce señales neuromoduladoras basadas en el estado emocional actual.
+   * Produces neuromodulatory signals based on the current emotional state.
    *
-   * Base biológica:
-   *   El núcleo central (CeA) de la amígdala es el principal efector
-   *   emocional del cerebro. Sus proyecciones eferentes activan/inhiben
-   *   los núcleos neuromoduladores subcorticales:
+   * Biological basis:
+   *   The central nucleus (CeA) of the amygdala is the brain's main
+   *   emotional effector. Its efferent projections activate/inhibit
+   *   the subcortical neuromodulatory nuclei:
    *
-   *   - Valencia positiva alta → VTA (dopamina ↑)
-   *     Recompensa activa neuronas dopaminérgicas del área tegmental ventral
+   *   - High positive valence → VTA (dopamine ↑)
+   *     Reward activates dopaminergic neurons of the ventral tegmental area
    *
-   *   - Arousal alto + valencia negativa → LC (norepinefrina ↑) + HPA (cortisol ↑)
-   *     Estrés/amenaza activa el locus coeruleus y el eje hipotálamo-hipófisis-adrenal
+   *   - High arousal + negative valence → LC (norepinephrine ↑) + HPA (cortisol ↑)
+   *     Stress/threat activates the locus coeruleus and the hypothalamic-pituitary-adrenal axis
    *
-   *   - Estímulo novedoso → LC (norepinefrina ↑ moderada)
-   *     La novedad genera una respuesta de orientación mediada por NE
+   *   - Novel stimulus → LC (moderate norepinephrine ↑)
+   *     Novelty generates an orienting response mediated by NE
    *
-   *   - Valencia positiva + familiaridad → Rafe (serotonina ↑) + PVN (oxitocina ↑)
-   *     Seguridad y confort activan los sistemas de bienestar y vinculación
+   *   - Positive valence + familiarity → Raphe (serotonin ↑) + PVN (oxytocin ↑)
+   *     Safety and comfort activate the well-being and bonding systems
    *
-   *   - Atención requerida → NB (acetilcolina ↑)
-   *     Estímulos salientes activan el núcleo basal de Meynert
+   *   - Attention required → NB (acetylcholine ↑)
+   *     Salient stimuli activate the nucleus basalis of Meynert
    *
-   * @returns Cantidades de liberación para cada neuromodulador (0–1)
+   * @returns Release amounts for each neuromodulator (0–1)
    */
   produceNeuromodulators(): NeuromodulatorRelease {
     const { valence, arousal } = this.emotionalState;
 
-    // --- Dopamina: valencia positiva ---
+    // --- Dopamine: positive valence ---
     // VTA dopamine neurons fire in response to reward prediction errors
     const dopamine = Math.max(0, valence) * 0.5 + (valence > 0.5 ? 0.2 : 0);
 
-    // --- Serotonina: estabilidad emocional, sesgo positivo familiar ---
-    // Los núcleos del rafe mantienen tono serotoninérgico modulado por seguridad
+    // --- Serotonin: emotional stability, familiar positive bias ---
+    // The raphe nuclei maintain serotonergic tone modulated by safety
     const serotonin =
       (valence > 0 ? valence * 0.3 : 0) + (1 - arousal) * 0.2;
 
-    // --- Norepinefrina: arousal, novedad, alerta ---
+    // --- Norepinephrine: arousal, novelty, alertness ---
     // LC tonic and phasic firing modulated by arousal and novelty
     const norepinephrine =
       arousal * 0.4 + (valence < -0.3 ? Math.abs(valence) * 0.3 : 0);
 
-    // --- Cortisol: estrés (arousal alto + valencia negativa) ---
+    // --- Cortisol: stress (high arousal + negative valence) ---
     // HPA axis activation during sustained negative affect
     const cortisol =
       valence < 0 ? Math.abs(valence) * arousal * 0.5 : 0;
 
-    // --- Acetilcolina: atención focalizada (estímulos salientes) ---
+    // --- Acetylcholine: focused attention (salient stimuli) ---
     // NBM activation proportional to stimulus salience
     const acetylcholine = arousal * 0.3 + Math.abs(valence) * 0.2;
 
-    // --- Oxitocina: confort social, valencia positiva baja arousal ---
+    // --- Oxytocin: social comfort, positive valence low arousal ---
     // PVN oxytocin release during safe social contexts
     const oxytocin =
       valence > 0.2 && arousal < 0.5 ? valence * 0.4 : 0;
@@ -328,30 +328,30 @@ export class Amygdala extends BrainRegion {
   }
 
   // ----------------------------------------------------------------
-  // Condicionamiento Emocional
+  // Emotional Conditioning
   // ----------------------------------------------------------------
 
   /**
-   * Condiciona una respuesta emocional a un estímulo.
+   * Conditions an emotional response to a stimulus.
    *
-   * Base biológica:
-   *   El condicionamiento ocurre por LTP en las sinapsis LA → BLA.
-   *   Un estímulo neutro (CS) que co-ocurre con un estímulo emocional
-   *   (US) adquiere la capacidad de evocar la respuesta emocional por
-   *   sí solo. Este aprendizaje es:
-   *   - Rápido (puede ocurrir en una sola exposición para estímulos aversivos)
-   *   - Resistente a extinción (las asociaciones se debilitan pero no se borran)
-   *   - Modulado por NE y cortisol (los estímulos estresantes se condicionan más fuerte)
+   * Biological basis:
+   *   Conditioning occurs through LTP at the LA → BLA synapses.
+   *   A neutral stimulus (CS) that co-occurs with an emotional stimulus
+   *   (US) acquires the ability to evoke the emotional response by
+   *   itself. This learning is:
+   *   - Fast (it can occur in a single exposure for aversive stimuli)
+   *   - Resistant to extinction (associations weaken but are not erased)
+   *   - Modulated by NE and cortisol (stressful stimuli are conditioned more strongly)
    *
-   * @param stimulus - Patrón del estímulo condicionado (CS)
-   * @param emotion - Respuesta emocional a asociar (CR)
+   * @param stimulus - Conditioned stimulus pattern (CS)
+   * @param emotion - Emotional response to associate (CR)
    */
   conditionResponse(stimulus: Float32Array, emotion: EmotionalState): void {
-    // Verificar si ya existe una asociación similar
+    // Check whether a similar association already exists
     for (const memory of this.emotionalMemories) {
       const similarity = this.cosineSimilarity(stimulus, memory.pattern);
       if (similarity > 0.8) {
-        // Actualizar asociación existente (reconsolidación)
+        // Update existing association (reconsolidation)
         memory.emotion.valence =
           memory.emotion.valence * 0.5 + emotion.valence * 0.5;
         memory.emotion.arousal =
@@ -361,9 +361,9 @@ export class Amygdala extends BrainRegion {
       }
     }
 
-    // Nueva asociación
+    // New association
     if (this.emotionalMemories.length >= this.maxEmotionalMemories) {
-      // Eliminar la asociación más débil
+      // Remove the weakest association
       let weakestIdx = 0;
       let weakestStrength = this.emotionalMemories[0].strength;
       for (let i = 1; i < this.emotionalMemories.length; i++) {
@@ -383,62 +383,62 @@ export class Amygdala extends BrainRegion {
   }
 
   // ----------------------------------------------------------------
-  // Procesamiento principal
+  // Main processing
   // ----------------------------------------------------------------
 
   /**
-   * Procesa spikes de entrada y produce spikes modulados emocionalmente.
+   * Processes input spikes and produces emotionally modulated spikes.
    *
-   * Base biológica:
-   *   Flujo de procesamiento amigdalino:
-   *   1. Input llega por vía rápida (tálamo→LA) y lenta (corteza→LA)
-   *   2. LA evalúa valencia y arousal comparando con memorias
-   *   3. BLA integra con contexto y produce estado emocional
-   *   4. CeA traduce estado emocional a señales neuromoduladoras
-   *   5. Output: spikes de salida + señales neuromoduladoras
+   * Biological basis:
+   *   Amygdaloid processing flow:
+   *   1. Input arrives via the fast pathway (thalamus→LA) and slow pathway (cortex→LA)
+   *   2. LA evaluates valence and arousal by comparing with memories
+   *   3. BLA integrates with context and produces an emotional state
+   *   4. CeA translates the emotional state into neuromodulatory signals
+   *   5. Output: output spikes + neuromodulatory signals
    *
-   * @param spikes - Vector de spikes de entrada
-   * @param modulationEffects - Efectos de neuromodulación actuales
-   * @returns Vector de spikes de salida teñidos emocionalmente
+   * @param spikes - Input spike vector
+   * @param modulationEffects - Current neuromodulation effects
+   * @returns Emotionally tinted output spike vector
    */
   processInput(
     spikes: Float32Array,
     modulationEffects: ModulationEffects,
   ): Float32Array {
-    // Adaptar dimensionalidad
+    // Adapt dimensionality
     const adaptedInput = this.adaptInput(spikes);
 
-    // 1. Evaluar contenido emocional del estímulo
+    // 1. Evaluate the emotional content of the stimulus
     this.evaluateStimulus(adaptedInput, modulationEffects);
 
-    // 2. Producir señales neuromoduladoras
+    // 2. Produce neuromodulatory signals
     this.produceNeuromodulators();
 
-    // 3. Generar spikes de salida modulados por emoción
+    // 3. Generate output spikes modulated by emotion
     const output = new Float32Array(this.neuronCount);
     const { valence, arousal } = this.emotionalState;
 
-    // La magnitud de la respuesta escala con arousal
-    // Biología: el CeA modula la ganancia de sus outputs por arousal
+    // The magnitude of the response scales with arousal
+    // Biology: the CeA modulates the gain of its outputs by arousal
     const responseGain = 0.5 + arousal * 0.5;
 
-    // Computar corrientes y generar spikes
+    // Compute currents and generate spikes
     const copyLen = Math.min(adaptedInput.length, this.neuronCount);
     for (let i = 0; i < copyLen; i++) {
-      // Los spikes de salida llevan la "marca" emocional
+      // The output spikes carry the emotional "mark"
       output[i] = adaptedInput[i] * responseGain;
     }
 
-    // Añadir señal de valencia como modulación de los spikes
-    // Biología: neuronas del CeA codifican valencia en su tasa de disparo
+    // Add a valence signal as modulation of the spikes
+    // Biology: CeA neurons encode valence in their firing rate
     const valenceSignalStart = Math.min(copyLen, this.neuronCount - 100);
     for (let i = valenceSignalStart; i < this.neuronCount; i++) {
-      // Últimas neuronas codifican valencia y arousal directamente
+      // The last neurons encode valence and arousal directly
       const t = (i - valenceSignalStart) / Math.max(1, this.neuronCount - valenceSignalStart);
       output[i] = t < 0.5 ? (valence + 1) / 2 * arousal : arousal;
     }
 
-    // Aplicar ganancia de neuromodulación
+    // Apply neuromodulation gain
     for (let i = 0; i < output.length; i++) {
       output[i] *= modulationEffects.spikeGainMultiplier;
     }
@@ -447,11 +447,11 @@ export class Amygdala extends BrainRegion {
   }
 
   // ----------------------------------------------------------------
-  // Utilidades
+  // Utilities
   // ----------------------------------------------------------------
 
   /**
-   * Adapta un vector de entrada a la dimensionalidad esperada.
+   * Adapts an input vector to the expected dimensionality.
    */
   private adaptInput(input: Float32Array): Float32Array {
     if (input.length === this.inputCount) return input;
@@ -465,7 +465,7 @@ export class Amygdala extends BrainRegion {
   }
 
   /**
-   * Similitud coseno entre dos vectores.
+   * Cosine similarity between two vectors.
    */
   private cosineSimilarity(a: Float32Array, b: Float32Array): number {
     const len = Math.min(a.length, b.length);
@@ -484,20 +484,20 @@ export class Amygdala extends BrainRegion {
   }
 
   // ----------------------------------------------------------------
-  // Accesores públicos
+  // Public accessors
   // ----------------------------------------------------------------
 
-  /** Retorna el estado emocional actual */
+  /** Returns the current emotional state */
   getEmotionalState(): EmotionalState {
     return { ...this.emotionalState };
   }
 
-  /** Retorna la última liberación de neuromoduladores */
+  /** Returns the last neuromodulator release */
   getLastRelease(): NeuromodulatorRelease {
     return { ...this.lastRelease };
   }
 
-  /** Número de memorias emocionales condicionadas */
+  /** Number of conditioned emotional memories */
   get conditionedMemoryCount(): number {
     return this.emotionalMemories.length;
   }

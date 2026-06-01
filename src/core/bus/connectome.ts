@@ -1,53 +1,53 @@
 /**
- * Conectoma Inter-Regional
+ * Inter-Regional Connectome
  * =========================
- * Define el mapa de conexiones entre regiones cerebrales del cerebro digital.
+ * Defines the map of connections between brain regions of the digital brain.
  *
- * Biología: El conectoma es el mapa completo de conexiones neurales del cerebro.
- * A nivel macro, las regiones cerebrales se conectan mediante tractos de sustancia
- * blanca (axones mielinizados) con retardos de conducción proporcionales a la
- * distancia física. Cada conexión tiene un peso (fuerza sináptica media) y un
- * retardo axonal (delay) que refleja el tiempo de propagación del potencial de acción.
+ * Biology: The connectome is the complete map of the brain's neural connections.
+ * At the macro level, brain regions connect via white matter tracts
+ * (myelinated axons) with conduction delays proportional to physical
+ * distance. Each connection has a weight (mean synaptic strength) and an
+ * axonal delay that reflects the action potential propagation time.
  *
- * Regiones modeladas:
- * - thalamus: Filtro atencional y relé sensorial
- * - visualCortex: Procesamiento visual (V1-V4)
- * - auditoryCortex: Procesamiento auditivo (A1-A2)
- * - hippocampus: Formación de memorias y navegación espacial
- * - amygdala: Procesamiento emocional y valencia afectiva
- * - prefrontalCortex: Control ejecutivo y toma de decisiones
- * - brocaWernicke: Producción y comprensión del lenguaje
+ * Modeled regions:
+ * - thalamus: Attentional filter and sensory relay
+ * - visualCortex: Visual processing (V1-V4)
+ * - auditoryCortex: Auditory processing (A1-A2)
+ * - hippocampus: Memory formation and spatial navigation
+ * - amygdala: Emotional processing and affective valence
+ * - prefrontalCortex: Executive control and decision making
+ * - brocaWernicke: Language production and comprehension
  */
 
 /**
- * Conexión dirigida entre dos regiones cerebrales.
- * Modela un tracto de sustancia blanca con propiedades fisiológicas.
+ * Directed connection between two brain regions.
+ * Models a white matter tract with physiological properties.
  */
 export interface Connection {
-  /** Región de origen (emisora de spikes) */
+  /** Source region (spike emitter) */
   from: string;
-  /** Región destino (receptora de spikes) */
+  /** Target region (spike receiver) */
   to: string;
-  /** Peso sináptico medio de la conexión (0.0 - 1.0) */
+  /** Mean synaptic weight of the connection (0.0 - 1.0) */
   weight: number;
-  /** Retardo axonal de conducción en milisegundos */
+  /** Axonal conduction delay in milliseconds */
   delay: number;
-  /** Si la conexión puede ser modulada por neuromoduladores */
+  /** Whether the connection can be modulated by neuromodulators */
   modulatable: boolean;
 }
 
 /**
- * Conectoma por defecto con conexiones biológicamente inspiradas.
+ * Default connectome with biologically inspired connections.
  *
- * Organización:
- * 1. Vía ventral (Tálamo → Corteza Visual → Hipocampo): procesamiento del "qué"
- * 2. Vía dorsal (Tálamo → Corteza Auditiva → Hipocampo): procesamiento del "qué" auditivo
- * 3. Circuito límbico (Amígdala ↔ Prefrontal): regulación emocional
- * 4. Circuito del lenguaje (Broca-Wernicke ↔ Prefrontal): producción verbal
- * 5. Feedback top-down (Prefrontal → Tálamo, Visual): control atencional
+ * Organization:
+ * 1. Ventral pathway (Thalamus → Visual Cortex → Hippocampus): "what" processing
+ * 2. Dorsal pathway (Thalamus → Auditory Cortex → Hippocampus): auditory "what" processing
+ * 3. Limbic circuit (Amygdala ↔ Prefrontal): emotional regulation
+ * 4. Language circuit (Broca-Wernicke ↔ Prefrontal): verbal production
+ * 5. Top-down feedback (Prefrontal → Thalamus, Visual): attentional control
  */
 export const DEFAULT_CONNECTOME: Connection[] = [
-  // === Vías feedforward sensoriales (tálamo → cortezas) ===
+  // === Sensory feedforward pathways (thalamus → cortices) ===
   {
     from: 'thalamus',
     to: 'visualCortex',
@@ -70,7 +70,7 @@ export const DEFAULT_CONNECTOME: Connection[] = [
     modulatable: true,
   },
 
-  // === Vías corteza sensorial → memoria/emoción ===
+  // === Sensory cortex → memory/emotion pathways ===
   {
     from: 'visualCortex',
     to: 'hippocampus',
@@ -100,7 +100,7 @@ export const DEFAULT_CONNECTOME: Connection[] = [
     modulatable: true,
   },
 
-  // === Vías asociativas → control ejecutivo ===
+  // === Associative pathways → executive control ===
   {
     from: 'hippocampus',
     to: 'prefrontalCortex',
@@ -116,7 +116,7 @@ export const DEFAULT_CONNECTOME: Connection[] = [
     modulatable: true,
   },
 
-  // === Circuito del lenguaje ===
+  // === Language circuit ===
   {
     from: 'prefrontalCortex',
     to: 'brocaWernicke',
@@ -132,7 +132,7 @@ export const DEFAULT_CONNECTOME: Connection[] = [
     modulatable: true,
   },
 
-  // === Conexiones feedback (top-down) ===
+  // === Feedback connections (top-down) ===
   {
     from: 'prefrontalCortex',
     to: 'thalamus',
@@ -157,35 +157,35 @@ export const DEFAULT_CONNECTOME: Connection[] = [
 ];
 
 /**
- * Gestiona el conectoma inter-regional del cerebro digital.
+ * Manages the inter-regional connectome of the digital brain.
  *
- * Permite consultar conexiones, obtener rutas de entrada/salida para
- * cada región, y modular dinámicamente los pesos sinápticos en respuesta
- * a neuromoduladores o plasticidad a largo plazo.
+ * Allows querying connections, obtaining input/output routes for
+ * each region, and dynamically modulating synaptic weights in response
+ * to neuromodulators or long-term plasticity.
  */
 export class Connectome {
-  /** Mapa de conexiones indexado por región de origen */
+  /** Connection map indexed by source region */
   private readonly outgoing: Map<string, Connection[]> = new Map();
-  /** Mapa de conexiones indexado por región destino */
+  /** Connection map indexed by target region */
   private readonly incoming: Map<string, Connection[]> = new Map();
-  /** Lista completa de conexiones */
+  /** Complete list of connections */
   private readonly connections: Connection[];
-  /** Set de todas las regiones registradas en el conectoma */
+  /** Set of all regions registered in the connectome */
   private readonly regionIds: Set<string> = new Set();
 
   /**
-   * Crea un nuevo conectoma a partir de una lista de conexiones.
+   * Creates a new connectome from a list of connections.
    *
-   * @param connections - Lista de conexiones inter-regionales (default: DEFAULT_CONNECTOME)
+   * @param connections - List of inter-regional connections (default: DEFAULT_CONNECTOME)
    */
   constructor(connections: Connection[] = DEFAULT_CONNECTOME) {
-    // Clonar conexiones para permitir mutación segura
+    // Clone connections to allow safe mutation
     this.connections = connections.map(c => ({ ...c }));
     this.buildIndices();
   }
 
   /**
-   * Construye los índices de conexiones entrantes y salientes.
+   * Builds the incoming and outgoing connection indices.
    */
   private buildIndices(): void {
     this.outgoing.clear();
@@ -196,13 +196,13 @@ export class Connectome {
       this.regionIds.add(conn.from);
       this.regionIds.add(conn.to);
 
-      // Índice saliente
+      // Outgoing index
       if (!this.outgoing.has(conn.from)) {
         this.outgoing.set(conn.from, []);
       }
       this.outgoing.get(conn.from)!.push(conn);
 
-      // Índice entrante
+      // Incoming index
       if (!this.incoming.has(conn.to)) {
         this.incoming.set(conn.to, []);
       }
@@ -211,37 +211,37 @@ export class Connectome {
   }
 
   /**
-   * Obtiene todas las conexiones salientes de una región.
+   * Gets all outgoing connections from a region.
    *
-   * Biología: Equivale a los tractos axonales que parten de esta región
-   * hacia otras áreas corticales/subcorticales.
+   * Biology: Equivalent to the axonal tracts that depart from this region
+   * toward other cortical/subcortical areas.
    *
-   * @param regionId - Identificador de la región de origen
-   * @returns Lista de conexiones salientes (vacía si la región no tiene salidas)
+   * @param regionId - Identifier of the source region
+   * @returns List of outgoing connections (empty if the region has no outputs)
    */
   getOutgoing(regionId: string): ReadonlyArray<Connection> {
     return this.outgoing.get(regionId) ?? [];
   }
 
   /**
-   * Obtiene todas las conexiones entrantes a una región.
+   * Gets all incoming connections to a region.
    *
-   * Biología: Equivale a las aferencias (axones que llegan) a esta región
-   * desde otras áreas del cerebro.
+   * Biology: Equivalent to the afferents (incoming axons) to this region
+   * from other areas of the brain.
    *
-   * @param regionId - Identificador de la región destino
-   * @returns Lista de conexiones entrantes
+   * @param regionId - Identifier of the target region
+   * @returns List of incoming connections
    */
   getIncoming(regionId: string): ReadonlyArray<Connection> {
     return this.incoming.get(regionId) ?? [];
   }
 
   /**
-   * Obtiene la conexión directa entre dos regiones, si existe.
+   * Gets the direct connection between two regions, if it exists.
    *
-   * @param from - Región de origen
-   * @param to - Región destino
-   * @returns La conexión si existe, undefined si no hay conexión directa
+   * @param from - Source region
+   * @param to - Target region
+   * @returns The connection if it exists, undefined if there is no direct connection
    */
   getConnection(from: string, to: string): Connection | undefined {
     const outConns = this.outgoing.get(from);
@@ -250,16 +250,16 @@ export class Connectome {
   }
 
   /**
-   * Modula el peso de una conexión específica.
+   * Modulates the weight of a specific connection.
    *
-   * Biología: Los neuromoduladores (dopamina, serotonina, etc.) pueden
-   * fortalecer o debilitar tractos completos de sustancia blanca mediante
-   * cambios en la probabilidad de liberación de neurotransmisores.
+   * Biology: Neuromodulators (dopamine, serotonin, etc.) can
+   * strengthen or weaken entire white matter tracts through
+   * changes in the release probability of neurotransmitters.
    *
-   * @param from - Región de origen
-   * @param to - Región destino
-   * @param factor - Factor multiplicativo para el peso (ej: 1.2 = +20%)
-   * @returns true si la conexión fue modulada exitosamente
+   * @param from - Source region
+   * @param to - Target region
+   * @param factor - Multiplicative factor for the weight (e.g. 1.2 = +20%)
+   * @returns true if the connection was modulated successfully
    */
   modulateWeight(from: string, to: string, factor: number): boolean {
     const conn = this.getConnection(from, to);
@@ -270,12 +270,12 @@ export class Connectome {
   }
 
   /**
-   * Establece directamente el peso de una conexión.
+   * Directly sets the weight of a connection.
    *
-   * @param from - Región de origen
-   * @param to - Región destino
-   * @param weight - Nuevo peso sináptico (clamped a [0, 2.0])
-   * @returns true si se actualizó exitosamente
+   * @param from - Source region
+   * @param to - Target region
+   * @param weight - New synaptic weight (clamped to [0, 2.0])
+   * @returns true if it was updated successfully
    */
   setWeight(from: string, to: string, weight: number): boolean {
     const conn = this.getConnection(from, to);
@@ -286,21 +286,21 @@ export class Connectome {
   }
 
   /**
-   * Retorna todas las regiones registradas en el conectoma.
+   * Returns all regions registered in the connectome.
    */
   getRegions(): ReadonlySet<string> {
     return this.regionIds;
   }
 
   /**
-   * Retorna todas las conexiones del conectoma.
+   * Returns all connections in the connectome.
    */
   getAllConnections(): ReadonlyArray<Connection> {
     return this.connections;
   }
 
   /**
-   * Retorna el número total de conexiones.
+   * Returns the total number of connections.
    */
   get connectionCount(): number {
     return this.connections.length;

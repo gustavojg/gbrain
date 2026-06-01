@@ -1,24 +1,24 @@
 /**
- * EXPERIMENTO DE VERIFICACIÓN — Aprendizaje de la Corteza Visual
+ * VERIFICATION EXPERIMENT — Visual Cortex Learning
  * ===============================================================
- * Demuestra de forma DETERMINISTA que la corteza visual aprende de verdad
- * con el núcleo Izhikevich + STDP:
+ * Demonstrates DETERMINISTICALLY that the visual cortex really learns
+ * with the Izhikevich + STDP core:
  *
- *   1. ESTABILIDAD: repetir el patrón A consolida su engrama (el overlap
- *      entre presentaciones sucesivas sube hacia ~1.0) y los pesos convergen
- *      (Σ|Δw| por presentación decae).
- *   2. DISCRIMINACIÓN: un patrón B distinto activa un engrama distinto
- *      (overlap A/B bajo).
+ *   1. STABILITY: repeating pattern A consolidates its engram (the overlap
+ *      between successive presentations rises toward ~1.0) and the weights converge
+ *      (Σ|Δw| per presentation decays).
+ *   2. DISCRIMINATION: a distinct pattern B activates a distinct engram
+ *      (low A/B overlap).
  *
- * Se siembra Math.random con un PRNG reproducible para que el resultado
- * sea idéntico en cada corrida.
+ * Math.random is seeded with a reproducible PRNG so that the result
+ * is identical on every run.
  *
- * Ejecutar:  npx tsx tests/visual-learning.test.ts
+ * Run:  npx tsx tests/visual-learning.test.ts
  */
 
 import { VisualCortex } from '../src/regions/visual-cortex/visual-cortex.js';
 
-// ── PRNG reproducible (mulberry32) — reemplaza Math.random para determinismo ──
+// ── Reproducible PRNG (mulberry32) — replaces Math.random for determinism ──
 function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
   return function () {
@@ -32,7 +32,7 @@ function mulberry32(seed: number): () => number {
 const rng = mulberry32(12345);
 Math.random = rng;
 
-// ── Utilidades ──
+// ── Utilities ──
 function makeSparsePattern(size: number, activeFraction: number, rate: number): Float32Array {
   const p = new Float32Array(size);
   const active = Math.floor(size * activeFraction);
@@ -48,7 +48,7 @@ function fmt(x: number, d = 3): string {
   return x.toFixed(d).padStart(d + 4);
 }
 
-// ── Configuración del experimento ──
+// ── Experiment configuration ──
 const INPUT = 300;
 const NEURONS = 800;
 const K = 15;
@@ -76,7 +76,7 @@ function activeIndices(p: Float32Array): Int32Array {
 const inputOverlap = VisualCortex.engramOverlap(activeIndices(A), activeIndices(B));
 console.log(`Overlap de ENTRADA A/B: ${fmt(inputOverlap)} (cuánto se parecen los estímulos)\n`);
 
-// ── 1. Línea base (sin aprender): engramas iniciales ──
+// ── 1. Baseline (without learning): initial engrams ──
 const engramA0 = cortex.predict(A, 1, 0).winners;
 const engramB0 = cortex.predict(B, 1, 0).winners;
 const discrim0 = VisualCortex.engramOverlap(engramA0, engramB0);
@@ -84,7 +84,7 @@ console.log('── Antes de aprender ──');
 console.log(`  Engrama A inicial: ${engramA0.length} neuronas`);
 console.log(`  Overlap A/B inicial: ${fmt(discrim0)}\n`);
 
-// ── 2. Fase de aprendizaje: presentar A repetidamente ──
+// ── 2. Learning phase: present A repeatedly ──
 console.log('── Aprendizaje (presentando A repetidamente) ──');
 console.log('  rep |  Σ|Δw|  | estabilidad(A_t vs A_{t-1}) | actividad');
 console.log('  ----+---------+----------------------------+----------');
@@ -95,7 +95,7 @@ const weightChangeCurve: number[] = [];
 
 for (let r = 0; r < REPS; r++) {
   const res = cortex.present(A, { learn: true });
-  // Sonda sin aprender para medir el engrama actual de A
+  // Probe without learning to measure A's current engram
   const probe = cortex.predict(A, 1, 0).winners;
   const stability = VisualCortex.engramOverlap(prevEngram, probe);
   stabilityCurve.push(stability);
@@ -106,7 +106,7 @@ for (let r = 0; r < REPS; r++) {
   );
 }
 
-// ── 3. Estado final: discriminación A vs B ──
+// ── 3. Final state: discrimination A vs B ──
 const engramAf = cortex.predict(A, 1, 0).winners;
 const engramBf = cortex.predict(B, 1, 0).winners;
 const discrimF = VisualCortex.engramOverlap(engramAf, engramBf);
@@ -116,7 +116,7 @@ console.log(`  Engrama A final: [${Array.from(engramAf).slice(0, 12).join(', ')}
 console.log(`  Engrama B final: [${Array.from(engramBf).slice(0, 12).join(', ')}${engramBf.length > 12 ? ', …' : ''}]`);
 console.log(`  Overlap A/B final: ${fmt(discrimF)}`);
 
-// ── 4. Veredicto ──
+// ── 4. Verdict ──
 const finalStability = stabilityCurve.slice(-3).reduce((s, v) => s + v, 0) / 3;
 const firstChange = weightChangeCurve.slice(0, 2).reduce((s, v) => s + v, 0) / 2;
 const lastChange = weightChangeCurve.slice(-2).reduce((s, v) => s + v, 0) / 2;

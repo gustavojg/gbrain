@@ -1,55 +1,55 @@
 /**
- * Buffer de Memoria Sensorial (~250ms)
+ * Sensory Memory Buffer (~250ms)
  * =====================================
- * Modela la memoria icónica (visual) y ecoica (auditiva) del cerebro humano.
+ * Models the iconic (visual) and echoic (auditory) memory of the human brain.
  *
- * Biología: La memoria sensorial retiene una copia casi exacta del estímulo
- * por ~250ms (icónica) o ~3-4s (ecoica). Se implementa como un buffer circular
- * (ring buffer) de alta velocidad usando Float32Array para almacenar vectores
- * de activación sensorial con sus marcas temporales.
+ * Biology: Sensory memory retains an almost exact copy of the stimulus
+ * for ~250ms (iconic) or ~3-4s (echoic). It is implemented as a high-speed
+ * ring buffer using Float32Array to store sensory
+ * activation vectors with their timestamps.
  *
- * El buffer circular evita asignaciones de memoria al reutilizar posiciones,
- * crítico para operaciones en tiempo real a escala de 50K+ neuronas.
+ * The ring buffer avoids memory allocations by reusing positions,
+ * critical for real-time operations at the scale of 50K+ neurons.
  */
 
 /**
- * Entrada individual en el buffer sensorial.
- * Contiene el vector de activación y su marca temporal.
+ * Individual entry in the sensory buffer.
+ * Contains the activation vector and its timestamp.
  */
 export interface SensoryEntry {
-  /** Vector de activación sensorial (patrón espacial del estímulo) */
+  /** Sensory activation vector (spatial pattern of the stimulus) */
   data: Float32Array;
-  /** Marca temporal en milisegundos del momento de captura */
+  /** Timestamp in milliseconds of the capture moment */
   timestamp: number;
 }
 
 /**
- * Buffer circular de memoria sensorial.
+ * Sensory memory ring buffer.
  *
- * Implementa un anillo (ring buffer) de tamaño fijo que almacena vectores
- * sensoriales con marcas temporales. Cuando el buffer se llena, las entradas
- * más antiguas se sobrescriben automáticamente, imitando el decaimiento
- * natural de la traza sensorial en el cerebro.
+ * Implements a fixed-size ring buffer that stores sensory
+ * vectors with timestamps. When the buffer fills up, the oldest
+ * entries are automatically overwritten, mimicking the natural
+ * decay of the sensory trace in the brain.
  */
 export class SensoryBuffer {
-  /** Almacenamiento contiguo para todos los vectores sensoriales */
+  /** Contiguous storage for all sensory vectors */
   private readonly storage: Float32Array;
-  /** Marcas temporales correspondientes a cada posición del anillo */
+  /** Timestamps corresponding to each position of the ring */
   private readonly timestamps: Float64Array;
-  /** Capacidad máxima del buffer (número de entradas) */
+  /** Maximum capacity of the buffer (number of entries) */
   private readonly capacity: number;
-  /** Dimensión de cada vector sensorial */
+  /** Dimension of each sensory vector */
   private readonly vectorSize: number;
-  /** Índice de escritura actual (cabeza del anillo) */
+  /** Current write index (head of the ring) */
   private head: number = 0;
-  /** Número de entradas válidas almacenadas */
+  /** Number of valid entries stored */
   private count: number = 0;
 
   /**
-   * Crea un nuevo buffer sensorial circular.
+   * Creates a new circular sensory buffer.
    *
-   * @param capacity - Número máximo de entradas que puede almacenar el buffer
-   * @param vectorSize - Dimensión de cada vector sensorial (ej: 128 para espectrograma)
+   * @param capacity - Maximum number of entries the buffer can store
+   * @param vectorSize - Dimension of each sensory vector (e.g. 128 for a spectrogram)
    */
   constructor(capacity: number, vectorSize: number) {
     if (capacity <= 0 || vectorSize <= 0) {
@@ -59,19 +59,19 @@ export class SensoryBuffer {
     }
     this.capacity = capacity;
     this.vectorSize = vectorSize;
-    // Almacenamiento plano: capacity * vectorSize floats contiguos en memoria
+    // Flat storage: capacity * vectorSize floats contiguous in memory
     this.storage = new Float32Array(capacity * vectorSize);
     this.timestamps = new Float64Array(capacity);
   }
 
   /**
-   * Inserta un nuevo vector sensorial en el buffer.
+   * Inserts a new sensory vector into the buffer.
    *
-   * Biología: Equivale a la llegada de un nuevo fotograma retinal o
-   * segmento coclear al registro sensorial.
+   * Biology: Equivalent to the arrival of a new retinal frame or
+   * cochlear segment at the sensory register.
    *
-   * @param data - Vector de activación sensorial a almacenar
-   * @param timestamp - Marca temporal en ms del estímulo
+   * @param data - Sensory activation vector to store
+   * @param timestamp - Timestamp in ms of the stimulus
    */
   push(data: Float32Array, timestamp: number): void {
     if (data.length !== this.vectorSize) {
@@ -80,13 +80,13 @@ export class SensoryBuffer {
       );
     }
 
-    // Calcular offset en el almacenamiento plano
+    // Compute offset in the flat storage
     const offset = this.head * this.vectorSize;
-    // Copiar datos al anillo (operación O(vectorSize), muy rápida con typed arrays)
+    // Copy data into the ring (O(vectorSize) operation, very fast with typed arrays)
     this.storage.set(data, offset);
     this.timestamps[this.head] = timestamp;
 
-    // Avanzar cabeza del anillo
+    // Advance the head of the ring
     this.head = (this.head + 1) % this.capacity;
     if (this.count < this.capacity) {
       this.count++;
@@ -94,31 +94,31 @@ export class SensoryBuffer {
   }
 
   /**
-   * Recupera todas las entradas dentro de una ventana temporal reciente.
+   * Retrieves all entries within a recent time window.
    *
-   * Biología: Simula el acceso a la traza sensorial que aún persiste
-   * dentro de la ventana de memoria icónica/ecoica.
+   * Biology: Simulates access to the sensory trace that still persists
+   * within the iconic/echoic memory window.
    *
-   * @param durationMs - Duración de la ventana hacia atrás desde la entrada más reciente (ms)
-   * @returns Array de entradas sensoriales dentro de la ventana, ordenadas cronológicamente
+   * @param durationMs - Duration of the window backward from the most recent entry (ms)
+   * @returns Array of sensory entries within the window, ordered chronologically
    */
   getRecent(durationMs: number): SensoryEntry[] {
     if (this.count === 0) return [];
 
-    // Encontrar la marca temporal más reciente
+    // Find the most recent timestamp
     const lastIndex = (this.head - 1 + this.capacity) % this.capacity;
     const latestTimestamp = this.timestamps[lastIndex];
     const cutoff = latestTimestamp - durationMs;
 
     const results: SensoryEntry[] = [];
 
-    // Recorrer el anillo desde la entrada más antigua a la más reciente
+    // Traverse the ring from the oldest entry to the most recent
     for (let i = 0; i < this.count; i++) {
       const idx = (this.head - this.count + i + this.capacity) % this.capacity;
       const ts = this.timestamps[idx];
 
       if (ts >= cutoff) {
-        // Extraer copia del vector desde el almacenamiento plano
+        // Extract a copy of the vector from the flat storage
         const offset = idx * this.vectorSize;
         const data = new Float32Array(this.vectorSize);
         data.set(this.storage.subarray(offset, offset + this.vectorSize));
@@ -130,10 +130,10 @@ export class SensoryBuffer {
   }
 
   /**
-   * Limpia completamente el buffer sensorial.
+   * Completely clears the sensory buffer.
    *
-   * Biología: Equivale a un reset atencional abrupto, como el efecto
-   * de un parpadeo o cambio de fijación visual (saccade).
+   * Biology: Equivalent to an abrupt attentional reset, like the effect
+   * of a blink or a change of visual fixation (saccade).
    */
   clear(): void {
     this.storage.fill(0);
@@ -143,29 +143,29 @@ export class SensoryBuffer {
   }
 
   /**
-   * Indica si el buffer ha alcanzado su capacidad máxima.
-   * Una vez lleno, las nuevas entradas sobrescriben las más antiguas.
+   * Indicates whether the buffer has reached its maximum capacity.
+   * Once full, new entries overwrite the oldest ones.
    */
   isFull(): boolean {
     return this.count >= this.capacity;
   }
 
   /**
-   * Retorna el número de entradas válidas actualmente almacenadas.
+   * Returns the number of valid entries currently stored.
    */
   get size(): number {
     return this.count;
   }
 
   /**
-   * Retorna la capacidad máxima del buffer.
+   * Returns the maximum capacity of the buffer.
    */
   get maxCapacity(): number {
     return this.capacity;
   }
 
   /**
-   * Retorna la dimensión de cada vector sensorial.
+   * Returns the dimension of each sensory vector.
    */
   get dimensions(): number {
     return this.vectorSize;

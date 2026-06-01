@@ -1,15 +1,15 @@
 /**
- * Protocolo Binario Multi-Región para Persistencia Cerebral
+ * Multi-Region Binary Protocol for Brain Persistence
  * ===========================================================
- * Extiende el protocolo binario original (04_binary_optimization) para soportar
- * múltiples regiones cerebrales y estado de neuromodulación.
+ * Extends the original binary protocol (04_binary_optimization) to support
+ * multiple brain regions and neuromodulation state.
  *
- * Biología: El cerebro humano requiere ~20W de energía y almacena ~2.5 PB
- * de información en sinapsis. Para persistir nuestro cerebro digital con
- * mínima latencia y máxima fidelidad, usamos un protocolo binario compacto
- * que evita overhead de serialización JSON.
+ * Biology: The human brain requires ~20W of energy and stores ~2.5 PB
+ * of information in synapses. To persist our digital brain with
+ * minimal latency and maximum fidelity, we use a compact binary protocol
+ * that avoids JSON serialization overhead.
  *
- * Formato del archivo binario:
+ * Binary file format:
  * ┌─────────────────────────────────────────────────────────────┐
  * │ HEADER                                                      │
  * │  magic (4 bytes) = 0xBRA1001 ("BRAIN001")                  │
@@ -42,53 +42,53 @@ import type {
   ModulatorType,
 } from '../neuromodulators/modulator-system.js';
 
-/** Número mágico para identificar archivos de cerebro digital: "BRA1N001" codificado */
+/** Magic number to identify digital brain files: "BRA1N001" encoded */
 export const MAGIC_NUMBER = 0xb4a10001;
 
-/** Versión actual del protocolo binario */
+/** Current version of the binary protocol */
 export const PROTOCOL_VERSION = 1;
 
 /**
- * Tamaño del header principal en bytes:
+ * Size of the main header in bytes:
  * magic(4) + version(4) + numRegions(4) + modulatorBlockOffset(4) + modulatorBlockSize(4)
  */
 const HEADER_SIZE = 20;
 
-/** Tamaño de cada entrada en la tabla de offsets: hash(4) + offset(4) + size(4) */
+/** Size of each entry in the offset table: hash(4) + offset(4) + size(4) */
 const OFFSET_ENTRY_SIZE = 12;
 
 /**
- * Datos de una región cerebral extraídos del archivo binario.
+ * Data of a brain region extracted from the binary file.
  */
 export interface LoadedRegionData {
-  /** Identificador de la región */
+  /** Identifier of the region */
   id: string;
-  /** Número de neuronas */
+  /** Number of neurons */
   neuronCount: number;
-  /** Número de entradas */
+  /** Number of inputs */
   inputCount: number;
-  /** Pesos sinápticos restaurados */
+  /** Restored synaptic weights */
   weights: Float32Array;
 }
 
 /**
- * Resultado completo de la carga de un archivo de cerebro.
+ * Complete result of loading a brain file.
  */
 export interface LoadedBrainData {
-  /** Datos de cada región, indexados por id */
+  /** Data of each region, indexed by id */
   regions: Map<string, LoadedRegionData>;
-  /** Estado de los neuromoduladores (si fue guardado) */
+  /** State of the neuromodulators (if it was saved) */
   modulatorState: NeuromodulatorSnapshot | null;
 }
 
 /**
- * Calcula un hash simple de 32 bits para un string.
+ * Computes a simple 32-bit hash for a string.
  *
- * Usado para la tabla de offsets del protocolo binario.
- * Algoritmo FNV-1a de 32 bits para buena distribución.
+ * Used for the binary protocol's offset table.
+ * 32-bit FNV-1a algorithm for good distribution.
  *
- * @param str - String a hashear
- * @returns Hash de 32 bits como número unsigned
+ * @param str - String to hash
+ * @returns 32-bit hash as an unsigned number
  */
 export function hashRegionId(str: string): number {
   let hash = 0x811c9dc5; // FNV offset basis
@@ -100,18 +100,18 @@ export function hashRegionId(str: string): number {
 }
 
 /**
- * Serializa el bloque de datos de una región cerebral.
+ * Serializes the data block of a brain region.
  *
- * Formato: idLength(4) + id(UTF-8) + neuronCount(4) + inputCount(4) + weights(Float32Array)
+ * Format: idLength(4) + id(UTF-8) + neuronCount(4) + inputCount(4) + weights(Float32Array)
  *
- * @param region - Región cerebral a serializar
- * @returns Buffer con los datos binarios de la región
+ * @param region - Brain region to serialize
+ * @returns Buffer with the binary data of the region
  */
 export function serializeRegion(region: BrainRegion): Buffer {
   const config = region.getNetworkConfig();
   const idBytes = Buffer.from(region.id, 'utf-8');
 
-  // Calcular tamaño total del bloque
+  // Compute total size of the block
   const idLenSize = 4;
   const metaSize = 8; // neuronCount(4) + inputCount(4)
   const weightsSize = config.weights.byteLength;
@@ -120,23 +120,23 @@ export function serializeRegion(region: BrainRegion): Buffer {
   const buffer = Buffer.alloc(totalSize);
   let offset = 0;
 
-  // Escribir longitud del id
+  // Write the id length
   buffer.writeUInt32LE(idBytes.length, offset);
   offset += 4;
 
-  // Escribir id
+  // Write the id
   idBytes.copy(buffer, offset);
   offset += idBytes.length;
 
-  // Escribir neuronCount
+  // Write neuronCount
   buffer.writeUInt32LE(config.neuronCount, offset);
   offset += 4;
 
-  // Escribir inputCount
+  // Write inputCount
   buffer.writeUInt32LE(config.inputCount, offset);
   offset += 4;
 
-  // Escribir pesos (copiar Float32Array directamente)
+  // Write weights (copy Float32Array directly)
   const weightsBuffer = Buffer.from(
     config.weights.buffer,
     config.weights.byteOffset,
@@ -148,22 +148,22 @@ export function serializeRegion(region: BrainRegion): Buffer {
 }
 
 /**
- * Serializa el estado de neuromodulación.
+ * Serializes the neuromodulation state.
  *
- * Formato:
+ * Format:
  *   numModulators(4)
  *   per modulator:
  *     nameLength(4) + name(UTF-8) + level(Float32) + baseline(Float32)
  *     + decayRate(Float32) + lastUpdate(Float64)
  *
- * @param system - Sistema de neuromodulación a serializar
- * @returns Buffer con datos binarios del estado de modulación
+ * @param system - Neuromodulation system to serialize
+ * @returns Buffer with binary data of the modulation state
  */
 function serializeModulators(system: NeuromodulatorSystem): Buffer {
   const snapshot = system.serialize();
   const entries = Object.entries(snapshot.modulators);
 
-  // Calcular tamaño total
+  // Compute total size
   let totalSize = 4; // numModulators
   for (const [name] of entries) {
     const nameBytes = Buffer.from(name, 'utf-8');
@@ -174,18 +174,18 @@ function serializeModulators(system: NeuromodulatorSystem): Buffer {
   const buffer = Buffer.alloc(totalSize);
   let offset = 0;
 
-  // Número de moduladores
+  // Number of modulators
   buffer.writeUInt32LE(entries.length, offset);
   offset += 4;
 
   for (const [name, state] of entries) {
     const nameBytes = Buffer.from(name, 'utf-8');
 
-    // Longitud del nombre
+    // Name length
     buffer.writeUInt32LE(nameBytes.length, offset);
     offset += 4;
 
-    // Nombre
+    // Name
     nameBytes.copy(buffer, offset);
     offset += nameBytes.length;
 
@@ -210,11 +210,11 @@ function serializeModulators(system: NeuromodulatorSystem): Buffer {
 }
 
 /**
- * Deserializa el bloque de moduladores desde un buffer.
+ * Deserializes the modulator block from a buffer.
  *
- * @param buffer - Buffer conteniendo datos de modulación
- * @param startOffset - Offset inicial en el buffer
- * @returns Snapshot de neuromodulación restaurado
+ * @param buffer - Buffer containing modulation data
+ * @param startOffset - Initial offset in the buffer
+ * @returns Restored neuromodulation snapshot
  */
 function deserializeModulators(
   buffer: Buffer,
@@ -228,13 +228,13 @@ function deserializeModulators(
   const modulators = {} as Record<string, ModulatorState>;
 
   for (let i = 0; i < numModulators; i++) {
-    // Leer nombre
+    // Read name
     const nameLen = buffer.readUInt32LE(offset);
     offset += 4;
     const name = buffer.subarray(offset, offset + nameLen).toString('utf-8');
     offset += nameLen;
 
-    // Leer state
+    // Read state
     const level = buffer.readFloatLE(offset);
     offset += 4;
     const baseline = buffer.readFloatLE(offset);
@@ -254,19 +254,19 @@ function deserializeModulators(
 }
 
 /**
- * Sistema de persistencia binaria para el cerebro digital multi-región.
+ * Binary persistence system for the multi-region digital brain.
  *
- * Serializa y deserializa el estado completo del cerebro (todas las regiones
- * y neuromoduladores) en un formato binario compacto optimizado para
- * lecturas/escrituras rápidas de Float32Array.
+ * Serializes and deserializes the complete state of the brain (all regions
+ * and neuromodulators) in a compact binary format optimized for
+ * fast reads/writes of Float32Array.
  */
 export class BrainPersistence {
   /**
-   * Guarda el estado completo del cerebro en un archivo binario.
+   * Saves the complete state of the brain to a binary file.
    *
-   * @param filePath - Ruta del archivo de destino
-   * @param regions - Mapa de regiones cerebrales a guardar
-   * @param modulators - Sistema de neuromodulación a guardar
+   * @param filePath - Path of the destination file
+   * @param regions - Map of brain regions to save
+   * @param modulators - Neuromodulation system to save
    */
   save(
     filePath: string,
@@ -275,16 +275,16 @@ export class BrainPersistence {
   ): void {
     const numRegions = regions.size;
 
-    // 1. Serializar cada región
+    // 1. Serialize each region
     const regionBuffers: { id: string; buffer: Buffer }[] = [];
     for (const [id, region] of regions) {
       regionBuffers.push({ id, buffer: serializeRegion(region) });
     }
 
-    // 2. Serializar moduladores
+    // 2. Serialize modulators
     const modulatorBuffer = serializeModulators(modulators);
 
-    // 3. Calcular offsets
+    // 3. Compute offsets
     const offsetTableSize = numRegions * OFFSET_ENTRY_SIZE;
     let currentOffset = HEADER_SIZE + offsetTableSize;
 
@@ -301,7 +301,7 @@ export class BrainPersistence {
     const modulatorBlockOffset = currentOffset;
     const modulatorBlockSize = modulatorBuffer.length;
 
-    // 4. Construir el archivo completo
+    // 4. Build the complete file
     const totalSize =
       HEADER_SIZE + offsetTableSize +
       regionBuffers.reduce((sum, rb) => sum + rb.buffer.length, 0) +
@@ -341,16 +341,16 @@ export class BrainPersistence {
     // Modulator block
     modulatorBuffer.copy(fileBuffer, writeOffset);
 
-    // 5. Escribir a disco
+    // 5. Write to disk
     fs.writeFileSync(filePath, fileBuffer);
   }
 
   /**
-   * Carga el estado del cerebro desde un archivo binario.
+   * Loads the brain state from a binary file.
    *
-   * @param filePath - Ruta del archivo a cargar
-   * @returns Datos cargados de regiones y moduladores
-   * @throws Error si el archivo no existe o tiene formato inválido
+   * @param filePath - Path of the file to load
+   * @returns Loaded data of regions and modulators
+   * @throws Error if the file does not exist or has an invalid format
    */
   load(filePath: string): LoadedBrainData {
     if (!fs.existsSync(filePath)) {
@@ -360,7 +360,7 @@ export class BrainPersistence {
     const fileBuffer = fs.readFileSync(filePath);
     let readOffset = 0;
 
-    // Leer header
+    // Read header
     const magic = fileBuffer.readUInt32LE(readOffset);
     readOffset += 4;
     if (magic !== MAGIC_NUMBER) {
@@ -386,7 +386,7 @@ export class BrainPersistence {
     const modulatorBlockSize = fileBuffer.readUInt32LE(readOffset);
     readOffset += 4;
 
-    // Leer offset table
+    // Read offset table
     const offsetTable: { hash: number; offset: number; size: number }[] = [];
     for (let i = 0; i < numRegions; i++) {
       const hash = fileBuffer.readUInt32LE(readOffset);
@@ -398,12 +398,12 @@ export class BrainPersistence {
       offsetTable.push({ hash, offset, size });
     }
 
-    // Leer bloques de regiones
+    // Read region blocks
     const regions = new Map<string, LoadedRegionData>();
     for (const entry of offsetTable) {
       let regionOffset = entry.offset;
 
-      // Leer id
+      // Read id
       const idLen = fileBuffer.readUInt32LE(regionOffset);
       regionOffset += 4;
       const id = fileBuffer
@@ -411,13 +411,13 @@ export class BrainPersistence {
         .toString('utf-8');
       regionOffset += idLen;
 
-      // Leer neuronCount e inputCount
+      // Read neuronCount and inputCount
       const neuronCount = fileBuffer.readUInt32LE(regionOffset);
       regionOffset += 4;
       const inputCount = fileBuffer.readUInt32LE(regionOffset);
       regionOffset += 4;
 
-      // Leer pesos
+      // Read weights
       const weightsLength = neuronCount * inputCount;
       const weights = new Float32Array(weightsLength);
       for (let i = 0; i < weightsLength; i++) {
@@ -428,7 +428,7 @@ export class BrainPersistence {
       regions.set(id, { id, neuronCount, inputCount, weights });
     }
 
-    // Leer moduladores
+    // Read modulators
     let modulatorState: NeuromodulatorSnapshot | null = null;
     if (modulatorBlockSize > 0) {
       modulatorState = deserializeModulators(
@@ -441,39 +441,39 @@ export class BrainPersistence {
   }
 
   /**
-   * Serializa una única región cerebral como Buffer independiente.
+   * Serializes a single brain region as an independent Buffer.
    *
-   * Útil para transmisión por red o almacenamiento incremental.
+   * Useful for network transmission or incremental storage.
    *
-   * @param region - Región cerebral a serializar
-   * @returns Buffer con los datos binarios de la región
+   * @param region - Brain region to serialize
+   * @returns Buffer with the binary data of the region
    */
   saveRegion(region: BrainRegion): Buffer {
     return serializeRegion(region);
   }
 
   /**
-   * Carga una única región desde un Buffer independiente.
+   * Loads a single region from an independent Buffer.
    *
-   * @param buffer - Buffer con datos de una región serializada
-   * @returns Datos de la región cargada
+   * @param buffer - Buffer with data of a serialized region
+   * @returns Data of the loaded region
    */
   loadRegion(buffer: Buffer): LoadedRegionData {
     let offset = 0;
 
-    // Leer id
+    // Read id
     const idLen = buffer.readUInt32LE(offset);
     offset += 4;
     const id = buffer.subarray(offset, offset + idLen).toString('utf-8');
     offset += idLen;
 
-    // Leer dimensiones
+    // Read dimensions
     const neuronCount = buffer.readUInt32LE(offset);
     offset += 4;
     const inputCount = buffer.readUInt32LE(offset);
     offset += 4;
 
-    // Leer pesos
+    // Read weights
     const weightsLength = neuronCount * inputCount;
     const weights = new Float32Array(weightsLength);
     for (let i = 0; i < weightsLength; i++) {

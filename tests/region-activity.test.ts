@@ -1,12 +1,12 @@
 /**
- * Verifica que las regiones "cognitivas" (Wernicke, Broca, PFC) ya NO disparan
- * una fracción constante en reposo. Antes el k-WTA encendía exactamente
- * k = sparsity·N neuronas cada tick (≈13.8%) porque el gate comparaba contra
- * _modulatedThreshold (−55 mV) sobre potenciales adimensionales ~0.
+ * Verifies that the "cognitive" regions (Wernicke, Broca, PFC) no longer fire
+ * a constant fraction at rest. Previously k-WTA turned on exactly
+ * k = sparsity·N neurons every tick (≈13.8%) because the gate compared against
+ * _modulatedThreshold (−55 mV) on dimensionless potentials ~0.
  *
- * Esperado tras el fix:
- *   (1) Reposo (input cero, varios ticks): firingRate == 0.
- *   (2) Con señal: firingRate > 0, variable entre patrones, y ≤ sparsity (cap k-WTA).
+ * Expected after the fix:
+ *   (1) Rest (zero input, several ticks): firingRate == 0.
+ *   (2) With signal: firingRate > 0, variable across patterns, and ≤ sparsity (k-WTA cap).
  */
 
 import { WernickeArea } from '../src/regions/broca-wernicke/wernicke.js';

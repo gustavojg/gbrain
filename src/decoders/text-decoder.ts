@@ -1,19 +1,19 @@
 /**
- * DECODIFICADOR DE TEXTO — Spikes a palabras
+ * TEXT DECODER — Spikes to words
  * ============================================
- * Convierte los trenes de spikes del área de Broca
- * en texto legible (secuencia de palabras).
- * 
- * Biología: El área de Broca produce patrones de activación motora
- * que controlan la articulación del habla. Aquí, "articulación"
- * se traduce en selección de tokens del lexicón.
+ * Converts the spike trains from Broca's area
+ * into readable text (sequence of words).
+ *
+ * Biology: Broca's area produces motor activation patterns
+ * that control speech articulation. Here, "articulation"
+ * translates into selecting tokens from the lexicon.
  */
 
 /**
- * Decodifica un patrón de spikes cortical a texto.
+ * Decodes a cortical spike pattern into text.
  */
 export class TextDecoder {
-  /** Umbral mínimo de similitud para considerar un match */
+  /** Minimum similarity threshold to consider a match */
   private matchThreshold: number;
 
   constructor(matchThreshold: number = 0.3) {
@@ -21,12 +21,12 @@ export class TextDecoder {
   }
 
   /**
-   * Decodifica spikes de Broca a secuencia de palabras.
-   * 
-   * @param outputSpikes - Patrón de activación de Broca
-   * @param lexicon - Vocabulario disponible (palabra → patrón)
-   * @param topK - Número máximo de tokens a producir
-   * @returns Texto generado
+   * Decodes Broca spikes into a sequence of words.
+   *
+   * @param outputSpikes - Activation pattern of Broca
+   * @param lexicon - Available vocabulary (word → pattern)
+   * @param topK - Maximum number of tokens to produce
+   * @returns Generated text
    */
   decode(
     outputSpikes: Float32Array,
@@ -42,17 +42,17 @@ export class TextDecoder {
       }
     }
 
-    // Ordenar por similitud descendente
+    // Sort by descending similarity
     matches.sort((a, b) => b.similarity - a.similarity);
 
-    // Tomar los top K
+    // Take the top K
     const selectedWords = matches.slice(0, topK).map(m => m.word);
 
     return selectedWords.join(' ');
   }
 
   /**
-   * Decodifica múltiples patrones secuenciales a texto.
+   * Decodes multiple sequential patterns into text.
    */
   decodeSequence(
     spikeSequence: Float32Array[],
@@ -69,7 +69,7 @@ export class TextDecoder {
   }
 
   /**
-   * Decodifica un solo patrón de spikes al token más probable.
+   * Decodes a single spike pattern into the most probable token.
    */
   private decodeToken(
     spikes: Float32Array,
@@ -90,7 +90,7 @@ export class TextDecoder {
   }
 
   /**
-   * Similitud coseno entre dos vectores.
+   * Cosine similarity between two vectors.
    */
   private cosineSimilarity(a: Float32Array, b: Float32Array): number {
     const len = Math.min(a.length, b.length);

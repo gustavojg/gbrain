@@ -1,115 +1,115 @@
 /**
- * Motor de Consolidación Mnémica (Replay durante el Sueño)
+ * Memory Consolidation Engine (Sleep Replay)
  * ==========================================================
- * Implementa el proceso de consolidación de memorias del hipocampo a la corteza.
+ * Implements the process of consolidating memories from the hippocampus to the cortex.
  *
- * Biología: Durante el sueño de ondas lentas (NREM), el hipocampo "reproduce"
- * memorias recientes (sharp-wave ripples a ~200Hz) hacia las regiones corticales
- * correspondientes. Este replay comprimido (~20x más rápido que el tiempo real)
- * fortalece las conexiones corticales que almacenarán la memoria a largo plazo.
+ * Biology: During slow-wave sleep (NREM), the hippocampus "replays"
+ * recent memories (sharp-wave ripples at ~200Hz) toward the corresponding
+ * cortical regions. This compressed replay (~20x faster than real time)
+ * strengthens the cortical connections that will store the memory long-term.
  *
- * Proceso:
- * 1. Seleccionar memorias hipocampales recientes ordenadas por relevancia
- * 2. Para cada memoria, identificar la región cortical asociada
- * 3. Reproducir el patrón de activación como entrada a la región con aprendizaje activo
- * 4. Repetir múltiples veces (reactivación cíclica durante el sueño)
+ * Process:
+ * 1. Select recent hippocampal memories ordered by relevance
+ * 2. For each memory, identify the associated cortical region
+ * 3. Replay the activation pattern as input to the region with active learning
+ * 4. Repeat multiple times (cyclic reactivation during sleep)
  *
- * El resultado neto es la transferencia gradual del almacenamiento mnémico
- * desde el hipocampo (rápido pero temporal) a la corteza (lento pero duradero).
+ * The net result is the gradual transfer of mnemonic storage
+ * from the hippocampus (fast but temporary) to the cortex (slow but durable).
  */
 
 import type { BrainRegion } from '../brain-region.js';
 import type { ModulationEffects } from '../neuromodulators/modulator-system.js';
 
 /**
- * Entrada de memoria a corto plazo del hipocampo.
- * Representa un episodio memorizado que puede ser consolidado.
+ * Hippocampal short-term memory entry.
+ * Represents a memorized episode that can be consolidated.
  */
 export interface ShortTermEntry {
-  /** Patrón de activación neural almacenado */
+  /** Stored neural activation pattern */
   pattern: Float32Array;
-  /** Etiqueta semántica del recuerdo */
+  /** Semantic label of the memory */
   label: string;
-  /** Marca temporal de adquisición (ms) */
+  /** Acquisition timestamp (ms) */
   timestamp: number;
-  /** Fuerza de la traza mnémica (0.0 - 1.0) */
+  /** Strength of the mnemonic trace (0.0 - 1.0) */
   strength: number;
-  /** Identificador de la región cortical asociada */
+  /** Identifier of the associated cortical region */
   associatedRegion: string;
-  /** Número de veces que esta memoria ha sido replayada */
+  /** Number of times this memory has been replayed */
   replayCount: number;
 }
 
 /**
- * Estadísticas del proceso de consolidación.
+ * Statistics of the consolidation process.
  */
 export interface ConsolidationStats {
-  /** Número total de memorias reproducidas */
+  /** Total number of memories replayed */
   memoriesReplayed: number;
-  /** Número de sinapsis fortalecidas durante el replay */
+  /** Number of synapses strengthened during the replay */
   synapsesStrengthened: number;
-  /** Duración total del proceso en ms de simulación */
+  /** Total duration of the process in ms of simulation */
   duration: number;
-  /** Memorias que fueron exitosamente consolidadas */
+  /** Memories that were successfully consolidated */
   consolidatedLabels: string[];
-  /** Memorias que fueron descartadas por debilidad */
+  /** Memories that were discarded due to weakness */
   prunedLabels: string[];
 }
 
 /**
- * Motor de consolidación que implementa el replay hipocampal.
+ * Consolidation engine that implements hippocampal replay.
  *
- * Simula el proceso de consolidación de memorias durante el sueño,
- * reproduciendo patrones hipocampales hacia las cortezas asociadas
- * para fortalecer el almacenamiento a largo plazo.
+ * Simulates the process of memory consolidation during sleep,
+ * replaying hippocampal patterns toward the associated cortices
+ * to strengthen long-term storage.
  */
 export class ConsolidationEngine {
-  /** Número de ciclos de replay por memoria (modela las ondas lentas NREM) */
+  /** Number of replay cycles per memory (models the NREM slow waves) */
   private readonly replayCycles: number;
 
-  /** Umbral mínimo de fuerza para consolidar (memorias más débiles se pierden) */
+  /** Minimum strength threshold to consolidate (weaker memories are lost) */
   private readonly minimumStrength: number;
 
-  /** Efectos de modulación durante el sueño (acetilcolina alta, cortisol bajo) */
+  /** Modulation effects during sleep (high acetylcholine, low cortisol) */
   private readonly sleepModulationEffects: ModulationEffects;
 
   /**
-   * Crea un nuevo motor de consolidación.
+   * Creates a new consolidation engine.
    *
-   * @param replayCycles - Número de veces que cada memoria se reproduce (default: 5)
-   * @param minimumStrength - Fuerza mínima para que una memoria sea consolidada (default: 0.2)
+   * @param replayCycles - Number of times each memory is replayed (default: 5)
+   * @param minimumStrength - Minimum strength for a memory to be consolidated (default: 0.2)
    */
   constructor(replayCycles: number = 5, minimumStrength: number = 0.2) {
     this.replayCycles = replayCycles;
     this.minimumStrength = minimumStrength;
 
-    // Durante el sueño NREM:
-    // - Acetilcolina BAJA (permite replay hipocampo → corteza)
-    // - Cortisol BAJO (no hay estrés)
-    // - Aprendizaje moderado (consolidación, no adquisición)
+    // During NREM sleep:
+    // - LOW acetylcholine (enables hippocampus → cortex replay)
+    // - LOW cortisol (no stress)
+    // - Moderate learning (consolidation, not acquisition)
     this.sleepModulationEffects = {
       learningRateMultiplier: 1.2,
-      thresholdMultiplier: 0.8, // Umbral más bajo para facilitar reactivación
-      attentionGain: 0.5,       // Atención reducida (dormido)
-      consolidationRate: 1.5,   // Consolidación amplificada
-      spikeGainMultiplier: 0.7, // Actividad global reducida
-      socialWeightBoost: 1.0,   // Neutral durante sueño
+      thresholdMultiplier: 0.8, // Lower threshold to facilitate reactivation
+      attentionGain: 0.5,       // Reduced attention (asleep)
+      consolidationRate: 1.5,   // Amplified consolidation
+      spikeGainMultiplier: 0.7, // Reduced global activity
+      socialWeightBoost: 1.0,   // Neutral during sleep
     };
   }
 
   /**
-   * Ejecuta el proceso de consolidación mnémica.
+   * Runs the memory consolidation process.
    *
-   * Biología: Simula múltiples ciclos de sharp-wave ripples durante
-   * el sueño NREM. Cada ripple reproduce un episodio hipocampal
-   * comprimido (~20x) hacia la región cortical correspondiente,
-   * permitiendo que los pesos sinápticos corticales se ajusten
-   * gradualmente para almacenar la memoria a largo plazo.
+   * Biology: Simulates multiple cycles of sharp-wave ripples during
+   * NREM sleep. Each ripple replays a compressed (~20x) hippocampal
+   * episode toward the corresponding cortical region,
+   * allowing the cortical synaptic weights to be adjusted
+   * gradually to store the memory long-term.
    *
-   * @param hippocampalMemories - Memorias del hipocampo a consolidar
-   * @param regions - Mapa de regiones cerebrales disponibles
-   * @param modulationOverride - Efectos de modulación opcionales (override del default de sueño)
-   * @returns Estadísticas del proceso de consolidación
+   * @param hippocampalMemories - Hippocampal memories to consolidate
+   * @param regions - Map of available brain regions
+   * @param modulationOverride - Optional modulation effects (override of the sleep default)
+   * @returns Statistics of the consolidation process
    */
   consolidate(
     hippocampalMemories: ShortTermEntry[],
@@ -123,7 +123,7 @@ export class ConsolidationEngine {
     const consolidatedLabels: string[] = [];
     const prunedLabels: string[] = [];
 
-    // Ordenar memorias por fuerza descendente (las más fuertes primero)
+    // Sort memories by descending strength (strongest first)
     const sortedMemories = [...hippocampalMemories].sort(
       (a, b) => b.strength - a.strength
     );
@@ -131,38 +131,38 @@ export class ConsolidationEngine {
     let memoriesReplayed = 0;
 
     for (const memory of sortedMemories) {
-      // Podar memorias demasiado débiles
+      // Prune memories that are too weak
       if (memory.strength < this.minimumStrength) {
         prunedLabels.push(memory.label);
         continue;
       }
 
-      // Encontrar la región cortical asociada
+      // Find the associated cortical region
       const targetRegion = regions.get(memory.associatedRegion);
       if (!targetRegion) {
-        // Región no encontrada, saltar
+        // Region not found, skip
         continue;
       }
 
-      // Verificar que el patrón sea compatible con la región
+      // Verify that the pattern is compatible with the region
       if (memory.pattern.length !== targetRegion.inputs) {
         continue;
       }
 
-      // Replay cíclico: reproducir el patrón múltiples veces
+      // Cyclic replay: replay the pattern multiple times
       for (let cycle = 0; cycle < this.replayCycles; cycle++) {
-        // Alimentar el patrón al buffer sensorial de la región
+        // Feed the pattern into the region's sensory buffer
         targetRegion.feedInput(memory.pattern);
 
-        // Ejecutar un paso de procesamiento con modulación de sueño
+        // Run one processing step with sleep modulation
         const activity = targetRegion.step(1, effects);
 
-        // Contar sinapsis fortalecidas (neuronas que dispararon = synapses activas)
+        // Count strengthened synapses (neurons that fired = active synapses)
         synapsesStrengthened += activity.activeNeurons.length;
         memoriesReplayed++;
       }
 
-      // Incrementar contador de replay de la memoria
+      // Increment the memory's replay counter
       memory.replayCount += this.replayCycles;
       consolidatedLabels.push(memory.label);
     }
@@ -179,32 +179,32 @@ export class ConsolidationEngine {
   }
 
   /**
-   * Ejecuta un ciclo de consolidación selectiva.
+   * Runs a selective consolidation cycle.
    *
-   * A diferencia de consolidate(), este método consolida solo
-   * memorias asociadas a una emoción fuerte (strength > umbral alto),
-   * modelando cómo las memorias emocionales se consolidan preferentemente.
+   * Unlike consolidate(), this method consolidates only
+   * memories associated with a strong emotion (strength > high threshold),
+   * modeling how emotional memories are preferentially consolidated.
    *
-   * @param hippocampalMemories - Memorias del hipocampo
-   * @param regions - Regiones cerebrales
-   * @param emotionalThreshold - Umbral de fuerza para consolidación selectiva (default: 0.7)
-   * @returns Estadísticas del proceso
+   * @param hippocampalMemories - Hippocampal memories
+   * @param regions - Brain regions
+   * @param emotionalThreshold - Strength threshold for selective consolidation (default: 0.7)
+   * @returns Statistics of the process
    */
   consolidateEmotional(
     hippocampalMemories: ShortTermEntry[],
     regions: Map<string, BrainRegion>,
     emotionalThreshold: number = 0.7
   ): ConsolidationStats {
-    // Filtrar solo memorias con fuerza emocional alta
+    // Filter only memories with high emotional strength
     const emotionalMemories = hippocampalMemories.filter(
       m => m.strength >= emotionalThreshold
     );
 
-    // Usar más ciclos de replay para memorias emocionales (la amígdala potencia)
+    // Use more replay cycles for emotional memories (the amygdala potentiates)
     const emotionalEffects: ModulationEffects = {
       ...this.sleepModulationEffects,
-      learningRateMultiplier: 1.8, // La amígdala amplifica la plasticidad
-      consolidationRate: 2.0,       // Consolidación aún más fuerte
+      learningRateMultiplier: 1.8, // The amygdala amplifies plasticity
+      consolidationRate: 2.0,       // Even stronger consolidation
     };
 
     return this.consolidate(emotionalMemories, regions, emotionalEffects);

@@ -1,33 +1,33 @@
 /**
- * ENCODER DE TEXTO — Codificación lingüística a spikes
+ * TEXT ENCODER — Linguistic encoding to spikes
  * =====================================================
- * Transforma texto (input del usuario) en trenes de spikes
- * para el área de Wernicke (comprensión lingüística).
- * 
+ * Transforms text (user input) into spike trains
+ * for Wernicke's area (linguistic comprehension).
+ *
  * Pipeline:
- * 1. Tokenización por caracteres/palabras
- * 2. Codificación posicional (posición en la secuencia)
- * 3. Proyección aleatoria sparse (hash → patrón distribuido)
- * 4. Rate coding a spikes
- * 
- * El enfoque de "random projection" está bien fundamentado en neurociencia
- * computacional: la corteza olfatoria del insecto usa exactamente este
- * esquema para codificar olores (Caron et al., Nature 2013).
+ * 1. Tokenization by characters/words
+ * 2. Positional encoding (position in the sequence)
+ * 3. Sparse random projection (hash → distributed pattern)
+ * 4. Rate coding to spikes
+ *
+ * The "random projection" approach is well grounded in computational
+ * neuroscience: the insect olfactory cortex uses exactly this
+ * scheme to encode odors (Caron et al., Nature 2013).
  */
 
 import { encodeSpikeVector } from '../core/snn/spike-train.js';
 
-/** Configuración del encoder de texto */
+/** Text encoder configuration */
 export interface TextEncoderConfig {
-  /** Tamaño del vector de salida (dimensionalidad de la representación) */
+  /** Output vector size (dimensionality of the representation) */
   vectorSize: number;
-  /** Sparsity del patrón por token (~5% del vector activo por token) */
+  /** Pattern sparsity per token (~5% of the vector active per token) */
   tokenSparsity: number;
-  /** Número máximo de tokens a procesar por input */
+  /** Maximum number of tokens to process per input */
   maxTokens: number;
-  /** Si usar codificación posicional */
+  /** Whether to use positional encoding */
   positionalEncoding: boolean;
-  /** Método de tokenización */
+  /** Tokenization method */
   tokenization: 'character' | 'word' | 'subword';
 }
 
@@ -40,16 +40,16 @@ const DEFAULT_TEXT_CONFIG: TextEncoderConfig = {
 };
 
 /**
- * Encoder de Texto — Simula el procesamiento lingüístico temprano.
- * Convierte texto en patrones de spikes distribuidos.
+ * Text Encoder — Simulates early linguistic processing.
+ * Converts text into distributed spike patterns.
  */
 export class TextEncoder {
   private config: TextEncoderConfig;
-  /** Tamaño del output */
+  /** Output size */
   public outputSize: number;
-  /** Cache de patrones por token (vocabulario aprendido) */
+  /** Cache of patterns per token (learned vocabulary) */
   private tokenCache: Map<string, Float32Array> = new Map();
-  /** Seed base para hashing determinista */
+  /** Base seed for deterministic hashing */
   private hashSeed: number;
 
   constructor(config: Partial<TextEncoderConfig> = {}) {
@@ -59,45 +59,45 @@ export class TextEncoder {
   }
 
   /**
-   * Codifica un texto completo como vector de spikes.
-   * 
-   * @param text - Texto a codificar
-   * @param dt - Paso temporal
-   * @returns Vector de spikes
+   * Encodes a full text as a spike vector.
+   *
+   * @param text - Text to encode
+   * @param dt - Time step
+   * @returns Spike vector
    */
   encode(text: string, dt: number = 1.0): Float32Array {
-    // 1. Tokenizar
+    // 1. Tokenize
     const tokens = this.tokenize(text);
-    
-    // 2. Generar representación distribuida
+
+    // 2. Generate distributed representation
     const representation = new Float32Array(this.config.vectorSize);
-    
+
     for (let i = 0; i < Math.min(tokens.length, this.config.maxTokens); i++) {
       const token = tokens[i];
-      
-      // Obtener o generar patrón para este token
+
+      // Get or generate a pattern for this token
       const tokenPattern = this.getTokenPattern(token);
-      
-      // Añadir codificación posicional si está habilitada
-      const positionWeight = this.config.positionalEncoding 
+
+      // Add positional encoding if enabled
+      const positionWeight = this.config.positionalEncoding
         ? this.getPositionWeight(i, tokens.length)
         : 1.0;
-      
-      // Acumular en la representación (superposición de patrones)
+
+      // Accumulate into the representation (superposition of patterns)
       for (let j = 0; j < this.config.vectorSize; j++) {
         representation[j] += tokenPattern[j] * positionWeight;
       }
     }
-    
-    // 3. Normalizar a rango 0-1
+
+    // 3. Normalize to range 0-1
     this.normalize(representation);
-    
-    // 4. Convertir a spikes
+
+    // 4. Convert to spikes
     return encodeSpikeVector(representation, dt, 120);
   }
 
   /**
-   * Tokeniza el texto según el método configurado.
+   * Tokenizes the text according to the configured method.
    */
   private tokenize(text: string): string[] {
     const cleaned = text.toLowerCase().trim();
@@ -107,11 +107,11 @@ export class TextEncoder {
         return cleaned.split('');
       
       case 'word':
-        // Tokenización por palabras con preservación de puntuación
+        // Word tokenization with punctuation preservation
         return cleaned.split(/\s+/).filter(t => t.length > 0);
-      
+
       case 'subword':
-        // Tokenización simple por sílabas/bigramas
+        // Simple tokenization by syllables/bigrams
         return this.subwordTokenize(cleaned);
       
       default:
@@ -120,8 +120,8 @@ export class TextEncoder {
   }
 
   /**
-   * Tokenización por subpalabras (bigramas de caracteres).
-   * Aproximación simple a BPE sin necesidad de vocabulario preentrenado.
+   * Subword tokenization (character bigrams).
+   * A simple approximation to BPE without needing a pretrained vocabulary.
    */
   private subwordTokenize(text: string): string[] {
     const tokens: string[] = [];
@@ -131,11 +131,11 @@ export class TextEncoder {
       if (word.length <= 3) {
         tokens.push(word);
       } else {
-        // Bigramas solapados
+        // Overlapping bigrams
         for (let i = 0; i < word.length - 1; i++) {
           tokens.push(word.substring(i, i + 2));
         }
-        // También añadir la palabra completa (para reconocimiento directo)
+        // Also add the full word (for direct recognition)
         tokens.push(word);
       }
     }
@@ -144,59 +144,59 @@ export class TextEncoder {
   }
 
   /**
-   * Genera o recupera del cache el patrón de activación para un token.
-   * Usa hashing determinista para generar un patrón sparse reproducible.
-   * 
-   * Inspirado en la representación distribuida sparse (SDR) del neocórtex:
-   * cada concepto se representa por un subconjunto único de neuronas activas.
+   * Generates or retrieves from the cache the activation pattern for a token.
+   * Uses deterministic hashing to generate a reproducible sparse pattern.
+   *
+   * Inspired by the sparse distributed representation (SDR) of the neocortex:
+   * each concept is represented by a unique subset of active neurons.
    */
   private getTokenPattern(token: string): Float32Array {
-    // Verificar cache
+    // Check cache
     if (this.tokenCache.has(token)) {
       return this.tokenCache.get(token)!;
     }
-    
+
     const pattern = new Float32Array(this.config.vectorSize);
     const numActive = Math.floor(this.config.vectorSize * this.config.tokenSparsity);
-    
-    // Hash determinista del token → posiciones activas
+
+    // Deterministic hash of the token → active positions
     let seed = this.hashString(token);
-    
+
     for (let a = 0; a < numActive; a++) {
       seed = this.nextRandom(seed);
       const idx = Math.abs(seed) % this.config.vectorSize;
-      
-      // Activación con variación (no todas las posiciones igualmente activas)
+
+      // Activation with variation (not all positions equally active)
       seed = this.nextRandom(seed);
       const strength = 0.5 + 0.5 * (Math.abs(seed) % 100) / 100;
-      
+
       pattern[idx] = Math.min(1.0, pattern[idx] + strength);
     }
-    
-    // Cachear el patrón
+
+    // Cache the pattern
     this.tokenCache.set(token, pattern);
-    
+
     return pattern;
   }
 
   /**
-   * Calcula un peso posicional para el token.
-   * Tokens al final del input son ligeramente más relevantes
-   * (efecto de recencia en la memoria de trabajo).
+   * Computes a positional weight for the token.
+   * Tokens at the end of the input are slightly more relevant
+   * (recency effect in working memory).
    */
   private getPositionWeight(position: number, totalTokens: number): number {
-    // Peso base + recencia (tokens recientes tienen más peso)
+    // Base weight + recency (recent tokens carry more weight)
     const recency = 0.7 + 0.3 * (position / Math.max(1, totalTokens - 1));
-    
-    // Modulación sinusoidal (como en Transformers, pero simplificada)
+
+    // Sinusoidal modulation (like in Transformers, but simplified)
     const freq = position / 10;
     const sinMod = 0.9 + 0.1 * Math.sin(freq);
-    
+
     return recency * sinMod;
   }
 
   /**
-   * Hash determinista de string a número.
+   * Deterministic hash of a string to a number.
    */
   private hashString(str: string): number {
     let hash = this.hashSeed;
@@ -207,14 +207,14 @@ export class TextEncoder {
   }
 
   /**
-   * Generador pseudo-aleatorio determinista (LCG).
+   * Deterministic pseudo-random generator (LCG).
    */
   private nextRandom(seed: number): number {
     return (seed * 1103515245 + 12345) & 0x7fffffff;
   }
 
   /**
-   * Normaliza un vector al rango 0-1.
+   * Normalizes a vector to the range 0-1.
    */
   private normalize(vec: Float32Array): void {
     let max = 0;
@@ -228,12 +228,12 @@ export class TextEncoder {
     }
   }
 
-  /** Tamaño del vocabulario en cache */
+  /** Size of the cached vocabulary */
   get vocabularySize(): number {
     return this.tokenCache.size;
   }
 
-  /** Limpia el cache de tokens */
+  /** Clears the token cache */
   reset(): void {
     this.tokenCache.clear();
   }

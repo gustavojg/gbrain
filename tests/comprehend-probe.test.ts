@@ -1,8 +1,8 @@
 /**
- * SONDA: ¿comprende Wernicke el texto LIMPIO (sin dilución del cerebro)?
- * Si findClosest sobre la codificación directa devuelve las palabras reales,
- * el problema es solo de flujo de señal (no de comprensión) y la Opción 2 =
- * llevar esa señal limpia a Broca.
+ * PROBE: does Wernicke understand the CLEAN text (without the brain's dilution)?
+ * If findClosest over the direct encoding returns the real words,
+ * the problem is purely signal flow (not comprehension) and Option 2 =
+ * carry that clean signal to Broca.
  */
 
 import { WernickeArea } from '../src/regions/broca-wernicke/wernicke.js';
@@ -10,18 +10,18 @@ import { BrocaArea } from '../src/regions/broca-wernicke/broca.js';
 import { Lexicon } from '../src/regions/broca-wernicke/lexicon.js';
 import { seedSpanishLexicon, encodeSentenceToLexiconSpace } from '../src/regions/broca-wernicke/spanish-lexicon.js';
 
-const DIM = 1000; // mismo tamaño que usa el cerebro real
+const DIM = 1000; // same size used by the real brain
 const lexicon = new Lexicon(DIM);
 seedSpanishLexicon(lexicon);
 console.log(`Léxico: ${lexicon.size} palabras, dim=${lexicon.dimensions}`);
 
 const wernicke = new WernickeArea(lexicon, DIM, DIM);
 const broca = new BrocaArea(lexicon, DIM, DIM);
-// Codificador en el espacio del léxico (el que ahora usa brain.read()).
+// Encoder in the lexicon space (the one brain.read() now uses).
 const enc = { encode: (t: string, _dt: number) => encodeSentenceToLexiconSpace(t, DIM) };
 
-// Comparar la codificación del TextEncoder con el patrón del léxico para la
-// misma palabra (¿están en el mismo espacio representacional?).
+// Compare the TextEncoder encoding with the lexicon pattern for the
+// same word (are they in the same representational space?).
 function cosine(a: Float32Array, b: Float32Array): number {
   let dot = 0, na = 0, nb = 0;
   for (let i = 0; i < a.length; i++) { dot += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i]; }

@@ -1,8 +1,8 @@
 /**
- * Verificación de la métrica de actividad honesta (`drive`).
- * Antes: firingRate era constante (= sparsity) con k-WTA → barras congeladas.
- * Ahora: `drive` (EMA de señal de entrada) debe estar ~0 en reposo y SUBIR
- * en las regiones que reciben la cascada al leer un texto.
+ * Verification of the honest activity metric (`drive`).
+ * Before: firingRate was constant (= sparsity) with k-WTA → frozen bars.
+ * Now: `drive` (EMA of the input signal) should be ~0 at rest and RISE
+ * in the regions that receive the cascade when reading a text.
  */
 
 import { DigitalBrain } from '../src/brain.js';
@@ -25,7 +25,7 @@ console.log('── Métrica de actividad honesta (drive) ──\n');
 
 const brain = new DigitalBrain();
 
-// 1. Reposo: dejar correr varios ticks sin entrada.
+// 1. Rest: let several ticks run with no input.
 for (let i = 0; i < 60; i++) brain.tick();
 const idleSnap = snapshot(brain);
 console.log('REPOSO (drive / firingRate / novelty):');
@@ -36,7 +36,7 @@ const idleNov: Record<string, number> = {};
 for (const [id, v] of Object.entries(idleSnap)) idleNov[id] = v.n;
 const idle = meanDrive(brain);
 
-// 2. Inyectar texto y capturar el PICO de drive y firingRate por región.
+// 2. Inject text and capture the PEAK of drive and firingRate per region.
 const active: Record<string, number> = {};
 const activeF: Record<string, number> = {};
 const activeN: Record<string, number> = {};
@@ -72,10 +72,10 @@ for (const id of Object.keys(active)) {
   console.log(`${id.padEnd(16)}  ${pct(before).padStart(6)} → ${pct(after).padStart(6)}  ${arrow}`);
 }
 
-// Comprobación del arreglo principal (this.spikes consistente en step()):
-// el panel ya NO está congelado en "0/0/0/0/0/14/14/14". Verificamos que
-//  (a) MÁS de 3 regiones reportan output real (antes solo PFC/Wernicke/Broca);
-//  (b) los valores de firingRate son DIFERENCIADOS entre regiones.
+// Check of the main fix (this.spikes consistent in step()):
+// the panel is no longer frozen at "0/0/0/0/0/14/14/14". We verify that
+//  (a) MORE than 3 regions report real output (previously only PFC/Wernicke/Broca);
+//  (b) the firingRate values are DIFFERENTIATED across regions.
 const firing = snapshot(brain);
 const nonZero = Object.values(firing).filter((v) => v.f > 0.001).length;
 const distinctF = new Set(Object.values(firing).map((v) => v.f.toFixed(3))).size;

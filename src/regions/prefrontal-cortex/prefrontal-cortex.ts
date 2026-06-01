@@ -1,46 +1,46 @@
 /**
- * CORTEZA PREFRONTAL — Centro Ejecutivo del Cerebro Digital
+ * PREFRONTAL CORTEX — Executive Center of the Digital Brain
  * ==========================================================
- * Modela la corteza prefrontal dorsolateral (dlPFC) y ventromedial (vmPFC),
- * centro de las funciones ejecutivas superiores del cerebro humano.
+ * Models the dorsolateral (dlPFC) and ventromedial (vmPFC) prefrontal cortex,
+ * the center of the higher executive functions of the human brain.
  *
- * Base biológica:
- *   La corteza prefrontal ocupa ~30% de la neocorteza humana y es la última
- *   región en madurar (~25 años). Cumple funciones ejecutivas críticas:
+ * Biological basis:
+ *   The prefrontal cortex occupies ~30% of the human neocortex and is the last
+ *   region to mature (~25 years). It performs critical executive functions:
  *
- *   1. **Memoria de trabajo** (dlPFC): Mantiene información "online" para
- *      manipulación activa. Limitada a ~7±2 ítems (Miller, 1956) por la
- *      capacidad de mantener patrones de disparo sostenido en circuitos
- *      recurrentes. Cada "slot" es una población neural que mantiene un
- *      patrón de activación persistente mediante excitación recurrente.
+ *   1. **Working memory** (dlPFC): Keeps information "online" for active
+ *      manipulation. Limited to ~7±2 items (Miller, 1956) by the
+ *      capacity to maintain sustained firing patterns in recurrent
+ *      circuits. Each "slot" is a neural population that maintains a
+ *      persistent activation pattern through recurrent excitation.
  *
- *   2. **Integración multimodal**: Recibe aferencias de TODAS las áreas
- *      corticales (visual, auditiva, somatosensorial, límbica) y del
- *      tálamo. Es la única región con conectividad tan amplia, lo que le
- *      permite crear representaciones unificadas del estado global.
+ *   2. **Multimodal integration**: Receives afferents from ALL cortical
+ *      areas (visual, auditory, somatosensory, limbic) and from the
+ *      thalamus. It is the only region with such broad connectivity, which
+ *      allows it to create unified representations of the global state.
  *
- *   3. **Control top-down**: Envía señales descendentes que modulan el
- *      procesamiento en cortezas sensoriales y tálamo, implementando
- *      atención selectiva y supresión de distractores (Desimone & Duncan, 1995).
+ *   3. **Top-down control**: Sends descending signals that modulate
+ *      processing in sensory cortices and the thalamus, implementing
+ *      selective attention and distractor suppression (Desimone & Duncan, 1995).
  *
- *   4. **Toma de decisiones**: Evaluación de opciones ponderada por
- *      información emocional (vmPFC, marcadores somáticos de Damasio) y
- *      recompensa esperada (señales dopaminérgicas del VTA).
+ *   4. **Decision making**: Evaluation of options weighted by
+ *      emotional information (vmPFC, Damasio's somatic markers) and
+ *      expected reward (dopaminergic signals from the VTA).
  *
- * Implementación:
- *   - Memoria de trabajo como array de slots con patrón, etiqueta, edad y prioridad
- *   - Integración por superposición ponderada de inputs de múltiples regiones
- *   - Señales top-down como vectores de modulación atencional por región
- *   - Red SNN interna con k-WTA para selección competitiva
+ * Implementation:
+ *   - Working memory as an array of slots with pattern, label, age and priority
+ *   - Integration via weighted superposition of inputs from multiple regions
+ *   - Top-down signals as per-region attentional modulation vectors
+ *   - Internal SNN with k-WTA for competitive selection
  */
 
 import { BrainRegion } from '../../core/brain-region.js';
 import type { ModulationEffects } from '../../core/neuromodulators/modulator-system.js';
 
 /**
- * Piso de activación para el k-WTA. Los potenciales son sumas de pesos
- * adimensionales (~0 en reposo), no mV. En reposo (sin drive cortical) la
- * región queda a 0%; sólo dispara cuando hay señal real por encima del piso.
+ * Activation floor for the k-WTA. Potentials are sums of dimensionless
+ * weights (~0 at rest), not mV. At rest (no cortical drive) the
+ * region stays at 0%; it only fires when there is a real signal above the floor.
  */
 const ACTIVATION_FLOOR = 1e-3;
 
@@ -49,51 +49,51 @@ const ACTIVATION_FLOOR = 1e-3;
 // ==================================================================
 
 /**
- * Slot de memoria de trabajo.
+ * Working memory slot.
  *
- * Base biológica:
- *   Cada slot corresponde a un ensamble neural en la dlPFC que mantiene
- *   un patrón de disparo sostenido mediante excitación recurrente.
- *   La "edad" modela el decaimiento natural de la activación persistente
- *   en ausencia de reactivación (decay de la memoria de trabajo).
+ * Biological basis:
+ *   Each slot corresponds to a neural assembly in the dlPFC that maintains
+ *   a sustained firing pattern through recurrent excitation.
+ *   The "age" models the natural decay of persistent activation
+ *   in the absence of reactivation (working memory decay).
  */
 export interface WorkingMemorySlot {
-  /** Patrón de activación neural mantenido activamente */
+  /** Neural activation pattern actively maintained */
   pattern: Float32Array;
-  /** Etiqueta semántica del contenido (para debugging/introspección) */
+  /** Semantic label of the content (for debugging/introspection) */
   label: string;
-  /** Edad del slot en pasos de simulación (decae con el tiempo) */
+  /** Age of the slot in simulation steps (decays over time) */
   age: number;
-  /** Prioridad atencional (0.0–1.0). Determina resistencia a la evicción */
+  /** Attentional priority (0.0–1.0). Determines resistance to eviction */
   priority: number;
 }
 
 /**
- * Señal de control top-down generada por la corteza prefrontal.
+ * Top-down control signal generated by the prefrontal cortex.
  *
- * Base biológica:
- *   Las proyecciones prefrontales descendentes modulan la ganancia de
- *   neuronas en cortezas sensoriales (atención basada en características)
- *   y en el tálamo (filtro atencional, modelo del foco atencional).
+ * Biological basis:
+ *   Descending prefrontal projections modulate the gain of
+ *   neurons in sensory cortices (feature-based attention)
+ *   and in the thalamus (attentional filter, attentional spotlight model).
  */
 export interface TopDownSignal {
-  /** Identificador de la región objetivo */
+  /** Identifier of the target region */
   targetRegion: string;
-  /** Vector de modulación atencional para la región objetivo */
+  /** Attentional modulation vector for the target region */
   attentionMask: Float32Array;
-  /** Intensidad global de la señal (0.0–1.0) */
+  /** Global intensity of the signal (0.0–1.0) */
   gain: number;
 }
 
 /**
- * Resultado del procesamiento ejecutivo de un paso de simulación.
+ * Result of the executive processing of a simulation step.
  */
 export interface ExecutiveOutput {
-  /** Spikes de salida de la red SNN prefrontal */
+  /** Output spikes of the prefrontal SNN */
   outputSpikes: Float32Array;
-  /** Señales top-down generadas para otras regiones */
+  /** Top-down signals generated for other regions */
   topDownSignals: TopDownSignal[];
-  /** Contenido actual de la memoria de trabajo */
+  /** Current content of the working memory */
   workingMemorySnapshot: ReadonlyArray<Readonly<{ label: string; priority: number; age: number }>>;
 }
 
@@ -102,60 +102,60 @@ export interface ExecutiveOutput {
 // ==================================================================
 
 /**
- * Corteza Prefrontal — Centro ejecutivo del cerebro digital.
+ * Prefrontal Cortex — Executive center of the digital brain.
  *
- * Integra información de todas las regiones, mantiene representaciones
- * en memoria de trabajo (7±2 slots), y genera señales de control top-down
- * para modular el procesamiento en cortezas sensoriales y tálamo.
+ * Integrates information from all regions, maintains representations
+ * in working memory (7±2 slots), and generates top-down control signals
+ * to modulate processing in sensory cortices and the thalamus.
  *
- * La red SNN interna usa competencia k-WTA (k-Winners-Take-All) para
- * seleccionar las representaciones más relevantes y suprimir distractores,
- * modelando la inhibición lateral mediada por interneuronas GABAérgicas
- * de la capa III prefrontal.
+ * The internal SNN uses k-WTA (k-Winners-Take-All) competition to
+ * select the most relevant representations and suppress distractors,
+ * modeling the lateral inhibition mediated by GABAergic interneurons
+ * of prefrontal layer III.
  */
 export class PrefrontalCortex extends BrainRegion {
   /**
-   * Slots de memoria de trabajo.
+   * Working memory slots.
    *
-   * Biología: Circuitos recurrentes en la dlPFC mantienen patrones
-   * de disparo sostenido. La capacidad está limitada por la competencia
-   * entre ensambles neurales (~7±2 ítems, Miller 1956).
+   * Biology: Recurrent circuits in the dlPFC maintain sustained
+   * firing patterns. The capacity is limited by the competition
+   * between neural assemblies (~7±2 items, Miller 1956).
    */
   private workingMemory: WorkingMemorySlot[] = [];
 
   /**
-   * Capacidad máxima de la memoria de trabajo.
-   * Basada en la ley de Miller (7±2): el número mágico de ítems
-   * que la memoria de trabajo humana puede mantener simultáneamente.
+   * Maximum capacity of the working memory.
+   * Based on Miller's law (7±2): the magic number of items
+   * that human working memory can hold simultaneously.
    */
   private readonly maxSlots: number = 7;
 
   /**
-   * Tasa de decaimiento de la memoria de trabajo (por paso de simulación).
+   * Decay rate of the working memory (per simulation step).
    *
-   * Biología: Sin reactivación, la actividad persistente en la dlPFC
-   * decae en ~15-30 segundos (Peterson & Peterson, 1959).
+   * Biology: Without reactivation, persistent activity in the dlPFC
+   * decays in ~15-30 seconds (Peterson & Peterson, 1959).
    */
   private readonly decayRate: number = 0.02;
 
   /**
-   * Última representación integrada de todos los inputs.
-   * Se mantiene entre pasos para modelar la persistencia de la
-   * representación ejecutiva.
+   * Last integrated representation of all inputs.
+   * It is kept between steps to model the persistence of the
+   * executive representation.
    */
   private integratedRepresentation: Float32Array;
 
   /**
-   * Señales top-down generadas en el último paso.
+   * Top-down signals generated in the last step.
    */
   private lastTopDownSignals: TopDownSignal[] = [];
 
   /**
-   * Crea la Corteza Prefrontal del cerebro digital.
+   * Creates the Prefrontal Cortex of the digital brain.
    *
-   * Biología: La corteza prefrontal humana contiene ~300 millones de neuronas.
-   * Modelamos 15.000 neuronas con 10.000 entradas, capturando la alta
-   * convergencia de inputs que caracteriza a esta región.
+   * Biology: The human prefrontal cortex contains ~300 million neurons.
+   * We model 15,000 neurons with 10,000 inputs, capturing the high
+   * convergence of inputs that characterizes this region.
    */
   constructor(neuronCount: number = 15000, inputCount: number = 10000) {
     super(
@@ -168,37 +168,37 @@ export class PrefrontalCortex extends BrainRegion {
   }
 
   // ----------------------------------------------------------------
-  // Memoria de Trabajo
+  // Working Memory
   // ----------------------------------------------------------------
 
   /**
-   * Atiende a un patrón, ingresándolo en la memoria de trabajo.
+   * Attends to a pattern, entering it into working memory.
    *
-   * Base biológica:
-   *   Al atender a un estímulo, las neuronas prefrontales forman un
-   *   ensamble de disparo persistente que mantiene la representación
-   *   "en línea". Si la memoria está llena, se evicta el ítem con
-   *   menor prioridad (competencia entre ensambles por recursos neurales
-   *   limitados, modelo de capacidad de Cowan, 2001).
+   * Biological basis:
+   *   When attending to a stimulus, prefrontal neurons form a
+   *   persistent firing assembly that keeps the representation
+   *   "online". If memory is full, the item with the
+   *   lowest priority is evicted (competition between assemblies for limited
+   *   neural resources, Cowan's capacity model, 2001).
    *
-   * @param pattern - Patrón neural a mantener en memoria de trabajo
-   * @param label - Etiqueta semántica del patrón
-   * @param priority - Prioridad atencional (0.0–1.0)
+   * @param pattern - Neural pattern to hold in working memory
+   * @param label - Semantic label of the pattern
+   * @param priority - Attentional priority (0.0–1.0)
    */
   attendTo(pattern: Float32Array, label: string, priority: number): void {
     const clampedPriority = Math.max(0, Math.min(1, priority));
 
-    // Si ya existe un slot con la misma etiqueta, actualizar en lugar de duplicar
+    // If a slot with the same label already exists, update instead of duplicating
     const existingIdx = this.workingMemory.findIndex(s => s.label === label);
     if (existingIdx >= 0) {
       const slot = this.workingMemory[existingIdx];
       slot.pattern = new Float32Array(pattern);
       slot.priority = clampedPriority;
-      slot.age = 0; // Reactivar refresca el slot
+      slot.age = 0; // Reactivating refreshes the slot
       return;
     }
 
-    // Si la memoria está llena, evictar el slot con menor prioridad
+    // If memory is full, evict the slot with the lowest priority
     if (this.workingMemory.length >= this.maxSlots) {
       this.evictLowestPriority();
     }
@@ -212,11 +212,11 @@ export class PrefrontalCortex extends BrainRegion {
   }
 
   /**
-   * Evicta el slot con menor prioridad de la memoria de trabajo.
+   * Evicts the slot with the lowest priority from working memory.
    *
-   * Biología: Cuando los recursos atencionales se saturan, los ítems
-   * menos relevantes pierden su activación sostenida y son desplazados
-   * por nueva información (interferencia proactiva/retroactiva).
+   * Biology: When attentional resources are saturated, the least
+   * relevant items lose their sustained activation and are displaced
+   * by new information (proactive/retroactive interference).
    */
   private evictLowestPriority(): void {
     if (this.workingMemory.length === 0) return;
@@ -225,7 +225,7 @@ export class PrefrontalCortex extends BrainRegion {
     let minScore = Infinity;
 
     for (let i = 0; i < this.workingMemory.length; i++) {
-      // Puntuación combinada: prioridad baja + edad alta → más probable evicción
+      // Combined score: low priority + high age → more likely eviction
       const slot = this.workingMemory[i];
       const score = slot.priority - slot.age * this.decayRate;
       if (score < minScore) {
@@ -238,51 +238,51 @@ export class PrefrontalCortex extends BrainRegion {
   }
 
   /**
-   * Envejece todos los slots de la memoria de trabajo y elimina los decaídos.
+   * Ages all working memory slots and removes the decayed ones.
    *
-   * Biología: Sin rehearsal (repaso activo), la actividad persistente
-   * decae exponencialmente. Los ítems cuya activación cae por debajo
-   * de un umbral dejan de ser accesibles conscientemente.
+   * Biology: Without rehearsal (active review), persistent activity
+   * decays exponentially. Items whose activation falls below
+   * a threshold stop being consciously accessible.
    */
   private ageWorkingMemory(): void {
     for (const slot of this.workingMemory) {
       slot.age++;
-      // Reducir prioridad gradualmente con la edad
+      // Gradually reduce priority with age
       slot.priority *= (1 - this.decayRate);
     }
 
-    // Eliminar slots cuya prioridad ha decaído por debajo de un umbral mínimo
+    // Remove slots whose priority has decayed below a minimum threshold
     this.workingMemory = this.workingMemory.filter(s => s.priority > 0.01);
   }
 
   /**
-   * Retorna el contenido actual de la memoria de trabajo.
+   * Returns the current content of the working memory.
    *
-   * @returns Copia de solo lectura de los slots actuales
+   * @returns Read-only copy of the current slots
    */
   getWorkingMemory(): ReadonlyArray<Readonly<WorkingMemorySlot>> {
     return this.workingMemory;
   }
 
   // ----------------------------------------------------------------
-  // Integración Multimodal
+  // Multimodal Integration
   // ----------------------------------------------------------------
 
   /**
-   * Integra señales de múltiples regiones cerebrales en una representación unificada.
+   * Integrates signals from multiple brain regions into a unified representation.
    *
-   * Base biológica:
-   *   La corteza prefrontal recibe proyecciones convergentes de todas las
-   *   áreas corticales sensoriales, motoras, límbicas y del tálamo.
-   *   La integración ocurre mediante superposición ponderada de patrones
-   *   de activación, donde el peso refleja la relevancia atencional actual
-   *   de cada fuente (atención biased competition, Desimone & Duncan 1995).
+   * Biological basis:
+   *   The prefrontal cortex receives convergent projections from all
+   *   sensory, motor, limbic cortical areas and from the thalamus.
+   *   Integration occurs through weighted superposition of activation
+   *   patterns, where the weight reflects the current attentional relevance
+   *   of each source (biased competition attention, Desimone & Duncan 1995).
    *
-   *   El resultado es una representación "global workspace" (Baars, 1988)
-   *   que captura el estado integrado de la cognición del sistema.
+   *   The result is a "global workspace" representation (Baars, 1988)
+   *   that captures the integrated state of the system's cognition.
    *
-   * @param inputs - Mapa de regionId → spikes de salida de cada región
-   * @returns Representación integrada como Float32Array
+   * @param inputs - Map of regionId → output spikes of each region
+   * @returns Integrated representation as a Float32Array
    */
   integrate(inputs: Map<string, Float32Array>): Float32Array {
     const integrated = new Float32Array(this.neuronCount);
@@ -292,8 +292,8 @@ export class PrefrontalCortex extends BrainRegion {
     const invCount = 1.0 / inputs.size;
 
     for (const [, regionSpikes] of inputs) {
-      // Proyectar los spikes de cada región al espacio prefrontal
-      // usando los pesos sinápticos como matriz de proyección
+      // Project each region's spikes into the prefrontal space
+      // using the synaptic weights as a projection matrix
       const projectionLen = Math.min(regionSpikes.length, this.inputCount);
 
       for (let n = 0; n < this.neuronCount; n++) {
@@ -312,36 +312,36 @@ export class PrefrontalCortex extends BrainRegion {
   }
 
   // ----------------------------------------------------------------
-  // Señales Top-Down
+  // Top-Down Signals
   // ----------------------------------------------------------------
 
   /**
-   * Genera una señal de control top-down para una región objetivo.
+   * Generates a top-down control signal for a target region.
    *
-   * Base biológica:
-   *   Las proyecciones descendentes de la PFC modulan la ganancia de
-   *   neuronas en las cortezas sensoriales y el tálamo. Esta modulación
-   *   implementa la atención selectiva: amplifica señales relevantes y
-   *   suprime distractores (modelo de sesgo atencional de Desimone & Duncan).
+   * Biological basis:
+   *   The PFC's descending projections modulate the gain of
+   *   neurons in the sensory cortices and the thalamus. This modulation
+   *   implements selective attention: it amplifies relevant signals and
+   *   suppresses distractors (Desimone & Duncan's attentional bias model).
    *
-   *   El mecanismo biológico involucra:
-   *   - Proyecciones glutamatérgicas de capas II/III prefrontales
-   *   - A neuronas piramidales e interneuronas en corteza objetivo
-   *   - Resultando en aumento de ganancia (multiplicativa) para
-   *     estímulos atendidos
+   *   The biological mechanism involves:
+   *   - Glutamatergic projections from prefrontal layers II/III
+   *   - To pyramidal neurons and interneurons in the target cortex
+   *   - Resulting in (multiplicative) gain increase for
+   *     attended stimuli
    *
-   * @param targetRegion - Identificador de la región a modular
-   * @returns Señal top-down con máscara atencional y ganancia
+   * @param targetRegion - Identifier of the region to modulate
+   * @returns Top-down signal with attentional mask and gain
    */
   generateTopDownSignal(targetRegion: string): TopDownSignal {
-    // Generar máscara atencional basada en el estado integrado actual
-    // y el contenido de la memoria de trabajo
+    // Generate the attentional mask based on the current integrated state
+    // and the content of the working memory
     const maskSize = this.inputCount;
     const attentionMask = new Float32Array(maskSize);
 
-    // La máscara se construye a partir de los patrones en memoria de trabajo
-    // Biología: la atención amplifica las características que coinciden
-    // con las representaciones mantenidas en la memoria de trabajo
+    // The mask is built from the patterns in working memory
+    // Biology: attention amplifies the features that match
+    // the representations held in working memory
     let totalPriority = 0;
     for (const slot of this.workingMemory) {
       totalPriority += slot.priority;
@@ -358,7 +358,7 @@ export class PrefrontalCortex extends BrainRegion {
       }
     }
 
-    // Normalizar la máscara al rango [0, 1]
+    // Normalize the mask to the range [0, 1]
     let maxVal = 0;
     for (let i = 0; i < maskSize; i++) {
       if (attentionMask[i] > maxVal) maxVal = attentionMask[i];
@@ -370,8 +370,8 @@ export class PrefrontalCortex extends BrainRegion {
       }
     }
 
-    // La ganancia depende de la actividad prefrontal actual
-    // (más actividad → señal top-down más fuerte)
+    // The gain depends on the current prefrontal activity
+    // (more activity → stronger top-down signal)
     let activeCount = 0;
     for (let i = 0; i < this.spikes.length; i++) {
       if (this.spikes[i] > 0) activeCount++;
@@ -386,41 +386,41 @@ export class PrefrontalCortex extends BrainRegion {
   }
 
   /**
-   * Retorna las señales top-down generadas en el último paso.
+   * Returns the top-down signals generated in the last step.
    */
   getLastTopDownSignals(): ReadonlyArray<Readonly<TopDownSignal>> {
     return this.lastTopDownSignals;
   }
 
   // ----------------------------------------------------------------
-  // k-WTA (k-Winners Take All) — Competencia neural
+  // k-WTA (k-Winners Take All) — Neural competition
   // ----------------------------------------------------------------
 
   /**
-   * Aplica selección competitiva k-WTA al vector de activaciones.
+   * Applies k-WTA competitive selection to the activation vector.
    *
-   * Base biológica:
-   *   La inhibición lateral mediada por interneuronas GABAérgicas en la
-   *   capa III de la corteza prefrontal implementa una competencia
-   *   "el ganador se lleva todo" (Winner-Take-All). Solo las k neuronas
-   *   con mayor activación disparan, las demás son suprimidas.
-   *   El valor de k está controlado por la sparsity (modulada por
-   *   neuromoduladores como norepinefrina y acetilcolina).
+   * Biological basis:
+   *   The lateral inhibition mediated by GABAergic interneurons in
+   *   layer III of the prefrontal cortex implements a
+   *   "winner-take-all" competition (Winner-Take-All). Only the k neurons
+   *   with the highest activation fire, the rest are suppressed.
+   *   The value of k is controlled by the sparsity (modulated by
+   *   neuromodulators such as norepinephrine and acetylcholine).
    *
-   * @param activations - Vector de activaciones pre-competencia
-   * @returns Vector de spikes post-competencia (sparse)
+   * @param activations - Pre-competition activation vector
+   * @returns Post-competition spike vector (sparse)
    */
   private applyKWTA(activations: Float32Array): Float32Array {
     const output = new Float32Array(activations.length);
     const k = Math.max(1, Math.floor(activations.length * this.sparsity));
 
-    // Encontrar el k-ésimo valor más alto (umbral de competencia)
-    // Usamos selección parcial para eficiencia O(n)
+    // Find the k-th highest value (competition threshold)
+    // We use partial selection for O(n) efficiency
     const sorted = new Float32Array(activations);
     sorted.sort();
     const threshold = sorted[sorted.length - k];
 
-    // Solo las neuronas por encima del umbral disparan
+    // Only neurons above the threshold fire
     for (let i = 0; i < activations.length; i++) {
       if (activations[i] >= threshold && activations[i] > ACTIVATION_FLOOR) {
         output[i] = 1.0;
@@ -431,34 +431,34 @@ export class PrefrontalCortex extends BrainRegion {
   }
 
   // ----------------------------------------------------------------
-  // processInput — Ciclo ejecutivo principal
+  // processInput — Main executive cycle
   // ----------------------------------------------------------------
 
   /**
-   * Procesa un paso de simulación de la corteza prefrontal.
+   * Processes a simulation step of the prefrontal cortex.
    *
-   * Base biológica:
-   *   El ciclo ejecutivo prefrontal ocurre en ~100ms (ritmo theta, 4-8 Hz)
-   *   y consiste en:
+   * Biological basis:
+   *   The prefrontal executive cycle occurs in ~100ms (theta rhythm, 4-8 Hz)
+   *   and consists of:
    *
-   *   1. **Recepción**: Integrar aferencias de todas las regiones
-   *   2. **Mantenimiento**: Actualizar la memoria de trabajo (envejecer,
-   *      refrescar ítems relevantes, evictar ítems irrelevantes)
-   *   3. **Competencia**: k-WTA sobre activaciones para seleccionar
-   *      las representaciones más relevantes
-   *   4. **Control**: Generar señales top-down para modular procesamiento
-   *      en regiones sensoriales y tálamo
+   *   1. **Reception**: Integrate afferents from all regions
+   *   2. **Maintenance**: Update the working memory (age,
+   *      refresh relevant items, evict irrelevant items)
+   *   3. **Competition**: k-WTA over activations to select
+   *      the most relevant representations
+   *   4. **Control**: Generate top-down signals to modulate processing
+   *      in sensory regions and the thalamus
    *
-   * @param spikes - Vector de spikes de entrada (integrado del buffer sensorial)
-   * @param modulationEffects - Efectos de neuromodulación actuales
-   * @returns Vector de spikes de salida (representación ejecutiva)
+   * @param spikes - Input spike vector (integrated from the sensory buffer)
+   * @param modulationEffects - Current neuromodulation effects
+   * @returns Output spike vector (executive representation)
    */
   processInput(
     spikes: Float32Array,
     modulationEffects: ModulationEffects
   ): Float32Array {
-    // 1. Computar activaciones de la red SNN local
-    //    Cada neurona prefrontal integra los inputs ponderados por sus pesos sinápticos
+    // 1. Compute activations of the local SNN
+    //    Each prefrontal neuron integrates the inputs weighted by its synaptic weights
     const activations = new Float32Array(this.neuronCount);
     const inputLen = Math.min(spikes.length, this.inputCount);
 
@@ -470,36 +470,36 @@ export class PrefrontalCortex extends BrainRegion {
         sum += this.weights[baseOffset + j] * spikes[j];
       }
 
-      // Aplicar ganancia de neuromodulación y umbral modulado
+      // Apply neuromodulation gain and modulated threshold
       sum *= modulationEffects.spikeGainMultiplier;
 
-      // Modelo LIF simplificado: integrar en potencial de membrana
+      // Simplified LIF model: integrate into the membrane potential
       this.potentials[n] += sum;
-      this.potentials[n] *= 0.95; // Leak (fuga de membrana)
+      this.potentials[n] *= 0.95; // Leak (membrane leak)
 
-      // El potencial es una suma de pesos adimensionales (~0 en reposo), no mV.
-      // Restar _modulatedThreshold (−55 mV) lo desplazaba +55 y el gate `>0` del
-      // k-WTA siempre pasaba → actividad constante y falsa. Se usa el potencial
-      // crudo y el k-WTA filtra contra un piso real.
+      // The potential is a sum of dimensionless weights (~0 at rest), not mV.
+      // Subtracting _modulatedThreshold (−55 mV) shifted it by +55 and the `>0` gate of
+      // the k-WTA always passed → constant and false activity. The raw potential
+      // is used and the k-WTA filters against a real floor.
       activations[n] = this.potentials[n];
     }
 
-    // 2. Selección competitiva k-WTA
+    // 2. k-WTA competitive selection
     const outputSpikes = this.applyKWTA(activations);
 
-    // 3. Actualizar estado de spikes
+    // 3. Update spike state
     this.spikes.set(outputSpikes);
 
-    // 4. Mantener la representación integrada (con decaimiento)
+    // 4. Maintain the integrated representation (with decay)
     for (let i = 0; i < this.neuronCount; i++) {
       this.integratedRepresentation[i] =
         this.integratedRepresentation[i] * 0.8 + outputSpikes[i] * 0.2;
     }
 
-    // 5. Envejecer la memoria de trabajo
+    // 5. Age the working memory
     this.ageWorkingMemory();
 
-    // 6. Aprendizaje Hebbiano modulado por dopamina
+    // 6. Dopamine-modulated Hebbian learning
     //    "Neurons that fire together wire together" (Hebb, 1949)
     if (modulationEffects.learningRateMultiplier > 0) {
       this.hebbianUpdate(spikes, outputSpikes, modulationEffects);
@@ -509,42 +509,42 @@ export class PrefrontalCortex extends BrainRegion {
   }
 
   /**
-   * Actualización Hebbiana de pesos sinápticos.
+   * Hebbian update of synaptic weights.
    *
-   * Base biológica:
-   *   La plasticidad sináptica en la corteza prefrontal está fuertemente
-   *   modulada por la dopamina (señal de recompensa/error de predicción).
-   *   Las sinapsis entre neuronas que disparan juntas se fortalecen (LTP),
-   *   mientras que las demás se debilitan (LTD). La dopamina actúa como
-   *   una "puerta" que determina si el fortalecimiento se consolida
-   *   (three-factor learning rule: pre × post × modulación).
+   * Biological basis:
+   *   Synaptic plasticity in the prefrontal cortex is strongly
+   *   modulated by dopamine (reward/prediction-error signal).
+   *   Synapses between neurons that fire together strengthen (LTP),
+   *   while the rest weaken (LTD). Dopamine acts as
+   *   a "gate" that determines whether the strengthening is consolidated
+   *   (three-factor learning rule: pre × post × modulation).
    *
-   * @param preSpikes - Spikes presinápticos (entradas)
-   * @param postSpikes - Spikes postsinápticos (salida de k-WTA)
-   * @param modulation - Efectos de neuromodulación (incluye learningRate)
+   * @param preSpikes - Presynaptic spikes (inputs)
+   * @param postSpikes - Postsynaptic spikes (k-WTA output)
+   * @param modulation - Neuromodulation effects (includes learningRate)
    */
   private hebbianUpdate(
     preSpikes: Float32Array,
     postSpikes: Float32Array,
     modulation: ModulationEffects
   ): void {
-    const lr = this._modulatedLearningRate * 0.01; // Escalar para estabilidad
+    const lr = this._modulatedLearningRate * 0.01; // Scale for stability
     const inputLen = Math.min(preSpikes.length, this.inputCount);
 
     for (let n = 0; n < this.neuronCount; n++) {
-      if (postSpikes[n] === 0) continue; // Solo actualizar neuronas activas
+      if (postSpikes[n] === 0) continue; // Only update active neurons
 
       const baseOffset = n * this.inputCount;
       for (let j = 0; j < inputLen; j++) {
         if (preSpikes[j] > 0) {
-          // LTP: reforzar conexión pre→post activa
+          // LTP: strengthen active pre→post connection
           this.weights[baseOffset + j] += lr * preSpikes[j] * postSpikes[n];
         } else {
-          // LTD suave: debilitar conexiones no usadas
+          // Soft LTD: weaken unused connections
           this.weights[baseOffset + j] *= (1 - lr * 0.1);
         }
 
-        // Clamp de pesos para estabilidad
+        // Clamp weights for stability
         if (this.weights[baseOffset + j] > 1.0) {
           this.weights[baseOffset + j] = 1.0;
         } else if (this.weights[baseOffset + j] < 0) {

@@ -1,97 +1,97 @@
 /**
- * HIPOCAMPO — Centro de Memoria Episódica (núcleo biológico real)
+ * HIPPOCAMPUS — Episodic Memory Center (real biological core)
  * ================================================================
- * Modela la formación hipocampal del lóbulo temporal medial. A diferencia
- * de la corteza visual (mapa feedforward Izhikevich+STDP), el cómputo
- * natural del hipocampo es una MEMORIA AUTOASOCIATIVA RECURRENTE: una red
- * de atractores que reconstruye un patrón completo a partir de una pista
- * parcial o degradada (pattern completion).
+ * Models the hippocampal formation of the medial temporal lobe. Unlike
+ * the visual cortex (Izhikevich+STDP feedforward map), the natural
+ * computation of the hippocampus is a RECURRENT AUTOASSOCIATIVE MEMORY: an
+ * attractor network that reconstructs a complete pattern from a partial
+ * or degraded cue (pattern completion).
  *
- * Circuito trisináptico modelado:
- *   Corteza entorrinal → DG (separación) → CA3 (autoasociación) → salida
+ * Modeled trisynaptic circuit:
+ *   Entorhinal cortex → DG (separation) → CA3 (autoassociation) → output
  *
- *   - Giro dentado (DG): separación de patrones. Proyección sparse FIJA
- *     (fibras musgosas, no plásticas) + competencia k-WTA que ortogonaliza
- *     entradas similares en códigos ultra-sparse (~2% activo). La proyección
- *     es DETERMINISTA (sembrada con una semilla constante) para que el mismo
- *     estímulo genere SIEMPRE el mismo código, también tras recargar pesos.
+ *   - Dentate gyrus (DG): pattern separation. FIXED sparse projection
+ *     (mossy fibers, non-plastic) + k-WTA competition that orthogonalizes
+ *     similar inputs into ultra-sparse codes (~2% active). The projection
+ *     is DETERMINISTIC (seeded with a constant seed) so that the same
+ *     stimulus ALWAYS generates the same code, even after reloading weights.
  *
- *   - CA3: completación de patrones. Red autoasociativa con conexiones
- *     recurrentes plásticas (matriz N×N = this.weights). Cada episodio se
- *     graba por aprendizaje Hebbiano (regla de coincidencia, producto
- *     externo del código sparse) con cota suave. El recuerdo NO es un
- *     lookup sobre patrones guardados: emerge de la DINÁMICA DE ATRACTORES
- *     (iteración recurrente h = W·s + k-WTA hasta converger).
+ *   - CA3: pattern completion. Autoassociative network with plastic
+ *     recurrent connections (N×N matrix = this.weights). Each episode is
+ *     imprinted by Hebbian learning (coincidence rule, outer product
+ *     of the sparse code) with a soft bound. Recall is NOT a
+ *     lookup over stored patterns: it emerges from the ATTRACTOR DYNAMICS
+ *     (recurrent iteration h = W·s + k-WTA until convergence).
  *
- *   Consecuencia clave: la memoria vive en las SINAPSIS (this.weights), así
- *   que el protocolo de persistencia binaria la serializa automáticamente.
- *   El aprendizaje sobrevive a recargas y redeploys.
+ *   Key consequence: the memory lives in the SYNAPSES (this.weights), so
+ *   the binary persistence protocol serializes it automatically.
+ *   Learning survives reloads and redeploys.
  *
- * Referencias: O'Reilly & McClelland (1994), "Hippocampal conjunctive
- *   encoding, storage, and recall"; Treves & Rolls (1994), atractores CA3;
- *   Marr (1971), teoría del archicórtex.
+ * References: O'Reilly & McClelland (1994), "Hippocampal conjunctive
+ *   encoding, storage, and recall"; Treves & Rolls (1994), CA3 attractors;
+ *   Marr (1971), archicortex theory.
  */
 
 import { BrainRegion } from '../../core/brain-region.js';
 import type { ModulationEffects } from '../../core/neuromodulators/modulator-system.js';
 
 // ==================================================================
-// Interfaces (API pública estable)
+// Interfaces (stable public API)
 // ==================================================================
 
-/** Contexto asociado a una memoria episódica. */
+/** Context associated with an episodic memory. */
 export interface EpisodicContext {
-  /** Marca temporal del momento de codificación (ms) */
+  /** Timestamp of the encoding moment (ms) */
   timestamp: number;
-  /** Valencia emocional del evento (-1 negativo … +1 positivo). */
+  /** Emotional valence of the event (-1 negative … +1 positive). */
   emotionalValence: number;
-  /** Región cerebral de origen del patrón (ej: 'visualCortex') */
+  /** Brain region the pattern originated from (e.g.: 'visualCortex') */
   sourceRegion: string;
 }
 
 /**
- * Índice episódico: metadato ligero de un evento codificado.
- * El PATRÓN aquí es el código sparse del DG (la "llave" del atractor); la
- * reconstrucción real la produce CA3 desde los pesos, no este registro.
+ * Episodic index: lightweight metadata of an encoded event.
+ * The PATTERN here is the DG sparse code (the "key" of the attractor); the
+ * actual reconstruction is produced by CA3 from the weights, not this record.
  */
 export interface EpisodicMemory {
-  /** Código sparse del DG asociado al evento (engrama-índice). */
+  /** DG sparse code associated with the event (engram-index). */
   pattern: Float32Array;
-  /** Contexto asociado al evento (cuándo, valencia, fuente). */
+  /** Context associated with the event (when, valence, source). */
   context: EpisodicContext;
-  /** Fuerza del trazo (0–1); decae con el olvido, sube con el replay. */
+  /** Trace strength (0–1); decays with forgetting, rises with replay. */
   strength: number;
 }
 
-/** Resultado de una operación de recuerdo (recall). */
+/** Result of a recall operation. */
 export interface RecallResult {
-  /** Memoria recuperada (metadato + contexto). */
+  /** Recovered memory (metadata + context). */
   memory: EpisodicMemory;
-  /** Solapamiento [0,1] entre el atractor recuperado y el código del evento. */
+  /** Overlap [0,1] between the recovered attractor and the event's code. */
   similarity: number;
 }
 
-/** Configuración del hipocampo. */
+/** Hippocampus configuration. */
 export interface HippocampusConfig {
-  /** Sparsity del código CA3/DG (fracción de unidades activas). */
+  /** Sparsity of the CA3/DG code (fraction of active units). */
   sparsity: number;
-  /** Conexiones de entrada por unidad DG (fan-in de fibras musgosas). */
+  /** Input connections per DG unit (mossy fiber fan-in). */
   dgFanIn: number;
-  /** Tasa de aprendizaje Hebbiano (escala de Δw por coincidencia). */
+  /** Hebbian learning rate (scale of Δw per coincidence). */
   learnRate: number;
-  /** Techo de peso recurrente (cota suave LTP). */
+  /** Recurrent weight ceiling (soft LTP bound). */
   maxWeight: number;
-  /** Iteraciones de la dinámica de atractores en el completado. */
+  /** Iterations of the attractor dynamics in completion. */
   attractorIterations: number;
-  /** Energía mínima de entrada para considerar que hay estímulo. */
+  /** Minimum input energy to consider that there is a stimulus. */
   inputEnergyThreshold: number;
   /**
-   * Umbral de novedad: si el código DG del input solapa con el último
-   * codificado por encima de esto, NO se vuelve a grabar (codificación
-   * dirigida por eventos, no por tick → evita saturar y floodear el índice).
+   * Novelty threshold: if the input's DG code overlaps the last
+   * encoded one above this, it is NOT imprinted again (event-driven
+   * encoding, not per-tick → avoids saturating and flooding the index).
    */
   noveltyOverlapThreshold: number;
-  /** Semilla determinista de la proyección DG (conectividad fija). */
+  /** Deterministic seed of the DG projection (fixed connectivity). */
   dgSeed: number;
 }
 
@@ -107,7 +107,7 @@ const DEFAULT_HIPPO_CONFIG: HippocampusConfig = {
 };
 
 // ==================================================================
-// PRNG determinista (mulberry32) — proyección DG reproducible
+// Deterministic PRNG (mulberry32) — reproducible DG projection
 // ==================================================================
 
 function mulberry32(seed: number): () => number {
@@ -121,36 +121,36 @@ function mulberry32(seed: number): () => number {
 }
 
 // ==================================================================
-// Clase Hippocampus — CA3 autoasociativo
+// Hippocampus class — autoassociative CA3
 // ==================================================================
 
 export class Hippocampus extends BrainRegion {
   private readonly cfg: HippocampusConfig;
 
-  /** Unidades activas por código (k del k-WTA). */
+  /** Active units per code (k of the k-WTA). */
   private readonly kActive: number;
 
-  /** Capacidad máxima del índice episódico (metadatos). */
+  /** Maximum capacity of the episodic index (metadata). */
   private readonly maxCapacity: number;
 
-  /** Índice episódico (metadatos de contexto; la memoria real está en pesos). */
+  /** Episodic index (context metadata; the actual memory is in the weights). */
   private episodicMemories: EpisodicMemory[] = [];
 
-  /** Proyección DG determinista: índices de entrada por unidad (N×fanIn). */
+  /** Deterministic DG projection: input indices per unit (N×fanIn). */
   private readonly dgIdx: Int32Array;
-  /** Proyección DG determinista: signo ±1 por conexión (N×fanIn). */
+  /** Deterministic DG projection: ±1 sign per connection (N×fanIn). */
   private readonly dgSign: Float32Array;
 
-  /** Último código DG grabado (para la codificación por novedad). */
+  /** Last DG code imprinted (for novelty-driven encoding). */
   private lastStoredCode: Float32Array;
 
-  // --- Buffers reutilizados (evitan asignaciones por tick) ---
+  // --- Reused buffers (avoid per-tick allocations) ---
   private readonly actBuf: Float32Array;
   private readonly stateBuf: Float32Array;
   private readonly nextBuf: Float32Array;
   private readonly sortIdx: Int32Array;
 
-  // --- Métricas de aprendizaje en vivo (paridad con la corteza visual) ---
+  // --- Live learning metrics (parity with the visual cortex) ---
   private prevEngram: Float32Array;
   private lastEngram: Float32Array;
   private weightChangeEMA = 0;
@@ -159,10 +159,10 @@ export class Hippocampus extends BrainRegion {
   private cumWeightChange = 0;
 
   /**
-   * @param neuronCount - Unidades CA3 (default: 1000)
-   * @param inputCount - Dimensión del input cortical (default: 1000)
-   * @param maxCapacity - Capacidad del índice episódico (default: 10000)
-   * @param config - Sobre-escrituras de configuración
+   * @param neuronCount - CA3 units (default: 1000)
+   * @param inputCount - Cortical input dimension (default: 1000)
+   * @param maxCapacity - Capacity of the episodic index (default: 10000)
+   * @param config - Configuration overrides
    */
   constructor(
     neuronCount: number = 1000,
@@ -176,12 +176,12 @@ export class Hippocampus extends BrainRegion {
     this.maxCapacity = maxCapacity;
     this.kActive = Math.max(1, Math.floor(neuronCount * this.cfg.sparsity));
 
-    // CA3 empieza en blanco: la base inicializó pesos sparse aleatorios, los
-    // ponemos a cero para que el aprendizaje Hebbiano sea la única fuente de
-    // las conexiones recurrentes (memoria limpia, sin atractores espurios).
+    // CA3 starts blank: the base initialized random sparse weights, we
+    // zero them out so that Hebbian learning is the only source of
+    // the recurrent connections (clean memory, no spurious attractors).
     this.weights.fill(0);
 
-    // Proyección DG determinista (conectividad fija de fibras musgosas).
+    // Deterministic DG projection (fixed mossy fiber connectivity).
     const fanIn = this.cfg.dgFanIn;
     this.dgIdx = new Int32Array(neuronCount * fanIn);
     this.dgSign = new Float32Array(neuronCount * fanIn);
@@ -204,15 +204,15 @@ export class Hippocampus extends BrainRegion {
   }
 
   // ----------------------------------------------------------------
-  // Giro Dentado: separación de patrones (determinista)
+  // Dentate Gyrus: pattern separation (deterministic)
   // ----------------------------------------------------------------
 
   /**
-   * Separación de patrones (DG): proyección sparse fija + ReLU + k-WTA.
-   * Ortogonaliza entradas similares en códigos ultra-sparse reproducibles.
+   * Pattern separation (DG): fixed sparse projection + ReLU + k-WTA.
+   * Orthogonalizes similar inputs into reproducible ultra-sparse codes.
    *
-   * @param input - Patrón de entrada cortical (Float32Array, dim inputCount)
-   * @returns Código sparse binario (Float32Array dim neuronCount; 1 = activo)
+   * @param input - Cortical input pattern (Float32Array, dim inputCount)
+   * @returns Binary sparse code (Float32Array dim neuronCount; 1 = active)
    */
   patternSeparation(input: Float32Array): Float32Array {
     const out = new Float32Array(this.neuronCount);
@@ -220,13 +220,13 @@ export class Hippocampus extends BrainRegion {
     return out;
   }
 
-  /** Codifica DG sobre un buffer destino (sin asignar). */
+  /** Encodes DG into a destination buffer (without allocating). */
   private dgEncodeInto(input: Float32Array, out: Float32Array): void {
     const n = this.neuronCount;
     const fanIn = this.cfg.dgFanIn;
     const act = this.actBuf;
 
-    // Proyección aleatoria fija + ReLU.
+    // Fixed random projection + ReLU.
     for (let u = 0; u < n; u++) {
       const base = u * fanIn;
       let sum = 0;
@@ -238,23 +238,23 @@ export class Hippocampus extends BrainRegion {
       act[u] = sum > 0 ? sum : 0;
     }
 
-    // k-WTA: solo las kActive unidades más excitadas sobreviven (→ binario).
+    // k-WTA: only the kActive most-excited units survive (→ binary).
     out.fill(0);
     const winners = this.topKIndices(act, this.kActive);
     for (let i = 0; i < winners.length; i++) out[winners[i]] = 1;
   }
 
   // ----------------------------------------------------------------
-  // CA3: almacenamiento autoasociativo (Hebbian) y completado (atractor)
+  // CA3: autoassociative storage (Hebbian) and completion (attractor)
   // ----------------------------------------------------------------
 
   /**
-   * Graba un episodio en CA3 por aprendizaje Hebbiano (producto externo del
-   * código sparse) con cota suave. La memoria queda en los pesos recurrentes.
+   * Imprints an episode in CA3 by Hebbian learning (outer product of the
+   * sparse code) with a soft bound. The memory remains in the recurrent weights.
    *
-   * @param pattern - Patrón cortical a codificar
-   * @param context - Contexto asociado (timestamp, valencia, fuente)
-   * @returns Σ|Δw| aplicado (energía de aprendizaje de este evento)
+   * @param pattern - Cortical pattern to encode
+   * @param context - Associated context (timestamp, valence, source)
+   * @returns Σ|Δw| applied (learning energy of this event)
    */
   store(pattern: Float32Array, context: Partial<EpisodicContext> = {}): number {
     const code = this.patternSeparation(pattern);
@@ -268,7 +268,7 @@ export class Hippocampus extends BrainRegion {
     const memory: EpisodicMemory = { pattern: code, context: fullContext, strength: 1.0 };
 
     if (this.episodicMemories.length >= this.maxCapacity) {
-      // Reemplazar el trazo más débil (interferencia/olvido por competencia).
+      // Replace the weakest trace (interference/forgetting by competition).
       let weakestIdx = 0;
       for (let i = 1; i < this.episodicMemories.length; i++) {
         if (this.episodicMemories[i].strength < this.episodicMemories[weakestIdx].strength) {
@@ -285,9 +285,9 @@ export class Hippocampus extends BrainRegion {
   }
 
   /**
-   * Producto externo Hebbiano del código sparse sobre los pesos recurrentes.
-   * Solo recorre pares activos (kActive²), así que es barato pese a N×N.
-   * Cota suave: Δw ∝ (maxW − w) → punto fijo estable, sin saturación dura.
+   * Hebbian outer product of the sparse code over the recurrent weights.
+   * It only traverses active pairs (kActive²), so it is cheap despite being N×N.
+   * Soft bound: Δw ∝ (maxW − w) → stable fixed point, without hard saturation.
    */
   private imprint(code: Float32Array, lr: number): number {
     const n = this.neuronCount;
@@ -300,7 +300,7 @@ export class Hippocampus extends BrainRegion {
       const i = active[a];
       const row = i * n;
       for (let b = 0; b < active.length; b++) {
-        if (a === b) continue; // sin auto-conexión
+        if (a === b) continue; // no self-connection
         const j = active[b];
         const idx = row + j;
         const dw = lr * (maxW - this.weights[idx]);
@@ -312,27 +312,27 @@ export class Hippocampus extends BrainRegion {
   }
 
   /**
-   * Completación de patrones (CA3): dinámica de atractores recurrente.
-   * Parte de la pista degradada (vía DG), itera h = W·s seguido de k-WTA, y
-   * converge al atractor (episodio) más cercano en la cuenca de la pista.
+   * Pattern completion (CA3): recurrent attractor dynamics.
+   * Starting from the degraded cue (via DG), it iterates h = W·s followed by k-WTA, and
+   * converges to the nearest attractor (episode) in the cue's basin.
    *
-   * @param partialInput - Patrón parcial o degradado (dim inputCount)
-   * @returns Código sparse reconstruido (Float32Array dim neuronCount)
+   * @param partialInput - Partial or degraded pattern (dim inputCount)
+   * @returns Reconstructed sparse code (Float32Array dim neuronCount)
    */
   patternCompletion(partialInput: Float32Array): Float32Array {
     const n = this.neuronCount;
     let state = this.stateBuf;
     let next = this.nextBuf;
 
-    // Estado inicial = código DG de la pista (puede estar incompleto/ruidoso).
+    // Initial state = DG code of the cue (may be incomplete/noisy).
     this.dgEncodeInto(partialInput, state);
 
     for (let iter = 0; iter < this.cfg.attractorIterations; iter++) {
-      // h[i] = Σ_j W[i,j] · state[j], recorriendo solo j activos (sparse).
+      // h[i] = Σ_j W[i,j] · state[j], traversing only active j (sparse).
       const activeJ: number[] = [];
       for (let j = 0; j < n; j++) if (state[j] > 0) activeJ.push(j);
 
-      // Sin aprendizaje todavía → devolver el propio código DG (graceful).
+      // No learning yet → return the DG code itself (graceful).
       if (activeJ.length === 0) break;
 
       for (let i = 0; i < n; i++) {
@@ -344,7 +344,7 @@ export class Hippocampus extends BrainRegion {
 
       next.fill(0);
       const winners = this.topKIndices(this.actBuf, this.kActive);
-      // Si los pesos no producen señal (todo 0), preservar el estado actual.
+      // If the weights produce no signal (all 0), preserve the current state.
       let anySignal = false;
       for (let i = 0; i < winners.length; i++) {
         if (this.actBuf[winners[i]] > 0) {
@@ -354,7 +354,7 @@ export class Hippocampus extends BrainRegion {
       }
       if (!anySignal) break;
 
-      // ¿Convergió? (estado estable → atractor alcanzado)
+      // Converged? (stable state → attractor reached)
       if (Hippocampus.overlapBinary(state, next) >= 0.999) {
         const tmp = state;
         state = next;
@@ -370,13 +370,13 @@ export class Hippocampus extends BrainRegion {
   }
 
   // ----------------------------------------------------------------
-  // Recuerdo, replay y olvido (sobre el índice episódico)
+  // Recall, replay and forgetting (over the episodic index)
   // ----------------------------------------------------------------
 
   /**
-   * Recupera las K memorias cuyo código solapa más con el atractor evocado
-   * por la pista. El recuerdo se fundamenta en la dinámica de CA3 (pesos),
-   * no en comparar la pista cruda con patrones guardados.
+   * Recovers the K memories whose code overlaps most with the attractor evoked
+   * by the cue. Recall is grounded in the CA3 dynamics (weights),
+   * not in comparing the raw cue with stored patterns.
    */
   recall(cue: Float32Array, topK: number = 5): RecallResult[] {
     if (this.episodicMemories.length === 0) return [];
@@ -393,8 +393,8 @@ export class Hippocampus extends BrainRegion {
   }
 
   /**
-   * Replay hipocampal: reactiva (y refuerza) los episodios más recientes y
-   * fuertes. Cada reactivación re-graba el código en CA3 (consolidación).
+   * Hippocampal replay: reactivates (and reinforces) the most recent and
+   * strongest episodes. Each reactivation re-imprints the code in CA3 (consolidation).
    */
   replay(count: number = 10): EpisodicMemory[] {
     if (this.episodicMemories.length === 0) return [];
@@ -408,15 +408,15 @@ export class Hippocampus extends BrainRegion {
 
     for (const memory of candidates) {
       memory.strength = Math.min(1.0, memory.strength + 0.05);
-      this.imprint(memory.pattern, this.cfg.learnRate); // refuerzo del engrama
+      this.imprint(memory.pattern, this.cfg.learnRate); // engram reinforcement
     }
     return candidates;
   }
 
   /**
-   * Olvido gradual del índice episódico. Las memorias emocionales decaen más
-   * lento (modulación β-adrenérgica de la consolidación, McGaugh 2004).
-   * No borra pesos recurrentes: el atractor persiste aunque el índice se pierda.
+   * Gradual forgetting of the episodic index. Emotional memories decay more
+   * slowly (β-adrenergic modulation of consolidation, McGaugh 2004).
+   * It does not erase recurrent weights: the attractor persists even if the index is lost.
    */
   forget(decayFactor: number): void {
     for (let i = this.episodicMemories.length - 1; i >= 0; i--) {
@@ -428,12 +428,12 @@ export class Hippocampus extends BrainRegion {
   }
 
   // ----------------------------------------------------------------
-  // Procesamiento principal (un tick del cerebro)
+  // Main processing (one tick of the brain)
   // ----------------------------------------------------------------
 
   /**
-   * Procesa spikes corticales: codifica el episodio (si es novedoso),
-   * completa el patrón por atractor y emite el engrama reconstruido.
+   * Processes cortical spikes: encodes the episode (if novel),
+   * completes the pattern by attractor and emits the reconstructed engram.
    */
   processInput(spikes: Float32Array, modulationEffects: ModulationEffects): Float32Array {
     let inputEnergy = 0;
@@ -447,8 +447,8 @@ export class Hippocampus extends BrainRegion {
     const input = this.adaptInput(spikes);
     const code = this.patternSeparation(input);
 
-    // Codificación dirigida por novedad: solo grabar eventos distintos del
-    // último (evita imprimir el mismo patrón en cada tick y floodear el índice).
+    // Novelty-driven encoding: only imprint events different from the
+    // last one (avoids imprinting the same pattern every tick and flooding the index).
     const novelty = 1 - Hippocampus.overlapBinary(code, this.lastStoredCode);
     let dw = 0;
     if (novelty > 1 - this.cfg.noveltyOverlapThreshold) {
@@ -460,7 +460,7 @@ export class Hippocampus extends BrainRegion {
       });
     }
 
-    // Completar por dinámica de atractores → engrama reconstruido.
+    // Complete via attractor dynamics → reconstructed engram.
     const completed = this.patternCompletion(input);
 
     const gain = modulationEffects.spikeGainMultiplier ?? 1.0;
@@ -475,7 +475,7 @@ export class Hippocampus extends BrainRegion {
     return out;
   }
 
-  /** Variante de store que escala la tasa Hebbiana por neuromodulación. */
+  /** Variant of store that scales the Hebbian rate by neuromodulation. */
   private storeWithGain(
     code: Float32Array,
     lrMul: number,
@@ -500,7 +500,7 @@ export class Hippocampus extends BrainRegion {
   }
 
   // ----------------------------------------------------------------
-  // Métricas de aprendizaje en vivo (dashboard)
+  // Live learning metrics (dashboard)
   // ----------------------------------------------------------------
 
   private updateLearningMetrics(dw: number, engram: Float32Array): void {
@@ -517,7 +517,7 @@ export class Hippocampus extends BrainRegion {
     this.activityEMA = 0.95 * this.activityEMA + 0.05 * (active / this.neuronCount);
   }
 
-  /** Métricas de aprendizaje (misma forma que la corteza visual). */
+  /** Learning metrics (same shape as the visual cortex). */
   getLearningMetrics(): {
     engram: number[];
     engramSize: number;
@@ -545,10 +545,10 @@ export class Hippocampus extends BrainRegion {
   }
 
   // ----------------------------------------------------------------
-  // Utilidades internas
+  // Internal utilities
   // ----------------------------------------------------------------
 
-  /** Adapta un vector de entrada a inputCount (trunca o rellena con ceros). */
+  /** Adapts an input vector to inputCount (truncates or pads with zeros). */
   private adaptInput(input: Float32Array): Float32Array {
     if (input.length === this.inputCount) return input;
     const adapted = new Float32Array(this.inputCount);
@@ -556,7 +556,7 @@ export class Hippocampus extends BrainRegion {
     return adapted;
   }
 
-  /** Índices de los k valores mayores (> 0) de un array. */
+  /** Indices of the k largest values (> 0) of an array. */
   private topKIndices(arr: Float32Array, k: number): Int32Array {
     const n = arr.length;
     for (let i = 0; i < n; i++) this.sortIdx[i] = i;
@@ -568,7 +568,7 @@ export class Hippocampus extends BrainRegion {
     return Int32Array.from(out);
   }
 
-  /** Solapamiento de Jaccard entre dos códigos sparse binarios (>0 = activo). */
+  /** Jaccard overlap between two binary sparse codes (>0 = active). */
   static overlapBinary(a: Float32Array, b: Float32Array): number {
     const len = Math.min(a.length, b.length);
     let inter = 0;
@@ -587,20 +587,20 @@ export class Hippocampus extends BrainRegion {
   }
 
   // ----------------------------------------------------------------
-  // Propiedades públicas
+  // Public properties
   // ----------------------------------------------------------------
 
-  /** Número actual de episodios indexados. */
+  /** Current number of indexed episodes. */
   get memoryCount(): number {
     return this.episodicMemories.length;
   }
 
-  /** Capacidad máxima del índice episódico. */
+  /** Maximum capacity of the episodic index. */
   get capacity(): number {
     return this.maxCapacity;
   }
 
-  /** Ocupación [0,1] del índice episódico. */
+  /** Occupancy [0,1] of the episodic index. */
   get occupancy(): number {
     return this.episodicMemories.length / this.maxCapacity;
   }

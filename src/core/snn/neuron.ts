@@ -1,77 +1,77 @@
 /**
- * NEURONA PULSANTE — Modelo de Izhikevich
+ * SPIKING NEURON — Izhikevich Model
  * =========================================
- * Implementación de alto rendimiento del modelo de neurona de Izhikevich (2003).
+ * High-performance implementation of the Izhikevich neuron model (2003).
  *
- * Base biológica:
- *   El modelo de Izhikevich captura la dinámica de membrana de neuronas reales
- *   usando solo dos ecuaciones diferenciales ordinarias:
+ * Biological basis:
+ *   The Izhikevich model captures the membrane dynamics of real neurons
+ *   using only two ordinary differential equations:
  *
- *     dv/dt = 0.04v² + 5v + 140 - u + I   (dinámica de voltaje de membrana)
- *     du/dt = a(bv - u)                     (variable de recuperación lenta)
+ *     dv/dt = 0.04v² + 5v + 140 - u + I   (membrane voltage dynamics)
+ *     du/dt = a(bv - u)                     (slow recovery variable)
  *
- *   Con la regla de reset al disparar:
- *     si v ≥ 30 mV → v = c, u = u + d
+ *   With the reset rule on firing:
+ *     if v ≥ 30 mV → v = c, u = u + d
  *
- *   Los parámetros (a, b, c, d) determinan el tipo de disparo:
- *   - Regular Spiking (RS): neuronas piramidales excitatorias corticales
- *   - Fast Spiking (FS): interneuronas inhibitorias (basket cells)
- *   - Chattering (CH): neuronas que disparan ráfagas rítmicas
- *   - Intrinsic Bursting (IB): neuronas con ráfagas intrínsecas
+ *   The parameters (a, b, c, d) determine the firing type:
+ *   - Regular Spiking (RS): cortical excitatory pyramidal neurons
+ *   - Fast Spiking (FS): inhibitory interneurons (basket cells)
+ *   - Chattering (CH): neurons that fire rhythmic bursts
+ *   - Intrinsic Bursting (IB): neurons with intrinsic bursts
  *
- *   Este modelo es ~100× más eficiente que Hodgkin-Huxley y reproduce
- *   más de 20 patrones de disparo neocorticales observados experimentalmente.
+ *   This model is ~100× more efficient than Hodgkin-Huxley and reproduces
+ *   more than 20 experimentally observed neocortical firing patterns.
  *
- * Referencia: Izhikevich, E.M. (2003). "Simple Model of Spiking Neurons."
+ * Reference: Izhikevich, E.M. (2003). "Simple Model of Spiking Neurons."
  *             IEEE Trans. Neural Networks, 14(6):1569-1572.
  */
 
 // ====================================================================
-// Interfaces y tipos
+// Interfaces and types
 // ====================================================================
 
 /**
- * Parámetros del modelo de Izhikevich.
+ * Izhikevich model parameters.
  *
- * Base biológica:
- *   - a: escala temporal de recuperación (más grande = recuperación más rápida)
- *   - b: sensibilidad de u al subumbral de v (acoplamiento u-v)
- *   - c: potencial de reset tras el spike (mV)
- *   - d: incremento de u tras el spike (corriente de adaptación)
+ * Biological basis:
+ *   - a: recovery time scale (larger = faster recovery)
+ *   - b: sensitivity of u to the subthreshold v (u-v coupling)
+ *   - c: reset potential after the spike (mV)
+ *   - d: increment of u after the spike (adaptation current)
  */
 export interface IzhikevichParams {
-  /** Escala temporal de la variable de recuperación u (típicamente 0.02-0.1) */
+  /** Time scale of the recovery variable u (typically 0.02-0.1) */
   readonly a: number;
-  /** Sensibilidad de la variable de recuperación al potencial subumbral (típicamente 0.2-0.25) */
+  /** Sensitivity of the recovery variable to the subthreshold potential (typically 0.2-0.25) */
   readonly b: number;
-  /** Potencial de reset post-spike (mV, típicamente -65 a -50) */
+  /** Post-spike reset potential (mV, typically -65 to -50) */
   readonly c: number;
-  /** Incremento de recuperación post-spike (típicamente 2-8) */
+  /** Post-spike recovery increment (typically 2-8) */
   readonly d: number;
 }
 
 /**
- * Tipos de neurona predefinidos basados en observaciones electrofisiológicas.
+ * Predefined neuron types based on electrophysiological observations.
  */
 export type NeuronTypeName = 'RegularSpiking' | 'FastSpiking' | 'Chattering' | 'IntrinsicBursting';
 
 // ====================================================================
-// Parámetros predefinidos por tipo de neurona
+// Predefined parameters per neuron type
 // ====================================================================
 
 /**
- * Parámetros predefinidos del modelo de Izhikevich para cada tipo celular.
+ * Predefined Izhikevich model parameters for each cell type.
  *
- * Base biológica:
- *   - RegularSpiking: la neurona excitadora más común en corteza (>80%).
- *     Adapta su frecuencia de disparo progresivamente.
- *   - FastSpiking: interneuronas GABAérgicas (basket/chandelier cells).
- *     Respuesta rápida sin adaptación, mediando la inhibición lateral.
- *   - Chattering: neuronas de capas superficiales que producen ráfagas
- *     rítmicas, posiblemente involucradas en sincronización gamma.
- *   - IntrinsicBursting: neuronas de capa V que producen una ráfaga
- *     inicial seguida de spikes regulares, importantes en señalización
- *     cortico-cortical.
+ * Biological basis:
+ *   - RegularSpiking: the most common excitatory neuron in cortex (>80%).
+ *     Progressively adapts its firing rate.
+ *   - FastSpiking: GABAergic interneurons (basket/chandelier cells).
+ *     Fast response without adaptation, mediating lateral inhibition.
+ *   - Chattering: superficial-layer neurons that produce rhythmic
+ *     bursts, possibly involved in gamma synchronization.
+ *   - IntrinsicBursting: layer V neurons that produce an initial
+ *     burst followed by regular spikes, important in cortico-cortical
+ *     signaling.
  */
 export const NEURON_PRESETS: Record<NeuronTypeName, IzhikevichParams> = {
   RegularSpiking:    { a: 0.02, b: 0.2, c: -65, d: 8 },
@@ -81,48 +81,48 @@ export const NEURON_PRESETS: Record<NeuronTypeName, IzhikevichParams> = {
 } as const;
 
 // ====================================================================
-// Clase SpikingNeuron
+// SpikingNeuron class
 // ====================================================================
 
 /**
- * Neurona pulsante individual basada en el modelo de Izhikevich.
+ * Individual spiking neuron based on the Izhikevich model.
  *
- * Base biológica:
- *   Modela una neurona cortical individual con su potencial de membrana (v),
- *   variable de recuperación (u), y capacidad de generar potenciales de
- *   acción (spikes) cuando v cruza el umbral de ~30 mV.
+ * Biological basis:
+ *   Models an individual cortical neuron with its membrane potential (v),
+ *   recovery variable (u), and the ability to generate action
+ *   potentials (spikes) when v crosses the ~30 mV threshold.
  *
- *   La variable u modela las corrientes iónicas lentas (K+ de activación
- *   lenta y Na+ de inactivación) que producen la adaptación de frecuencia
- *   y los períodos refractarios.
+ *   The u variable models the slow ionic currents (slow-activating K+
+ *   and inactivating Na+) that produce frequency adaptation
+ *   and refractory periods.
  *
- * Rendimiento:
- *   Se usa Float32Array cuando es posible. Los campos escalares (v, u)
- *   se mantienen como number nativo por eficiencia en acceso individual.
+ * Performance:
+ *   Float32Array is used where possible. The scalar fields (v, u)
+ *   are kept as native numbers for efficient individual access.
  */
 export class SpikingNeuron {
-  /** Potencial de membrana actual (mV). Reposo típico: -65 mV */
+  /** Current membrane potential (mV). Typical resting: -65 mV */
   public v: number;
 
-  /** Variable de recuperación. Modela corrientes iónicas lentas. */
+  /** Recovery variable. Models slow ionic currents. */
   public u: number;
 
   /**
-   * Tiempo del último spike en ms (relativo al inicio de la simulación).
-   * -Infinity si nunca ha disparado. Usado por STDP para calcular Δt.
+   * Time of the last spike in ms (relative to the start of the simulation).
+   * -Infinity if it has never fired. Used by STDP to compute Δt.
    */
   public lastSpikeTime: number;
 
-  /** Indica si la neurona disparó en el último paso de simulación */
+  /** Indicates whether the neuron fired in the last simulation step */
   public fired: boolean;
 
-  /** Parámetros (a, b, c, d) que definen el tipo de disparo */
+  /** Parameters (a, b, c, d) that define the firing type */
   public readonly params: IzhikevichParams;
 
   /**
-   * Crea una nueva neurona pulsante.
+   * Creates a new spiking neuron.
    *
-   * @param params - Parámetros de Izhikevich, o nombre de un preset
+   * @param params - Izhikevich parameters, or the name of a preset
    */
   constructor(params: IzhikevichParams | NeuronTypeName = 'RegularSpiking') {
     if (typeof params === 'string') {
@@ -131,46 +131,46 @@ export class SpikingNeuron {
       this.params = params;
     }
 
-    this.v = -65.0;           // Potencial de reposo (mV)
-    this.u = this.params.b * this.v;  // Estado estable de u
+    this.v = -65.0;           // Resting potential (mV)
+    this.u = this.params.b * this.v;  // Steady state of u
     this.lastSpikeTime = -Infinity;
     this.fired = false;
   }
 
   /**
-   * Ejecuta un paso de simulación del modelo de Izhikevich.
+   * Runs a simulation step of the Izhikevich model.
    *
-   * Base biológica:
-   *   Integra las ecuaciones diferenciales de membrana por el método de Euler
-   *   con paso dt. La corriente de entrada I modela la suma de corrientes
-   *   sinápticas (excitatorias + inhibitorias) + corrientes de fondo.
+   * Biological basis:
+   *   Integrates the membrane differential equations using the Euler method
+   *   with step dt. The input current I models the sum of synaptic
+   *   currents (excitatory + inhibitory) + background currents.
    *
-   *   Se usan 2 sub-pasos de Euler de dt/2 cada uno para mejorar la
-   *   estabilidad numérica (el término 0.04v² puede ser inestable con
-   *   pasos grandes).
+   *   2 Euler sub-steps of dt/2 each are used to improve
+   *   numerical stability (the 0.04v² term can be unstable with
+   *   large steps).
    *
-   * @param I - Corriente de entrada total (sináptica + externa) en unidades arbitrarias
-   * @param dt - Paso temporal en milisegundos (típicamente 0.5-1.0 ms)
-   * @param currentTime - Tiempo actual de simulación en ms (para registrar spike times)
-   * @returns true si la neurona disparó un potencial de acción en este paso
+   * @param I - Total input current (synaptic + external) in arbitrary units
+   * @param dt - Time step in milliseconds (typically 0.5-1.0 ms)
+   * @param currentTime - Current simulation time in ms (to record spike times)
+   * @returns true if the neuron fired an action potential in this step
    */
   step(I: number, dt: number, currentTime: number): boolean {
     const { a, b, c, d } = this.params;
     this.fired = false;
 
-    // --- Integración numérica con 2 sub-pasos de Euler (estabilidad) ---
-    // Sub-paso 1: dt/2
+    // --- Numerical integration with 2 Euler sub-steps (stability) ---
+    // Sub-step 1: dt/2
     const halfDt = dt * 0.5;
     this.v += halfDt * (0.04 * this.v * this.v + 5.0 * this.v + 140.0 - this.u + I);
-    // Sub-paso 2: dt/2
+    // Sub-step 2: dt/2
     this.v += halfDt * (0.04 * this.v * this.v + 5.0 * this.v + 140.0 - this.u + I);
-    // Actualizar variable de recuperación
+    // Update the recovery variable
     this.u += dt * a * (b * this.v - this.u);
 
-    // --- Detección de spike ---
+    // --- Spike detection ---
     if (this.v >= 30.0) {
-      this.v = c;         // Reset del potencial de membrana
-      this.u += d;         // Incremento de recuperación post-spike
+      this.v = c;         // Reset of the membrane potential
+      this.u += d;         // Post-spike recovery increment
       this.fired = true;
       this.lastSpikeTime = currentTime;
     }
@@ -179,11 +179,11 @@ export class SpikingNeuron {
   }
 
   /**
-   * Reinicia la neurona a su estado de reposo.
+   * Resets the neuron to its resting state.
    *
-   * Base biológica:
-   *   Equivale a un período de silencio prolongado donde la neurona
-   *   regresa a su estado electroquímico basal.
+   * Biological basis:
+   *   Equivalent to a prolonged period of silence where the neuron
+   *   returns to its basal electrochemical state.
    */
   reset(): void {
     this.v = -65.0;
@@ -194,16 +194,16 @@ export class SpikingNeuron {
 }
 
 // ====================================================================
-// Utilidades para creación masiva de neuronas
+// Utilities for bulk neuron creation
 // ====================================================================
 
 /**
- * Crea un array de neuronas del mismo tipo.
- * Optimizado para instanciación masiva en regiones cerebrales.
+ * Creates an array of neurons of the same type.
+ * Optimized for bulk instantiation in brain regions.
  *
- * @param count - Número de neuronas a crear
- * @param neuronType - Tipo de neurona (preset o parámetros custom)
- * @returns Array de neuronas inicializadas
+ * @param count - Number of neurons to create
+ * @param neuronType - Neuron type (preset or custom parameters)
+ * @returns Array of initialized neurons
  */
 export function createNeuronPopulation(
   count: number,
@@ -220,28 +220,28 @@ export function createNeuronPopulation(
 }
 
 /**
- * Estructura de estado compacto para serialización/transferencia masiva.
- * Almacena v, u, lastSpikeTime de N neuronas en arrays contiguos.
+ * Compact state structure for serialization/bulk transfer.
+ * Stores v, u, lastSpikeTime of N neurons in contiguous arrays.
  *
- * Base biológica:
- *   Formato de almacenamiento eficiente análogo a cómo técnicas de
- *   imagen funcional (fMRI, EEG) almacenan estados de miles de
- *   vóxels/canales en arrays contiguos.
+ * Biological basis:
+ *   Efficient storage format analogous to how functional
+ *   imaging techniques (fMRI, EEG) store the states of thousands of
+ *   voxels/channels in contiguous arrays.
  */
 export interface NeuronStateBuffer {
-  /** Potenciales de membrana de todas las neuronas */
+  /** Membrane potentials of all the neurons */
   readonly voltages: Float32Array;
-  /** Variables de recuperación de todas las neuronas */
+  /** Recovery variables of all the neurons */
   readonly recovery: Float32Array;
-  /** Tiempos de último spike (ms) */
+  /** Last spike times (ms) */
   readonly lastSpikeTimes: Float64Array;
 }
 
 /**
- * Extrae el estado de un array de neuronas a buffers compactos.
+ * Extracts the state of an array of neurons into compact buffers.
  *
- * @param neurons - Array de neuronas
- * @returns Buffers compactos con el estado de todas las neuronas
+ * @param neurons - Array of neurons
+ * @returns Compact buffers with the state of all the neurons
  */
 export function extractNeuronStates(neurons: readonly SpikingNeuron[]): NeuronStateBuffer {
   const n = neurons.length;
@@ -259,10 +259,10 @@ export function extractNeuronStates(neurons: readonly SpikingNeuron[]): NeuronSt
 }
 
 /**
- * Restaura el estado de neuronas desde buffers compactos.
+ * Restores the state of neurons from compact buffers.
  *
- * @param neurons - Array de neuronas a restaurar
- * @param state - Buffers compactos con el estado guardado
+ * @param neurons - Array of neurons to restore
+ * @param state - Compact buffers with the saved state
  */
 export function restoreNeuronStates(
   neurons: SpikingNeuron[],

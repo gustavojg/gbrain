@@ -1,17 +1,17 @@
 /**
- * TEST DE VERIFICACIÓN — Bucle asociativo del lenguaje (texto→Wernicke→Broca)
+ * VERIFICATION TEST — Associative language loop (text→Wernicke→Broca)
  * ===========================================================================
- * Antes: el TextEncoder genérico producía vectores ortogonales al léxico
- *   (cos≈0), Wernicke no comprendía nada y Broca devolvía ensalada aleatoria,
- *   distinta en cada ronda.
+ * Before: the generic TextEncoder produced vectors orthogonal to the lexicon
+ *   (cos≈0), Wernicke understood nothing, and Broca returned a random salad,
+ *   different on each round.
  *
- * Ahora: el texto se codifica en el espacio del léxico, Wernicke lo comprende
- *   y Broca regenera la respuesta de forma determinista. Verificamos 3
- *   propiedades con criterios cuantitativos:
+ * Now: the text is encoded in the lexicon space, Wernicke understands it
+ *   and Broca regenerates the response deterministically. We verify 3
+ *   properties with quantitative criteria:
  *
- *   1. REPRODUCIBILIDAD — el mismo texto produce (casi) la misma respuesta.
- *   2. DISCRIMINACIÓN   — textos distintos producen respuestas distintas.
- *   3. RELEVANCIA       — la respuesta contiene palabras del propio input.
+ *   1. REPRODUCIBILITY — the same text produces (almost) the same response.
+ *   2. DISCRIMINATION  — different texts produce different responses.
+ *   3. RELEVANCE       — the response contains words from the input itself.
  */
 
 import { DigitalBrain } from '../src/brain.js';
@@ -32,7 +32,7 @@ function ask(brain: DigitalBrain, text: string): string[] {
   return r.text ? normalizeWords(r.text) : [];
 }
 
-/** Índice de Jaccard entre dos conjuntos de palabras. */
+/** Jaccard index between two sets of words. */
 function jaccard(a: string[], b: string[]): number {
   const sa = new Set(a);
   const sb = new Set(b);
@@ -52,9 +52,9 @@ const texts = [
 console.log('── Verificación del bucle asociativo del lenguaje ──\n');
 
 const brain = new DigitalBrain();
-for (let i = 0; i < 20; i++) brain.tick(); // calentar
+for (let i = 0; i < 20; i++) brain.tick(); // warm up
 
-// Capturar dos respuestas por texto (rondas separadas) para reproducibilidad.
+// Capture two responses per text (separate rounds) for reproducibility.
 const round1: Record<string, string[]> = {};
 const round2: Record<string, string[]> = {};
 for (const t of texts) round1[t] = ask(brain, t);
@@ -68,12 +68,12 @@ for (const t of texts) {
   console.log(`    R2: [${round2[t].join(', ')}]`);
 }
 
-// 1. REPRODUCIBILIDAD: Jaccard(R1, R2) del mismo texto debe ser alto.
+// 1. REPRODUCIBILITY: Jaccard(R1, R2) for the same text must be high.
 let reproSum = 0;
 for (const t of texts) reproSum += jaccard(round1[t], round2[t]);
 const reproAvg = reproSum / texts.length;
 
-// 2. DISCRIMINACIÓN: Jaccard entre respuestas de textos DISTINTOS debe ser bajo.
+// 2. DISCRIMINATION: Jaccard between responses of DIFFERENT texts must be low.
 let discrimSum = 0;
 let pairs = 0;
 for (let i = 0; i < texts.length; i++) {
@@ -84,7 +84,7 @@ for (let i = 0; i < texts.length; i++) {
 }
 const discrimAvg = discrimSum / pairs;
 
-// 3. RELEVANCIA: cada respuesta debe contener ≥1 palabra de su propio input.
+// 3. RELEVANCE: each response must contain ≥1 word from its own input.
 let relevantCount = 0;
 for (const t of texts) {
   const inputWords = new Set(normalizeWords(t));

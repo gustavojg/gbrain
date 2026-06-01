@@ -311,6 +311,32 @@
         </div>
       </div>
 
+      <!-- Vocabulary learning -->
+      <div class="io-section">
+        <label class="io-label">📚 Vocabulary <span class="io-hint">— learned live from text</span></label>
+        <div class="vocab-panel">
+          <div class="vocab-total"><strong id="vocabTotal">0</strong> <small>words known</small></div>
+          <div class="vocab-block">
+            <div class="vocab-sub">Learned this session (<span id="vocabLearnedCount">0</span>)</div>
+            <div class="vocab-chips" id="vocabLearnedChips"><span class="vocab-empty">none yet</span></div>
+          </div>
+          <div class="vocab-block">
+            <div class="vocab-sub">About to learn <span class="io-hint" id="vocabThreshold"></span></div>
+            <div class="vocab-pending" id="vocabPending"><span class="vocab-empty">—</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Learning curve -->
+      <div class="io-section">
+        <label class="io-label">📈 Learning Curve <span class="io-hint">— growth over time</span></label>
+        <canvas id="learningCurve" class="learning-curve" width="280" height="64"></canvas>
+        <div class="curve-legend">
+          <span class="curve-key"><i class="curve-dot curve-dot-vocab"></i>vocabulary <strong id="curveVocabNow">0</strong></span>
+          <span class="curve-key"><i class="curve-dot curve-dot-mem"></i>memories <strong id="curveMemNow">0</strong></span>
+        </div>
+      </div>
+
       <!-- Stream of consciousness -->
       <div class="io-section">
         <label class="io-label">💭 Stream of Consciousness</label>

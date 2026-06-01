@@ -170,6 +170,133 @@ function updateDashboard(state) {
   if (state.learningHippocampus) {
     updateLearningHippoPanel(state.learningHippocampus);
   }
+
+  // Vocabulary acquisition panel
+  updateVocabularyPanel(state.vocabulary, state.vocabCount);
+
+  // Learning curve (growth of vocabulary + episodic memories over time)
+  updateLearningCurve(state);
+
+  // Consolidation section counters (were never wired)
+  const memEl = document.getElementById('memoryCount');
+  const vocEl = document.getElementById('vocabCount');
+  if (memEl) memEl.textContent = state.memoriesCount || 0;
+  if (vocEl) vocEl.textContent = (state.vocabulary && state.vocabulary.total) || state.vocabCount || 0;
+}
+
+// ================================================================
+// VOCABULARY PANEL
+// ================================================================
+
+function updateVocabularyPanel(vocab, fallbackTotal) {
+  const totalEl = document.getElementById('vocabTotal');
+  const total = (vocab && vocab.total) || fallbackTotal || 0;
+  if (totalEl) totalEl.textContent = total.toLocaleString();
+
+  if (!vocab) return;
+
+  const thrEl = document.getElementById('vocabThreshold');
+  if (thrEl) thrEl.textContent = `(${vocab.threshold} reads to learn)`;
+
+  // Words learned this session → chips (newest first, capped).
+  const learned = vocab.learnedThisSession || [];
+  const countEl = document.getElementById('vocabLearnedCount');
+  if (countEl) countEl.textContent = learned.length;
+
+  const chips = document.getElementById('vocabLearnedChips');
+  if (chips) {
+    if (learned.length === 0) {
+      chips.innerHTML = '<span class="vocab-empty">none yet</span>';
+    } else {
+      chips.innerHTML = learned
+        .slice(-24)
+        .reverse()
+        .map((w) => `<span class="vocab-chip">${escapeHtml(w)}</span>`)
+        .join('');
+    }
+  }
+
+  // Pending words → progress toward the learning threshold.
+  const pend = document.getElementById('vocabPending');
+  if (pend) {
+    const pending = (vocab.pending || []).slice(0, 6);
+    if (pending.length === 0) {
+      pend.innerHTML = '<span class="vocab-empty">—</span>';
+    } else {
+      pend.innerHTML = pending
+        .map((p) => {
+          const pct = Math.min(100, (p.count / vocab.threshold) * 100);
+          return (
+            `<div class="vocab-pend-row">` +
+            `<span class="vocab-pend-word">${escapeHtml(p.word)}</span>` +
+            `<span class="vocab-pend-track"><span class="vocab-pend-fill" style="width:${pct.toFixed(0)}%"></span></span>` +
+            `<span class="vocab-pend-count">${p.count}/${vocab.threshold}</span>` +
+            `</div>`
+          );
+        })
+        .join('');
+    }
+  }
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+}
+
+// ================================================================
+// LEARNING CURVE
+// ================================================================
+
+const curveHistory = { vocab: [], mem: [], cap: 120 };
+
+function updateLearningCurve(state) {
+  const canvas = document.getElementById('learningCurve');
+  if (!canvas) return;
+
+  const vocab = (state.vocabulary && state.vocabulary.total) || state.vocabCount || 0;
+  const mem = state.memoriesCount || 0;
+
+  curveHistory.vocab.push(vocab);
+  curveHistory.mem.push(mem);
+  if (curveHistory.vocab.length > curveHistory.cap) curveHistory.vocab.shift();
+  if (curveHistory.mem.length > curveHistory.cap) curveHistory.mem.shift();
+
+  const nowVocab = document.getElementById('curveVocabNow');
+  const nowMem = document.getElementById('curveMemNow');
+  if (nowVocab) nowVocab.textContent = vocab.toLocaleString();
+  if (nowMem) nowMem.textContent = mem;
+
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width;
+  const H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+
+  // Each series auto-scaled to its OWN running max so both growth curves are
+  // visible even though vocabulary (~hundreds) dwarfs memories (~tens).
+  drawSeries(ctx, curveHistory.vocab, W, H, 'rgba(96, 165, 250, 0.95)');
+  drawSeries(ctx, curveHistory.mem, W, H, 'rgba(74, 222, 128, 0.95)');
+}
+
+function drawSeries(ctx, data, W, H, color) {
+  if (!data || data.length < 2) return;
+  const pad = 3;
+  const max = Math.max(1, ...data);
+  const min = Math.min(...data);
+  const span = Math.max(1, max - min);
+  const n = data.length;
+  ctx.beginPath();
+  for (let i = 0; i < n; i++) {
+    const x = pad + (i / (n - 1)) * (W - 2 * pad);
+    const y = H - pad - ((data[i] - min) / span) * (H - 2 * pad);
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  ctx.lineJoin = 'round';
+  ctx.stroke();
 }
 
 // ================================================================

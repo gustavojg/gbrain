@@ -13,7 +13,7 @@
     "dev": "npx tsx src/server.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "build:test": "tsc -p tsconfig.test.json",
-    "test": "npm run build:test && node dist-test/tests/language-loop.test.js && node dist-test/tests/bilingual-lexicon.test.js && node dist-test/tests/hippocampus.test.js && node dist-test/tests/region-activity.test.js && node dist-test/tests/region-drive.test.js"
+    "test": "npm run build:test && node dist-test/tests/language-loop.test.js && node dist-test/tests/bilingual-lexicon.test.js && node dist-test/tests/vocabulary-learning.test.js && node dist-test/tests/hippocampus.test.js && node dist-test/tests/region-activity.test.js && node dist-test/tests/region-drive.test.js"
   },
   "dependencies": {
     "ws": "^8.21.0"

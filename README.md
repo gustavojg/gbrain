@@ -42,7 +42,8 @@ Tres propiedades guían el proyecto:
 - **Conectoma humano** — 19 conexiones interregionales con retrasos axonales sobre un **bus de spikes** basado en eventos.
 - **Consolidación de memoria (sueño)** — motor periódico que reproduce memorias del hipocampo en la corteza para consolidarlas.
 - **Persistencia binaria** — el estado sináptico completo se guarda/carga en un `.bin` (protocolo `0xBRA1N001`).
-- **Léxico español** — ~188 palabras codificadas como patrones de impulsos deterministas (hash de n-gramas) compartidas entre Wernicke y Broca.
+- **Léxico bilingüe (ES + EN)** — ~360 palabras codificadas como patrones de impulsos deterministas (hash de n-gramas) compartidas entre Wernicke y Broca. Español e inglés conviven en el mismo espacio de representación.
+- **Aprendizaje de vocabulario** — las palabras desconocidas que lee el cerebro se aprenden tras varias exposiciones (umbral configurable) y se añaden al léxico, recompensadas con dopamina + acetilcolina. El vocabulario aprendido persiste entre sesiones.
 
 ### Aprendizaje verificado (no es marketing)
 
@@ -51,6 +52,8 @@ Cada capacidad tiene un test con criterios cuantitativos en `tests/`:
 - **Visión** (`visual-learning.test.ts`) — el engrama de un estímulo converge (estabilidad ≥0.60) y discrimina estímulos distintos.
 - **Memoria** (`hippocampus.test.ts`) — completa pistas degradadas, discrimina episodios y persiste entre sesiones.
 - **Lenguaje** (`language-loop.test.ts`) — el bucle texto→Wernicke→Broca es **reproducible** (84%), **discriminativo** (3% de solape entre textos distintos) y **relevante** (100% de respuestas contienen palabras del input).
+- **Lenguaje bilingüe** (`bilingual-lexicon.test.ts`) — comprende y responde en español e inglés (100% de relevancia).
+- **Vocabulario** (`vocabulary-learning.test.ts`) — aprende palabras nuevas tras N exposiciones, las comprende después y las persiste en disco.
 
 > **Honestidad técnica:** la comprensión del lenguaje es **asociativa** (recupera y reordena palabras del léxico relacionadas con la entrada), no razonamiento simbólico. Es el comportamiento esperado de una SNN con léxico distribuido.
 
@@ -111,7 +114,8 @@ Three principles drive the project:
 - **Human connectome** — 19 inter-region connections with axonal delays over an event-based **spike bus**.
 - **Memory consolidation (sleep)** — periodic engine replaying hippocampal memories into cortex to consolidate them.
 - **Binary persistence** — full synaptic state saved/loaded to a `.bin` file (`0xBRA1N001` protocol).
-- **Spanish lexicon** — ~188 words encoded as deterministic spike patterns (n-gram hashing) shared between Wernicke and Broca.
+- **Bilingual lexicon (ES + EN)** — ~360 words encoded as deterministic spike patterns (n-gram hashing) shared between Wernicke and Broca. Spanish and English coexist in the same representational space.
+- **Vocabulary learning** — unknown words the brain reads are learned after several exposures (configurable threshold) and added to the lexicon, rewarded with dopamine + acetylcholine. Learned vocabulary persists across sessions.
 
 ### Verified learning (not marketing)
 
@@ -120,6 +124,8 @@ Each capability has a test with quantitative criteria under `tests/`:
 - **Vision** (`visual-learning.test.ts`) — a stimulus engram converges (stability ≥0.60) and discriminates distinct stimuli.
 - **Memory** (`hippocampus.test.ts`) — completes degraded cues, discriminates episodes and persists across sessions.
 - **Language** (`language-loop.test.ts`) — the text→Wernicke→Broca loop is **reproducible** (84%), **discriminative** (3% overlap between distinct texts) and **relevant** (100% of responses contain input words).
+- **Bilingual language** (`bilingual-lexicon.test.ts`) — comprehends and responds in Spanish and English (100% relevance).
+- **Vocabulary** (`vocabulary-learning.test.ts`) — learns new words after N exposures, comprehends them afterwards, and persists them to disk.
 
 > **Technical honesty:** language comprehension is **associative** (it retrieves and reorders lexicon words related to the input), not symbolic reasoning. This is the expected behaviour of an SNN with a distributed lexicon.
 

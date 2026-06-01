@@ -45,8 +45,9 @@ import { PrefrontalCortex } from './regions/prefrontal-cortex/prefrontal-cortex.
 import { BrocaArea, type LanguageResponse } from './regions/broca-wernicke/broca.js';
 import { WernickeArea } from './regions/broca-wernicke/wernicke.js';
 import { Lexicon } from './regions/broca-wernicke/lexicon.js';
-import { seedSpanishLexicon, encodeSentenceToLexiconSpace } from './regions/broca-wernicke/spanish-lexicon.js';
+import { seedSpanishLexicon, encodeSentenceToLexiconSpace, wordToPattern } from './regions/broca-wernicke/spanish-lexicon.js';
 import { seedEnglishLexicon } from './regions/broca-wernicke/english-lexicon.js';
+import * as fs from 'fs';
 
 // ================================================================
 // TYPES
@@ -72,6 +73,13 @@ export interface BrainState {
   broca?: { lastResponse: string; words: string[]; confidence: number };
   /** Vocabulary size */
   vocabCount: number;
+  /** Vocabulary-acquisition stats (learned words, pending exposures). */
+  vocabulary?: {
+    total: number;
+    learnedThisSession: string[];
+    pending: Array<{ word: string; count: number }>;
+    threshold: number;
+  };
   /** Visual cortex learning metrics (engram, stability, convergence). */
   learning?: {
     engram: number[];
@@ -152,6 +160,28 @@ export class DigitalBrain {
    * overwriting it with background noise.
    */
   private lastLinguisticIntention: Float32Array | null = null;
+
+  // ── Vocabulary acquisition (learning new words from text) ──
+  /**
+   * Number of exposures an unknown word needs before it is committed to the
+   * lexicon as a new engram.
+   *
+   * Biological basis:
+   *   Robust word learning requires repeated exposure (statistical learning,
+   *   Saffran et al., 1996). A single encounter rarely yields a durable
+   *   engram; the brain consolidates a word once it has accrued enough
+   *   evidence that it is a stable unit of the language.
+   */
+  private static readonly LEARN_THRESHOLD = 3;
+
+  /** Minimum token length to consider for acquisition (filters noise). */
+  private static readonly MIN_WORD_LEN = 3;
+
+  /** Unknown words seen so far → exposure count (pending acquisition). */
+  private pendingVocab: Map<string, number> = new Map();
+
+  /** Words learned (committed to the lexicon) during this session. */
+  private learnedThisSession: string[] = [];
 
   // --- Decoders (outputs) ---
   private textDecoder: BrainTextDecoder;
@@ -443,7 +473,84 @@ export class DigitalBrain {
     // Novelty → norepinephrine
     this.modulators.release(ModulatorType.Norepinephrine, 0.05);
 
+    // Vocabulary acquisition: learn unknown words after repeated exposure.
+    this.acquireVocabulary(words);
+
     return this.processPerception('text');
+  }
+
+  /**
+   * Learns new vocabulary from a tokenized utterance.
+   *
+   * Known words are reinforced (frequency effect); unknown words accumulate
+   * exposures and, once they cross `LEARN_THRESHOLD`, are committed to the
+   * lexicon as a fresh engram and rewarded with dopamine + acetylcholine
+   * (learning is reinforcing and attention-gated).
+   *
+   * Biological basis:
+   *   Modeled on incremental word learning: repeated exposure drives
+   *   consolidation (Saffran et al., 1996), and successful acquisition
+   *   recruits dopaminergic reward and cholinergic attention signals that
+   *   stabilize the new representation.
+   *
+   * @param words - Normalized tokens from the current utterance
+   */
+  private acquireVocabulary(words: string[]): void {
+    const dim = this.lexicon.dimensions;
+
+    // Count one exposure per utterance (dedupe repeats within the same read).
+    for (const word of new Set(words)) {
+      if (word.length < DigitalBrain.MIN_WORD_LEN) continue;
+
+      if (this.lexicon.has(word)) {
+        // Known word → reinforce its engram (bumps frequency / recency).
+        this.lexicon.add(word, wordToPattern(word, dim));
+        continue;
+      }
+
+      // Unknown word → accumulate exposures.
+      const seen = (this.pendingVocab.get(word) ?? 0) + 1;
+
+      if (seen >= DigitalBrain.LEARN_THRESHOLD) {
+        // Commit the new word to the lexicon.
+        this.lexicon.add(word, wordToPattern(word, dim));
+        this.pendingVocab.delete(word);
+        if (!this.learnedThisSession.includes(word)) {
+          this.learnedThisSession.push(word);
+        }
+        // Reward + attention consolidation of the new engram.
+        this.modulators.release(ModulatorType.Dopamine, 0.1);
+        this.modulators.release(ModulatorType.Acetylcholine, 0.05);
+        console.log(`  💡 Learned new word: "${word}" (lexicon: ${this.lexicon.size} words)`);
+      } else {
+        this.pendingVocab.set(word, seen);
+      }
+    }
+  }
+
+  /**
+   * Returns vocabulary-acquisition statistics for monitoring/visualization.
+   */
+  getVocabularyStats(): {
+    total: number;
+    learnedThisSession: string[];
+    pending: Array<{ word: string; count: number }>;
+    threshold: number;
+  } {
+    const pending = Array.from(this.pendingVocab.entries())
+      .map(([word, count]) => ({ word, count }))
+      .sort((a, b) => b.count - a.count);
+    return {
+      total: this.lexicon.size,
+      learnedThisSession: [...this.learnedThisSession],
+      pending,
+      threshold: DigitalBrain.LEARN_THRESHOLD,
+    };
+  }
+
+  /** Whether a word is currently in the lexicon (known to the brain). */
+  knowsWord(word: string): boolean {
+    return this.lexicon.has(word);
   }
 
   // ================================================================
@@ -730,6 +837,7 @@ export class DigitalBrain {
         confidence: brocaResponse.confidence,
       } : undefined,
       vocabCount: this.lexicon?.size ?? 0,
+      vocabulary: this.getVocabularyStats(),
       learning,
       learningHippocampus,
     };
@@ -745,6 +853,18 @@ export class DigitalBrain {
    */
   saveState(filePath: string): void {
     this.persistence.save(filePath, this.regions, this.modulators);
+    // The lexicon (incl. words learned from text) is not part of the binary
+    // region format, so persist it as a JSON sidecar next to the .bin.
+    try {
+      fs.writeFileSync(this.lexiconSidecarPath(filePath), JSON.stringify(this.lexicon.serialize()));
+    } catch (err) {
+      console.error(`⚠️  Could not save lexicon: ${(err as Error).message}`);
+    }
+  }
+
+  /** Path of the lexicon sidecar associated with a brain state file. */
+  private lexiconSidecarPath(filePath: string): string {
+    return `${filePath}.lexicon.json`;
   }
 
   /**
@@ -770,6 +890,24 @@ export class DigitalBrain {
     if (data.modulatorState) {
       this.modulators.deserialize(data.modulatorState);
     }
+
+    // Restore the persisted lexicon (incl. learned words) if present and
+    // dimensionally compatible; otherwise keep the freshly seeded vocabulary.
+    const sidecar = this.lexiconSidecarPath(filePath);
+    if (fs.existsSync(sidecar)) {
+      try {
+        const parsed = JSON.parse(fs.readFileSync(sidecar, 'utf-8'));
+        if (parsed?.patternSize === this.lexicon.dimensions) {
+          this.lexicon.deserialize(parsed);
+          console.log(`  📚 Lexicon restored: ${this.lexicon.size} words`);
+        } else {
+          console.warn(`⚠️  Lexicon sidecar dim mismatch (${parsed?.patternSize} vs ${this.lexicon.dimensions}); keeping seeded vocabulary.`);
+        }
+      } catch (err) {
+        console.error(`⚠️  Could not restore lexicon: ${(err as Error).message}`);
+      }
+    }
+
     return { loaded, skipped };
   }
 

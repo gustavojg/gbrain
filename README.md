@@ -56,6 +56,7 @@ Cada capacidad tiene un test con criterios cuantitativos en `tests/`:
 - **Lenguaje bilingüe** (`bilingual-lexicon.test.ts`) — comprende y responde en español e inglés (100% de relevancia).
 - **Vocabulario** (`vocabulary-learning.test.ts`) — aprende palabras nuevas tras N exposiciones, las comprende después y las persiste en disco.
 - **Pensamientos en directo** (`live-thoughts.test.ts`) — `think()` produce pensamientos bien formados, **reactivos** (en reposo el pensamiento está vacío; al leer se vuelve no vacío) y **discriminativos** (entradas distintas → pensamientos distintos, solape <60%).
+- **Afecto, atención y neuromodulación** (`neuro-systems.test.ts`) — la **amígdala** lee texto positivo con valencia claramente mayor que el negativo; la **acetilcolina** ensancha el cuello de botella atencional del tálamo (pasan más señales); la **dopamina** sube el multiplicador de plasticidad y el **cortisol** lo suprime.
 
 > **Honestidad técnica:** la comprensión del lenguaje es **asociativa** (recupera y reordena palabras del léxico relacionadas con la entrada), no razonamiento simbólico. Es el comportamiento esperado de una SNN con léxico distribuido.
 
@@ -130,6 +131,7 @@ Each capability has a test with quantitative criteria under `tests/`:
 - **Bilingual language** (`bilingual-lexicon.test.ts`) — comprehends and responds in Spanish and English (100% relevance).
 - **Vocabulary** (`vocabulary-learning.test.ts`) — learns new words after N exposures, comprehends them afterwards, and persists them to disk.
 - **Live thoughts** (`live-thoughts.test.ts`) — `think()` produces well-formed thoughts that are **reactive** (idle → empty; after reading → non-empty) and **discriminative** (distinct inputs → distinct thoughts, <60% overlap).
+- **Affect, attention & neuromodulation** (`neuro-systems.test.ts`) — the **amygdala** reads positive text with clearly higher valence than negative text; **acetylcholine** widens the thalamic attentional bottleneck (more signals pass); **dopamine** raises the plasticity multiplier and **cortisol** suppresses it.
 
 > **Technical honesty:** language comprehension is **associative** (it retrieves and reorders lexicon words related to the input), not symbolic reasoning. This is the expected behaviour of an SNN with a distributed lexicon.
 

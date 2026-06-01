@@ -1,0 +1,26 @@
+{
+  "name": "digital-brain",
+  "version": "1.0.0",
+  "description": "Cerebro humano digital bio-inspirado con SNNs, STDP y 7 regiones funcionales",
+  "main": "dist/server.js",
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "build": "tsc && cp -r src/dashboard dist/",
+    "start": "node dist/server.js",
+    "dev": "npx tsx src/server.ts",
+    "test": "npx tsx tests/snn.test.ts",
+    "test:integration": "npx tsx tests/integration.test.ts"
+  },
+  "dependencies": {
+    "ws": "^8.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

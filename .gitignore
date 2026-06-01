@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-test/
+
+# Brain state snapshots (binary persistence)
+*.bin
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Local tooling / editor settings
+.claude/
+.qodo/
+.vscode/
+.idea/
+.DS_Store
+
+# Logs
+*.log
+npm-debug.log*

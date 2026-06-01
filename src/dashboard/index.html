@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="es" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Dashboard de monitorización en tiempo real del Cerebro Digital — Visualización 3D de actividad neuronal, neuromoduladores y estado emocional">
+  <title>🧠 Cerebro Digital — Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- HEADER -->
+  <header id="header">
+    <div class="header-left">
+      <div class="brain-emoji">🧠</div>
+      <div>
+        <h1>Cerebro Digital</h1>
+        <p class="subtitle" id="brainStatus">Inicializando...</p>
+      </div>
+    </div>
+    <div class="header-right">
+      <div class="stat-chip" id="tickCount">
+        <span class="stat-label">Ticks</span>
+        <span class="stat-value">0</span>
+      </div>
+      <div class="stat-chip" id="timeDisplay">
+        <span class="stat-label">Tiempo</span>
+        <span class="stat-value">0ms</span>
+      </div>
+      <div class="stat-chip emotion-chip" id="emotionChip">
+        <span class="stat-label">Emoción</span>
+        <span class="stat-value">😐 Neutral</span>
+      </div>
+      <div class="connection-dot" id="connectionDot" title="WebSocket"></div>
+    </div>
+  </header>
+
+  <!-- MAIN LAYOUT -->
+  <main id="mainLayout">
+    <!-- LEFT PANEL — Brain Visualization -->
+    <section class="panel brain-panel" id="brainPanel">
+      <div class="panel-header">
+        <h2>Actividad Neural</h2>
+        <div class="panel-controls">
+          <button class="icon-btn" id="toggleRotation" title="Rotar">⟳</button>
+          <button class="icon-btn" id="resetView" title="Reset">⊙</button>
+        </div>
+      </div>
+      <canvas id="brainCanvas"></canvas>
+      <div class="brain-legend" id="brainLegend"></div>
+    </section>
+
+    <!-- CENTER PANEL — Neuromodulators + Emotion -->
+    <section class="panel neuro-panel">
+      <div class="panel-header">
+        <h2>Neuromoduladores</h2>
+      </div>
+      <div class="neuro-grid" id="neuroGrid">
+        <div class="neuro-bar" data-type="dopamine">
+          <div class="neuro-icon">💛</div>
+          <div class="neuro-info">
+            <span class="neuro-name">Dopamina</span>
+            <span class="neuro-desc">Recompensa</span>
+          </div>
+          <div class="bar-track">
+            <div class="bar-fill" id="bar-dopamine"></div>
+          </div>
+          <span class="neuro-val" id="val-dopamine">0.40</span>
+          <button class="inject-btn" data-type="dopamine" title="Inyectar +0.2">💉</button>
+        </div>
+        <div class="neuro-bar" data-type="serotonin">
+          <div class="neuro-icon">💙</div>
+          <div class="neuro-info">
+            <span class="neuro-name">Serotonina</span>
+            <span class="neuro-desc">Estabilidad</span>
+          </div>
+          <div class="bar-track">
+            <div class="bar-fill" id="bar-serotonin"></div>
+          </div>
+          <span class="neuro-val" id="val-serotonin">0.50</span>
+          <button class="inject-btn" data-type="serotonin" title="Inyectar +0.2">💉</button>
+        </div>
+        <div class="neuro-bar" data-type="norepinephrine">
+          <div class="neuro-icon">🧡</div>
+          <div class="neuro-info">
+            <span class="neuro-name">Norepinefrina</span>
+            <span class="neuro-desc">Alerta</span>
+          </div>
+          <div class="bar-track">
+            <div class="bar-fill" id="bar-norepinephrine"></div>
+          </div>
+          <span class="neuro-val" id="val-norepinephrine">0.30</span>
+          <button class="inject-btn" data-type="norepinephrine" title="Inyectar +0.2">💉</button>
+        </div>
+        <div class="neuro-bar" data-type="cortisol">
+          <div class="neuro-icon">🩸</div>
+          <div class="neuro-info">
+            <span class="neuro-name">Cortisol</span>
+            <span class="neuro-desc">Estrés</span>
+          </div>
+          <div class="bar-track">
+            <div class="bar-fill" id="bar-cortisol"></div>
+          </div>
+          <span class="neuro-val" id="val-cortisol">0.30</span>
+          <button class="inject-btn" data-type="cortisol" title="Inyectar +0.2">💉</button>
+        </div>
+        <div class="neuro-bar" data-type="acetylcholine">
+          <div class="neuro-icon">💚</div>
+          <div class="neuro-info">
+            <span class="neuro-name">Acetilcolina</span>
+            <span class="neuro-desc">Atención</span>
+          </div>
+          <div class="bar-track">
+            <div class="bar-fill" id="bar-acetylcholine"></div>
+          </div>
+          <span class="neuro-val" id="val-acetylcholine">0.40</span>
+          <button class="inject-btn" data-type="acetylcholine" title="Inyectar +0.2">💉</button>
+        </div>
+        <div class="neuro-bar" data-type="oxytocin">
+          <div class="neuro-icon">💜</div>
+          <div class="neuro-info">
+            <span class="neuro-name">Oxitocina</span>
+            <span class="neuro-desc">Social</span>
+          </div>
+          <div class="bar-track">
+            <div class="bar-fill" id="bar-oxytocin"></div>
+          </div>
+          <span class="neuro-val" id="val-oxytocin">0.30</span>
+          <button class="inject-btn" data-type="oxytocin" title="Inyectar +0.2">💉</button>
+        </div>
+      </div>
+
+      <!-- Emotion Circumplex -->
+      <div class="panel-header" style="margin-top: 1rem">
+        <h2>Espacio Emocional</h2>
+      </div>
+      <div class="emotion-space">
+        <canvas id="emotionCanvas" width="240" height="240"></canvas>
+        <div class="emotion-label" id="emotionLabel">😐 Neutral</div>
+      </div>
+    </section>
+
+    <!-- RIGHT PANEL — Input/Output -->
+    <section class="panel io-panel">
+      <div class="panel-header">
+        <h2>Interfaz</h2>
+      </div>
+
+      <!-- Text Input -->
+      <div class="io-section">
+        <label class="io-label">📝 Texto (leer)</label>
+        <div class="input-group">
+          <input type="text" id="textInput" placeholder="Escribe algo al cerebro..." autocomplete="off">
+          <button class="send-btn" id="sendText">→</button>
+        </div>
+      </div>
+
+      <!-- Drawing Canvas -->
+      <div class="io-section">
+        <label class="io-label">🎨 Dibujo (ver)</label>
+        <div class="draw-container">
+          <canvas id="drawCanvas" width="64" height="64"></canvas>
+          <div class="draw-controls">
+            <button class="small-btn" id="sendDrawing">Enviar</button>
+            <button class="small-btn secondary" id="clearDrawing">Limpiar</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Webcam -->
+      <div class="io-section">
+        <label class="io-label">📷 Webcam (ver)</label>
+        <div class="webcam-container">
+          <video id="webcamVideo" autoplay playsinline muted></video>
+          <canvas id="webcamCanvas" width="64" height="64" style="display:none"></canvas>
+          <div class="draw-controls">
+            <button class="small-btn" id="toggleWebcam">▶ Activar</button>
+            <span class="webcam-status" id="webcamStatus">Inactiva</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Microphone -->
+      <div class="io-section">
+        <label class="io-label">🎤 Micrófono (oír)</label>
+        <div class="mic-container">
+          <canvas id="micCanvas" width="280" height="60"></canvas>
+          <div class="draw-controls">
+            <button class="small-btn" id="toggleMic">▶ Activar</button>
+            <span class="webcam-status" id="micStatus">Inactivo</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Response -->
+      <div class="io-section">
+        <label class="io-label">💬 Respuesta</label>
+        <div class="response-box" id="responseBox">
+          <p class="placeholder">El cerebro aún no ha respondido...</p>
+        </div>
+      </div>
+
+      <!-- Aprendizaje (Corteza Visual) -->
+      <div class="io-section">
+        <label class="io-label">🔬 Aprendizaje — Corteza Visual</label>
+        <div class="learning-box" id="learningBox">
+          <div class="learning-metric">
+            <span class="learning-metric-label">Estabilidad del engrama</span>
+            <div class="learning-bar-track">
+              <div class="learning-bar-fill" id="learnStabilityBar"></div>
+            </div>
+            <span class="learning-metric-val" id="learnStabilityVal">0%</span>
+          </div>
+          <div class="learning-metric">
+            <span class="learning-metric-label">Convergencia (Σ|Δw|/tick)</span>
+            <div class="learning-bar-track">
+              <div class="learning-bar-fill convergence" id="learnWeightBar"></div>
+            </div>
+            <span class="learning-metric-val" id="learnWeightVal">0.00</span>
+          </div>
+          <div class="learning-metric">
+            <span class="learning-metric-label">Actividad cortical</span>
+            <div class="learning-bar-track">
+              <div class="learning-bar-fill activity" id="learnActivityBar"></div>
+            </div>
+            <span class="learning-metric-val" id="learnActivityVal">0%</span>
+          </div>
+          <div class="learning-engram-label">
+            Engrama activo (<span id="learnEngramSize">0</span> neuronas)
+          </div>
+          <div class="learning-engram" id="learnEngram"></div>
+          <p class="learning-hint" id="learnHint">Envía un dibujo o webcam repetidamente: verás subir la estabilidad y bajar Σ|Δw| a medida que el patrón se consolida.</p>
+        </div>
+      </div>
+
+      <!-- Aprendizaje (Hipocampo CA3) -->
+      <div class="io-section">
+        <label class="io-label">🧬 Aprendizaje — Hipocampo (memoria episódica)</label>
+        <div class="learning-box" id="learningBoxHippo">
+          <div class="learning-metric">
+            <span class="learning-metric-label">Estabilidad del atractor</span>
+            <div class="learning-bar-track">
+              <div class="learning-bar-fill" id="hippoStabilityBar"></div>
+            </div>
+            <span class="learning-metric-val" id="hippoStabilityVal">0%</span>
+          </div>
+          <div class="learning-metric">
+            <span class="learning-metric-label">Plasticidad (Σ|Δw|/tick)</span>
+            <div class="learning-bar-track">
+              <div class="learning-bar-fill convergence" id="hippoWeightBar"></div>
+            </div>
+            <span class="learning-metric-val" id="hippoWeightVal">0.00</span>
+          </div>
+          <div class="learning-metric">
+            <span class="learning-metric-label">Actividad CA3</span>
+            <div class="learning-bar-track">
+              <div class="learning-bar-fill activity" id="hippoActivityBar"></div>
+            </div>
+            <span class="learning-metric-val" id="hippoActivityVal">0%</span>
+          </div>
+          <div class="learning-engram-label">
+            Engrama recuperado (<span id="hippoEngramSize">0</span> neuronas) · <span id="hippoMemCount">0</span> episodios
+          </div>
+          <div class="learning-engram" id="hippoEngram"></div>
+          <p class="learning-hint" id="hippoHint">Cada episodio nuevo imprime pesos recurrentes en CA3. Repite una pista degradada: el atractor la completa y la estabilidad sube.</p>
+        </div>
+      </div>
+
+      <!-- Broca Chat -->
+      <div class="io-section">
+        <label class="io-label">🗣️ Broca dice</label>
+        <div class="broca-chat" id="brocaChat">
+          <p class="placeholder">Esperando actividad de Broca...</p>
+        </div>
+      </div>
+
+      <!-- Working Memory -->
+      <div class="io-section">
+        <label class="io-label">🧠 Memoria de Trabajo (7 slots)</label>
+        <div class="wm-slots" id="wmSlots">
+          <div class="wm-slot empty">1</div>
+          <div class="wm-slot empty">2</div>
+          <div class="wm-slot empty">3</div>
+          <div class="wm-slot empty">4</div>
+          <div class="wm-slot empty">5</div>
+          <div class="wm-slot empty">6</div>
+          <div class="wm-slot empty">7</div>
+        </div>
+      </div>
+
+      <!-- Sleep Button -->
+      <div class="io-section">
+        <label class="io-label">💤 Consolidación</label>
+        <div class="draw-controls">
+          <button class="small-btn" id="sleepBtn">💤 Dormir (replay)</button>
+          <span class="webcam-status" id="sleepStatus">Despierto</span>
+        </div>
+        <div class="brain-stats" id="brainStats">
+          <span>Memorias: <strong id="memoryCount">0</strong></span>
+          <span>Vocabulario: <strong id="vocabCount">0</strong></span>
+        </div>
+      </div>
+
+      <!-- Region Activity -->
+      <div class="io-section">
+        <label class="io-label">📊 Actividad por Región</label>
+        <div class="region-activity" id="regionActivity">
+          <!-- Se llena dinámicamente -->
+        </div>
+      </div>
+
+      <!-- Log -->
+      <div class="io-section">
+        <label class="io-label">📋 Log</label>
+        <div class="log-box" id="logBox"></div>
+      </div>
+    </section>
+  </main>
+
+  <script src="brain-viz.js"></script>
+</body>
+</html>

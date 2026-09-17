@@ -25,7 +25,10 @@
  *   6. NEUROMODULATION — in the running brain, acetylcholine widens the
  *                      thalamic gate and serotonin/cortisol raise the firing
  *                      threshold (fewer cortical neurons recruited).
- *   7. MEMORY        — one stimulus is encoded as one episode; sleep replays
+ *   7. MEMORY        — one stimulus is encoded as one episode, a re-experience
+ *                      is recognized (no duplicate) and recalled, different
+ *                      stimuli get separate episodes and evoke different
+ *                      hippocampal and prefrontal responses; sleep replays
  *                      episodes into the cortex and leaves the brain at rest.
  *   8. PERSISTENCE   — save → fresh brain → load restores weights exactly,
  *                      plus neuromodulators and learned vocabulary.
@@ -298,12 +301,39 @@ console.log('\n6. NEUROMODULATION');
 console.log('\n7. MEMORY');
 {
   const brain = newBrain();
-  perceive(brain, TEXT_A);
-  const afterOne = brain.getState().memoriesCount;
-  perceive(brain, TEXT_B);
-  const afterTwo = brain.getState().memoriesCount;
+  const hippocampus = brain.getRegion('hippocampus') as Hippocampus;
+  const episodesNow = (): number => brain.getState().memoriesCount;
+
+  const a1 = perceive(brain, TEXT_A);
+  const afterOne = episodesNow();
+  const b1 = perceive(brain, TEXT_B);
+  const afterTwo = episodesNow();
   check('one stimulus is encoded as one episode (at the event boundary)',
     afterOne === 1 && afterTwo === 2, `episodes: ${afterOne}, then ${afterTwo}`);
+
+  // Re-experience both stimuli, twice: recall (2nd) vs recall (3rd).
+  const a2 = perceive(brain, TEXT_A);
+  const b2 = perceive(brain, TEXT_B);
+  const a3 = perceive(brain, TEXT_A);
+  const b3 = perceive(brain, TEXT_B);
+  check('a re-experience is recognized, not stored again', episodesNow() === 2, `episodes after 6 stimuli: ${episodesNow()}`);
+
+  const [episodeA, episodeB] = hippocampus.replay(2)
+    .sort((x, y) => x.context.timestamp - y.context.timestamp)
+    .map((episode) => episode.pattern);
+  const overlap = Hippocampus.overlapBinary(episodeA, episodeB);
+  check('different stimuli get well-separated episode codes', overlap <= 0.1, `overlap=${overlap.toFixed(2)}`);
+
+  for (const id of ['hippocampus', 'prefrontalCortex'] as const) {
+    const same = Math.min(correlation(a2.counts[id], a3.counts[id]), correlation(b2.counts[id], b3.counts[id]));
+    const diff = correlation(a3.counts[id], b3.counts[id]);
+    check(`${id}: recalls the same stimulus alike, and different stimuli differently`,
+      same >= 0.8 && diff <= 0.3, `r(same)=${same.toFixed(2)} r(different)=${diff.toFixed(2)}`);
+  }
+  const novelVsRecalled = correlation(a1.counts.hippocampus, a2.counts.hippocampus);
+  check('a first experience looks different from its recall (novelty vs memory)',
+    novelVsRecalled < correlation(a2.counts.hippocampus, a3.counts.hippocampus) && b1.counts.hippocampus.length > 0,
+    `r(1st,2nd)=${novelVsRecalled.toFixed(2)}`);
 
   const pfcWeights = brain.getRegion('prefrontalCortex')!.getNetworkConfig().weights;
   const before = pfcWeights.slice();
@@ -315,8 +345,12 @@ console.log('\n7. MEMORY');
     `episodes=${stats.consolidatedLabels.length} replays=${stats.memoriesReplayed} PFC Σ|Δw|=${change.toFixed(1)}`);
 
   for (let t = 0; t < 50; t++) brain.tick();
-  check('the brain wakes up at rest, with its episodes intact',
-    isSilent(brain) && brain.getState().memoriesCount === 2);
+  check('the brain wakes up at rest, with its episodes intact', isSilent(brain) && episodesNow() === 2);
+
+  const afterSleep = perceive(brain, TEXT_A);
+  check('an episode is still recalled after sleep (downscaling + replay keep the engram)',
+    episodesNow() === 2 && correlation(afterSleep.counts.hippocampus, a3.counts.hippocampus) >= 0.8,
+    `r=${correlation(afterSleep.counts.hippocampus, a3.counts.hippocampus).toFixed(2)}`);
 }
 
 // ── 8. PERSISTENCE ──────────────────────────────────────────────────────────
@@ -375,41 +409,6 @@ console.log('\n9. DETERMINISM');
 // ── KNOWN GAPS ──────────────────────────────────────────────────────────────
 console.log('\nKNOWN GAPS (audit findings not fixed yet — reported, not enforced)');
 {
-  // G1. The PFC integrates the hippocampus and the amygdala; both outputs are
-  // largely content-agnostic (see G2/G3 and the amygdala's tonic affect
-  // population), so over a whole wave the PFC barely tells stimuli apart.
-  {
-    const same = correlation(waveA1.counts.prefrontalCortex, waveA2.counts.prefrontalCortex);
-    const diff = correlation(waveA1.counts.prefrontalCortex, waveB.counts.prefrontalCortex);
-    gap('G1 the prefrontal response over a wave is content-specific', same >= 0.8 && diff <= 0.3,
-      `r(A,A')=${same.toFixed(2)} r(A,B)=${diff.toFixed(2)}; target ≥0.80 / ≤0.30`);
-  }
-
-  // G2. Episode codes: a re-experience should land on (or next to) its first
-  // episode, and a different stimulus far from it. Much better since feedback
-  // stopped driving the cortex, but not yet reliable for every seed.
-  // G3. CA3 weights only ever grow, so stored episodes merge into one big
-  // attractor and pattern completion outputs nearly the same engram for any cue.
-  {
-    const brain = newBrain();
-    const waves = [TEXT_A, TEXT_B, TEXT_A, TEXT_B].map((text) => perceive(brain, text));
-    const hippocampus = brain.getRegion('hippocampus') as Hippocampus;
-    const episodes = hippocampus.replay(10)
-      .sort((x, y) => x.context.timestamp - y.context.timestamp)
-      .map((episode) => episode.pattern);
-    // Episodes 0 and 1 are A and B; a re-experienced A either merged into
-    // episode 0 (overlap 1) or was stored right after them.
-    const same = episodes.length >= 3 ? Hippocampus.overlapBinary(episodes[0], episodes[2]) : 1;
-    const diff = Hippocampus.overlapBinary(episodes[0], episodes[1]);
-    gap('G2 episode codes separate different stimuli', same - diff >= 0.3,
-      `overlap(A,A')=${same.toFixed(2)} overlap(A,B)=${diff.toFixed(2)}; target Δ≥0.30`);
-
-    const sameOut = correlation(waves[2].counts.hippocampus, waves[0].counts.hippocampus);
-    const diffOut = correlation(waves[2].counts.hippocampus, waves[3].counts.hippocampus);
-    gap('G3 the hippocampal output (CA3 completion) is content-specific', sameOut - diffOut >= 0.3,
-      `r(A,A')=${sameOut.toFixed(2)} r(A,B)=${diffOut.toFixed(2)}; target Δ≥0.30`);
-  }
-
   // G4. The auditory cortex's voice gate reads the last 40 of its 400 inputs as
   // "the latest spectrogram frame", but the live pipeline delivers a 128-bin
   // frame (padded with zeros) and the thalamic relay code — so it never sees

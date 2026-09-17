@@ -176,6 +176,11 @@ export class Amygdala extends BrainRegion {
    */
   private static readonly APPRAISAL_INERTIA = 0.5;
 
+  /** Neurons that report the affective state (half valence, half arousal). */
+  private static readonly AFFECT_POPULATION = 20;
+  /** Amplitude of an affect spike relative to the amygdala's response gain. */
+  private static readonly AFFECT_AMPLITUDE = 0.5;
+
   /** Arousal the affective state relaxes to when there is no stimulus (wakeful rest). */
   private static readonly RESTING_AROUSAL = 0.1;
 
@@ -547,13 +552,21 @@ export class Amygdala extends BrainRegion {
       output[i] = adaptedInput[i] * responseGain;
     }
 
-    // Add a valence signal as modulation of the spikes
-    // Biology: CeA neurons encode valence in their firing rate
-    const valenceSignalStart = Math.min(copyLen, this.neuronCount - 100);
-    for (let i = valenceSignalStart; i < this.neuronCount; i++) {
-      // The last neurons encode valence and arousal directly
-      const t = (i - valenceSignalStart) / Math.max(1, this.neuronCount - valenceSignalStart);
-      output[i] = t < 0.5 ? (valence + 1) / 2 * arousal : arousal;
+    // Affect population: the last neurons report the affective state as a
+    // sparse "thermometer" code — the higher the arousal (or the valence), the
+    // more neurons of its half fire. It is kept small on purpose: with 100
+    // always-on graded neurons, the content-agnostic affect signal outweighed
+    // the ~30 content-bearing spikes relayed to the prefrontal cortex, which
+    // then responded almost identically to any stimulus.
+    const affectStart = this.neuronCount - Amygdala.AFFECT_POPULATION;
+    const half = Amygdala.AFFECT_POPULATION / 2;
+    const valenceUnits = Math.round(((valence + 1) / 2) * half);
+    const arousalUnits = Math.round(arousal * half);
+    for (let i = 0; i < Amygdala.AFFECT_POPULATION; i++) {
+      const fires = i < half ? i < valenceUnits : i - half < arousalUnits;
+      // Same scale as the relayed content (which arrives through the weak
+      // thalamic low road): affect colours the message, it does not shout over it.
+      output[affectStart + i] = fires ? responseGain * Amygdala.AFFECT_AMPLITUDE : 0;
     }
 
     // Apply neuromodulation gain

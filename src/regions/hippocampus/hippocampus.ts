@@ -91,6 +91,15 @@ export interface HippocampusConfig {
    * reinforced) instead of a new one.
    */
   noveltyOverlapThreshold: number;
+  /**
+   * Strength of the cue's persistent drive during completion, as a fraction of
+   * the recurrent input a fully supported unit receives (kActive × maxWeight).
+   * It must stay below the support that a few correct units give to a missing
+   * one (3 units × a single imprint of 0.5 = 1.5), or a degraded cue could no
+   * longer be completed; and above the support from a chance overlap of 1–2
+   * units with some other episode (≤ 1.0), or novel cues would drift.
+   */
+  cueDriveFraction: number;
   /** Longest stretch of input bound into a single episode (ticks). */
   maxEventTicks: number;
   /**
@@ -111,6 +120,7 @@ const DEFAULT_HIPPO_CONFIG: HippocampusConfig = {
   attractorIterations: 6,
   inputEnergyThreshold: 1.0,
   noveltyOverlapThreshold: 0.9,
+  cueDriveFraction: 0.0625,
   maxEventTicks: 250,
   eventGapTicks: 25,
   dgSeed: 0x1d0c_a3e5,
@@ -157,6 +167,8 @@ export class Hippocampus extends BrainRegion {
   // --- Event segmentation (one episode per event, not per tick) ---
   /** Input accumulated over the event in progress. */
   private readonly eventInput: Float32Array;
+  /** Scratch buffer: running mean of the event in progress. */
+  private readonly eventMeanBuf: Float32Array;
   /** Ticks with input in the event in progress (0 = no event). */
   private eventTicks: number = 0;
   /** Consecutive silent ticks since the last input of the event in progress. */
@@ -222,6 +234,7 @@ export class Hippocampus extends BrainRegion {
     this.sortIdx = new Int32Array(neuronCount);
     this.lastStoredCode = new Float32Array(neuronCount);
     this.eventInput = new Float32Array(inputCount);
+    this.eventMeanBuf = new Float32Array(inputCount);
     this.prevEngram = new Float32Array(neuronCount);
     this.lastEngram = new Float32Array(neuronCount);
   }
@@ -249,13 +262,23 @@ export class Hippocampus extends BrainRegion {
     const fanIn = this.cfg.dgFanIn;
     const act = this.actBuf;
 
+    // Feedforward inhibition: remove the common mode of the input.
+    // Biology: perforant-path afferents also excite DG interneurons, which
+    // subtract the overall level of cortical activity from every granule cell
+    // (Ewell & Jones, 2010). Without it, a dense input drives the same granule
+    // cells — those whose afferents happen to be mostly excitatory — whatever
+    // the pattern is, and different events get heavily overlapping codes.
+    let mean = 0;
+    for (let i = 0; i < input.length; i++) mean += input[i];
+    mean /= Math.max(1, input.length);
+
     // Fixed random projection + ReLU.
     for (let u = 0; u < n; u++) {
       const base = u * fanIn;
       let sum = 0;
       for (let f = 0; f < fanIn; f++) {
         const idx = this.dgIdx[base + f];
-        const v = idx < input.length ? input[idx] : 0;
+        const v = idx < input.length ? input[idx] - mean : 0;
         sum += this.dgSign[base + f] * v;
       }
       act[u] = sum > 0 ? sum : 0;
@@ -354,12 +377,29 @@ export class Hippocampus extends BrainRegion {
    * @returns Reconstructed sparse code (Float32Array dim neuronCount)
    */
   patternCompletion(partialInput: Float32Array): Float32Array {
+    // Initial state = DG code of the cue (may be incomplete/noisy).
+    this.dgEncodeInto(partialInput, this.stateBuf);
+    return this.completeFromCode(this.stateBuf);
+  }
+
+  /**
+   * Attractor dynamics from a DG code. `cueCode` may be `this.stateBuf`.
+   *
+   * The cue keeps driving CA3 while the recurrent dynamics settle (the mossy
+   * fibre "detonator" input does not vanish after the first ms): cue units get
+   * a constant bonus on top of their recurrent input. A cue inside the basin
+   * of a stored episode is still completed — the missing units receive far
+   * more recurrent support than the wrong ones receive from the cue — but a
+   * NOVEL cue, with no recurrent support, stays itself instead of drifting
+   * into whatever attractor happens to share a couple of units with it.
+   */
+  private completeFromCode(cueCode: Float32Array): Float32Array {
     const n = this.neuronCount;
+    const cue = new Float32Array(cueCode);
+    const cueDrive = this.cfg.cueDriveFraction * this.kActive;
     let state = this.stateBuf;
     let next = this.nextBuf;
-
-    // Initial state = DG code of the cue (may be incomplete/noisy).
-    this.dgEncodeInto(partialInput, state);
+    if (cueCode !== state) state.set(cueCode);
 
     for (let iter = 0; iter < this.cfg.attractorIterations; iter++) {
       // h[i] = Σ_j W[i,j] · state[j], traversing only active j (sparse).
@@ -373,7 +413,7 @@ export class Hippocampus extends BrainRegion {
         const row = i * n;
         let h = 0;
         for (let a = 0; a < activeJ.length; a++) h += this.weights[row + activeJ[a]];
-        this.actBuf[i] = h;
+        this.actBuf[i] = h + cueDrive * cue[i];
       }
 
       next.fill(0);
@@ -444,6 +484,23 @@ export class Hippocampus extends BrainRegion {
   }
 
   /**
+   * Sleep-dependent synaptic downscaling of the CA3 recurrent weights.
+   *
+   * Biology: synaptic homeostasis (Tononi & Cirelli, 2014) — wakefulness only
+   * potentiates, sleep renormalizes. The Hebbian imprint here only ever
+   * increases weights, so without downscaling every engram eventually
+   * saturates and the episodes merge into one giant attractor that completes
+   * any cue to the same pattern. Episodes that are replayed are re-imprinted
+   * and survive; the ones never rehearsed fade along with their index entry.
+   *
+   * @param factor - Multiplicative factor applied to every weight (0–1)
+   */
+  downscale(factor: number): void {
+    if (!(factor > 0 && factor < 1)) return;
+    for (let i = 0; i < this.weights.length; i++) this.weights[i] *= factor;
+  }
+
+  /**
    * Replay priority: trace strength plus a recency bonus that fades with the
    * episode's age (a raw timestamp term would grow without bound and drown
    * the strength after a few seconds of simulation).
@@ -503,8 +560,15 @@ export class Hippocampus extends BrainRegion {
     let dw = 0;
     if (this.eventTicks >= this.cfg.maxEventTicks) dw = this.closeEvent();
 
-    // Complete via attractor dynamics → reconstructed engram.
-    const completed = this.patternCompletion(input);
+    // Complete via attractor dynamics → reconstructed engram. The cue is the
+    // event SO FAR (running mean), not the instantaneous volley: hippocampal
+    // activity integrates over the event, so its output is stable while the
+    // event unfolds and — if the event is a re-experience — settles on the
+    // stored episode, which was imprinted from the same kind of code.
+    const eventSoFar = this.eventMeanBuf;
+    const ticks = Math.max(1, this.eventTicks);
+    for (let i = 0; i < eventSoFar.length; i++) eventSoFar[i] = this.eventInput[i] / ticks;
+    const completed = this.eventTicks > 0 ? this.patternCompletion(eventSoFar) : this.patternCompletion(input);
 
     const gain = modulationEffects.spikeGainMultiplier ?? 1.0;
     const out = new Float32Array(this.neuronCount);
@@ -547,11 +611,15 @@ export class Hippocampus extends BrainRegion {
 
     const code = this.patternSeparation(mean);
 
-    // Familiarity: best match in the episodic index.
+    // Familiarity is judged on what CA3 RECALLS from the event's code, not on
+    // the raw code: a re-experience never reproduces the first code exactly
+    // (the DG amplifies small differences — that is its job), but it falls in
+    // the stored episode's basin and completes to it.
+    const recalled = this.completeFromCode(code);
     let best: EpisodicMemory | null = null;
     let bestOverlap = 0;
     for (const memory of this.episodicMemories) {
-      const overlap = Hippocampus.overlapBinary(code, memory.pattern);
+      const overlap = Hippocampus.overlapBinary(recalled, memory.pattern);
       if (overlap > bestOverlap) {
         bestOverlap = overlap;
         best = memory;

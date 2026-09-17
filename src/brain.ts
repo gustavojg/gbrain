@@ -208,6 +208,15 @@ export class DigitalBrain {
   /** Input channels of the visual cortex. */
   private static readonly VISUAL_CORTEX_INPUTS = 1000;
 
+  /**
+   * Regions whose weights are NOT restored from legacy (protocol v1) files.
+   * v1 files were written while the brain never rested and the hippocampus had
+   * neither DG inhibition nor synaptic downscaling: their CA3 weights hold a
+   * saturated cluster of noise engrams that would capture new episodes. (The
+   * episodic index itself was never persisted, so no memory is lost.)
+   */
+  private static readonly RESET_ON_LEGACY_STATE: ReadonlySet<string> = new Set(['hippocampus']);
+
   // ── Sleep (memory consolidation) ──
   /** Cortical target of hippocampal replay (the hippocampus → PFC projection). */
   private static readonly CONSOLIDATION_TARGET = 'prefrontalCortex';
@@ -217,6 +226,8 @@ export class DigitalBrain {
    */
   private static readonly SLEEP_REPLAY_EPISODES = 8;
   private static readonly SLEEP_REPLAY_CYCLES = 3;
+  /** Per-sleep downscaling of the CA3 recurrent weights (replayed engrams are re-imprinted). */
+  private static readonly SLEEP_SYNAPTIC_DOWNSCALING = 0.97;
   /** Per-sleep decay of the episodic index (emotional episodes decay slower). */
   private static readonly SLEEP_EPISODIC_DECAY = 0.97;
 
@@ -1043,6 +1054,7 @@ export class DigitalBrain {
       stats = this.consolidationEngine.consolidate(entries, this.regions);
       cortex.settle();
       hippocampus.forget(DigitalBrain.SLEEP_EPISODIC_DECAY);
+      hippocampus.downscale(DigitalBrain.SLEEP_SYNAPTIC_DOWNSCALING);
 
       console.log(`   Memories replayed: ${stats.memoriesReplayed}`);
       console.log(`   Synapses strengthened: ${stats.synapsesStrengthened}`);
@@ -1168,6 +1180,11 @@ export class DigitalBrain {
     const skipped: string[] = [];
     for (const [id, region] of this.regions) {
       const rd = data.regions.get(id);
+      if (rd && data.version < 2 && DigitalBrain.RESET_ON_LEGACY_STATE.has(id)) {
+        console.warn(`⚠️  ${id}: weights from a legacy (v${data.version}) state are not restored — starting fresh.`);
+        skipped.push(id);
+        continue;
+      }
       if (
         rd &&
         rd.weights.length === region.getNetworkConfig().weights.length &&

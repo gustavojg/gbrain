@@ -462,13 +462,29 @@ export class PrefrontalCortex extends BrainRegion {
     const activations = new Float32Array(this.neuronCount);
     const inputLen = Math.min(spikes.length, this.inputCount);
 
+    // Feedforward inhibition: every neuron is inhibited in proportion to the
+    // overall afferent activity (mean input × its total synaptic weight).
+    // Biology: afferents also drive local interneurons, which cancel the
+    // common mode of the excitation (balanced E/I; Isaacson & Scanziani, 2011).
+    // Without it the winners are largely the neurons with the largest total
+    // weight — the same ones for ANY input — because the PFC's afferent codes
+    // are sparse (a few dozen spikes) and the pattern-specific part of the
+    // drive is small next to `activeInputs × meanWeight`.
+    let meanInput = 0;
+    for (let j = 0; j < inputLen; j++) meanInput += spikes[j];
+    meanInput /= Math.max(1, inputLen);
+
     for (let n = 0; n < this.neuronCount; n++) {
       const baseOffset = n * this.inputCount;
       let sum = 0;
+      let totalWeight = 0;
 
       for (let j = 0; j < inputLen; j++) {
-        sum += this.weights[baseOffset + j] * spikes[j];
+        const w = this.weights[baseOffset + j];
+        totalWeight += w;
+        sum += w * spikes[j];
       }
+      sum = Math.max(0, sum - meanInput * totalWeight);
 
       // Apply neuromodulation gain and modulated threshold
       sum *= modulationEffects.spikeGainMultiplier;

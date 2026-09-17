@@ -141,6 +141,8 @@ export interface LoadedBrainData {
   regions: Map<string, LoadedRegionData>;
   /** State of the neuromodulators (if it was saved) */
   modulatorState: NeuromodulatorSnapshot | null;
+  /** Protocol version the file was written with */
+  version: number;
 }
 
 /**
@@ -521,7 +523,7 @@ export class BrainPersistence {
       );
     }
 
-    return { regions, modulatorState };
+    return { regions, modulatorState, version };
   }
 
   /**

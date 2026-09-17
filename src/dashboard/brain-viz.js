@@ -1311,12 +1311,13 @@ function playVocalization(v) {
 
   const status = document.getElementById('voiceStatus');
   if (status) {
-    status.textContent = v.source === 'imitation'
-      ? `Repeating what it heard — F1 ${f1.toFixed(0)} Hz · F2 ${f2.toFixed(0)} Hz`
-      : `Babbling — F1 ${f1.toFixed(0)} Hz · F2 ${f2.toFixed(0)} Hz`;
+    const what = { imitation: 'Repeating what it heard', naming: 'Saying what this reminds it of', babble: 'Babbling' }[v.source] || 'Vocalizing';
+    status.textContent = `${what} — F1 ${f1.toFixed(0)} Hz · F2 ${f2.toFixed(0)} Hz`;
   }
   if (v.source === 'imitation') {
     addLog('info', `🗣️ Repeats a sound it heard (F1 ${f1.toFixed(0)}, F2 ${f2.toFixed(0)} Hz)`);
+  } else if (v.source === 'naming') {
+    addLog('info', `🗣️ Says the sound that goes with what it perceives (F1 ${f1.toFixed(0)}, F2 ${f2.toFixed(0)} Hz)`);
   }
   if (!voiceEnabled || !voiceCtx) return;
 

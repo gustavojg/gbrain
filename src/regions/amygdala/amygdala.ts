@@ -159,6 +159,9 @@ export class Amygdala extends BrainRegion {
    */
   private readonly emotionalInertia: number = 0.7;
 
+  /** Arousal the affective state relaxes to when there is no stimulus (wakeful rest). */
+  private static readonly RESTING_AROUSAL = 0.1;
+
   /**
    * Creates the amygdala.
    *
@@ -407,6 +410,27 @@ export class Amygdala extends BrainRegion {
   ): Float32Array {
     // Adapt dimensionality
     const adaptedInput = this.adaptInput(spikes);
+
+    // 0. No stimulus → nothing to evaluate. Silence is not a "novel stimulus":
+    // the affective state relaxes toward its resting baseline and the region
+    // stays silent (otherwise its tonic valence/arousal output re-excites the
+    // thalamus every tick and the whole brain never comes to rest).
+    let hasStimulus = false;
+    for (let i = 0; i < adaptedInput.length; i++) {
+      if (adaptedInput[i] > 0) {
+        hasStimulus = true;
+        break;
+      }
+    }
+    if (!hasStimulus) {
+      this.emotionalState = {
+        valence: this.emotionalState.valence * this.emotionalInertia,
+        arousal:
+          this.emotionalState.arousal * this.emotionalInertia +
+          Amygdala.RESTING_AROUSAL * (1 - this.emotionalInertia),
+      };
+      return new Float32Array(this.neuronCount);
+    }
 
     // 1. Evaluate the emotional content of the stimulus
     this.evaluateStimulus(adaptedInput, modulationEffects);

@@ -346,8 +346,9 @@ export class DigitalBrain {
     this.bus.onReceive('brocaWernicke', (packet: SpikePacket) => {
       const broca = this.regions.get('broca');
       const wernicke = this.regions.get('wernicke');
-      if (wernicke) wernicke.feedInput(packet.spikes, packet.timestamp);
-      if (broca) broca.feedInput(packet.spikes, packet.timestamp);
+      // Stamp with the ARRIVAL time (see addRegion).
+      if (wernicke) wernicke.feedInput(packet.spikes, this.currentTime);
+      if (broca) broca.feedInput(packet.spikes, this.currentTime);
     });
 
     // Compute the real total number of neurons
@@ -369,7 +370,10 @@ export class DigitalBrain {
 
     // Subscribe the region to the bus to receive spikes
     this.bus.onReceive(region.id, (packet: SpikePacket) => {
-      region.feedInput(packet.spikes, packet.timestamp);
+      // Stamp with the ARRIVAL time, not the send time: the axonal delay has
+      // already elapsed on the bus, and the region's sensory trace must start
+      // when the spikes actually reach it.
+      region.feedInput(packet.spikes, this.currentTime);
     });
 
     console.log(`  🧩 Region added: ${region.id} (${region.name})`);

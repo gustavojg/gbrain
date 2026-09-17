@@ -487,6 +487,13 @@ export class PrefrontalCortex extends BrainRegion {
     // 2. k-WTA competitive selection
     const outputSpikes = this.applyKWTA(activations);
 
+    // LIF reset: a neuron that fires discharges its membrane. Without it the
+    // integrator keeps its winners above the floor for hundreds of ticks after
+    // the input is gone, and the region never comes to rest.
+    for (let n = 0; n < this.neuronCount; n++) {
+      if (outputSpikes[n] > 0) this.potentials[n] = 0;
+    }
+
     // 3. Update spike state
     this.spikes.set(outputSpikes);
 

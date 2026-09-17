@@ -257,7 +257,10 @@ export abstract class BrainRegion {
     }
 
     // Retrieve recent inputs from the sensory buffer
-    const recentEntries = this.sensoryBuffer.getRecent(dt * 2);
+    // Window anchored to the CURRENT time: an input that is not refreshed
+    // fades out of the sensory trace, so a region with no afferent traffic
+    // returns to rest instead of re-reading its last packet forever.
+    const recentEntries = this.sensoryBuffer.getRecent(dt * 2, this.currentTime);
     let inputSpikes: Float32Array;
 
     if (recentEntries.length > 0) {

@@ -285,6 +285,13 @@ export class Thalamus extends BrainRegion {
    * @param timestamp - Current simulation time (ms)
    * @returns Vector filtered by attention
    */
+  /**
+   * Amplitude of the intrinsic noise added to each relay neuron's potential.
+   * It only breaks ties between driven neurons: it is also the activation
+   * floor, so noise by itself can never make a neuron fire.
+   */
+  private static readonly NOISE_AMPLITUDE = 0.01;
+
   processInput(spikes: Float32Array, _modulationEffects: ModulationEffects): Float32Array {
     // 1. Apply attentional filter (without modulation for now)
     const attentionResult = this.processAttention(spikes);
@@ -303,7 +310,7 @@ export class Thalamus extends BrainRegion {
       }
 
       // Neuronal noise (intrinsic variability)
-      excitation += Math.random() * 0.01;
+      excitation += Math.random() * Thalamus.NOISE_AMPLITUDE;
       localPotentials[n] = excitation;
     }
 
@@ -313,17 +320,17 @@ export class Thalamus extends BrainRegion {
     for (let i = 0; i < this.neuronCount; i++) indices[i] = i;
     indices.sort((a, b) => localPotentials[b] - localPotentials[a]);
 
-    // Activate only the top-k neurons
+    // Activate only the top-k neurons — and only those whose synaptic drive
+    // exceeds what noise alone can produce. Lateral inhibition selects among
+    // driven neurons; it must not conjure activity out of silence (otherwise
+    // the thalamus relays k random "winners" every tick and the whole brain
+    // is never at rest).
     const activeSpikes = new Float32Array(this.neuronCount);
-    for (let i = 0; i < k; i++) {
-      const winnerIdx = indices[i];
-      this.localNeurons[winnerIdx].fired = true;
-      activeSpikes[winnerIdx] = 1.0;
-    }
-
-    // Reset non-winners
-    for (let i = k; i < this.neuronCount; i++) {
-      this.localNeurons[indices[i]].fired = false;
+    for (let i = 0; i < this.neuronCount; i++) {
+      const idx = indices[i];
+      const fires = i < k && localPotentials[idx] > Thalamus.NOISE_AMPLITUDE;
+      this.localNeurons[idx].fired = fires;
+      if (fires) activeSpikes[idx] = 1.0;
     }
 
     return activeSpikes;

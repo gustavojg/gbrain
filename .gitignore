@@ -5,8 +5,12 @@ node_modules/
 dist/
 dist-test/
 
-# Brain state snapshots (binary persistence)
+# Brain state snapshots (binary persistence + lexicon sidecar, backups, temp files)
 *.bin
+*.bin.bak
+*.bin.tmp
+*.bin.lexicon.json
+*.bin.lexicon.json.tmp
 
 # Environment / secrets
 .env

@@ -13,7 +13,7 @@
  * ┌─────────────────────────────────────────────────────────────┐
  * │ HEADER                                                      │
  * │  magic (4 bytes) = 0xBRA1001 ("BRAIN001")                  │
- * │  version (4 bytes) = 1                                      │
+ * │  version (4 bytes) = 2  (1 = legacy, no CRC trailer)        │
  * │  numRegions (4 bytes)                                       │
  * │  modulatorBlockOffset (4 bytes)                             │
  * │  modulatorBlockSize (4 bytes)                               │
@@ -30,10 +30,19 @@
  * │  numModulators(4) + per modulator:                          │
  * │    nameLength(4) + name(string) + level(4) + baseline(4)   │
  * │    + decayRate(4) + lastUpdate(8)                           │
+ * ├─────────────────────────────────────────────────────────────┤
+ * │ TRAILER (version ≥ 2)                                       │
+ * │  crc32 (4 bytes) of every preceding byte                    │
  * └─────────────────────────────────────────────────────────────┘
+ *
+ * Durability: files are written to `<path>.tmp`, fsynced and renamed over the
+ * target, keeping the previous snapshot as `<path>.bak`. A crash mid-write can
+ * therefore never leave a truncated state file as the only copy, and the CRC
+ * lets `load()` reject a corrupted file instead of restoring garbage weights.
  */
 
 import * as fs from 'fs';
+import * as zlib from 'zlib';
 import type { BrainRegion } from '../brain-region.js';
 import type {
   NeuromodulatorSystem,
@@ -45,8 +54,61 @@ import type {
 /** Magic number to identify digital brain files: "BRA1N001" encoded */
 export const MAGIC_NUMBER = 0xb4a10001;
 
-/** Current version of the binary protocol */
-export const PROTOCOL_VERSION = 1;
+/** Current version of the binary protocol (2 adds the CRC-32 trailer) */
+export const PROTOCOL_VERSION = 2;
+
+/** Oldest version `load()` still understands (no CRC trailer). */
+const LEGACY_PROTOCOL_VERSION = 1;
+
+/** Size of the CRC-32 trailer in bytes. */
+const CRC_SIZE = 4;
+
+/** Suffix of the previous snapshot kept next to the state file. */
+export const BACKUP_SUFFIX = '.bak';
+
+let crcTable: Uint32Array | null = null;
+
+/**
+ * CRC-32 (IEEE) of a buffer. Uses the native `zlib.crc32` when the runtime
+ * has it (Node ≥ 20.15 / 22.2), otherwise a table-driven fallback.
+ */
+export function crc32(data: Buffer): number {
+  const native = (zlib as { crc32?: (data: Buffer) => number }).crc32;
+  if (typeof native === 'function') return native(data) >>> 0;
+
+  if (!crcTable) {
+    crcTable = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) {
+      let c = n;
+      for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+      crcTable[n] = c >>> 0;
+    }
+  }
+  let crc = 0xffffffff;
+  for (let i = 0; i < data.length; i++) {
+    crc = crcTable[(crc ^ data[i]) & 0xff] ^ (crc >>> 8);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+/**
+ * Writes a file atomically: temp file + fsync + rename. When `keepBackup` is
+ * set, the previous version survives as `<path>.bak`.
+ */
+export function writeFileAtomic(filePath: string, data: Buffer | string, keepBackup = false): void {
+  const tmpPath = `${filePath}.tmp`;
+  const fd = fs.openSync(tmpPath, 'w');
+  try {
+    fs.writeFileSync(fd, data);
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+  if (keepBackup && fs.existsSync(filePath)) {
+    fs.renameSync(filePath, `${filePath}${BACKUP_SUFFIX}`);
+  }
+  fs.renameSync(tmpPath, filePath);
+}
 
 /**
  * Size of the main header in bytes:
@@ -305,7 +367,8 @@ export class BrainPersistence {
     const totalSize =
       HEADER_SIZE + offsetTableSize +
       regionBuffers.reduce((sum, rb) => sum + rb.buffer.length, 0) +
-      modulatorBlockSize;
+      modulatorBlockSize +
+      CRC_SIZE;
 
     const fileBuffer = Buffer.alloc(totalSize);
     let writeOffset = 0;
@@ -340,9 +403,13 @@ export class BrainPersistence {
 
     // Modulator block
     modulatorBuffer.copy(fileBuffer, writeOffset);
+    writeOffset += modulatorBuffer.length;
 
-    // 5. Write to disk
-    fs.writeFileSync(filePath, fileBuffer);
+    // Trailer: CRC-32 of everything before it
+    fileBuffer.writeUInt32LE(crc32(fileBuffer.subarray(0, writeOffset)), writeOffset);
+
+    // 5. Write to disk (atomically, keeping the previous snapshot as .bak)
+    writeFileAtomic(filePath, fileBuffer, true);
   }
 
   /**
@@ -360,6 +427,10 @@ export class BrainPersistence {
     const fileBuffer = fs.readFileSync(filePath);
     let readOffset = 0;
 
+    if (fileBuffer.length < HEADER_SIZE) {
+      throw new Error(`[BrainPersistence] Archivo truncado (${fileBuffer.length} bytes)`);
+    }
+
     // Read header
     const magic = fileBuffer.readUInt32LE(readOffset);
     readOffset += 4;
@@ -372,11 +443,24 @@ export class BrainPersistence {
 
     const version = fileBuffer.readUInt32LE(readOffset);
     readOffset += 4;
-    if (version !== PROTOCOL_VERSION) {
+    if (version !== PROTOCOL_VERSION && version !== LEGACY_PROTOCOL_VERSION) {
       throw new Error(
         `[BrainPersistence] Versión de protocolo incompatible: ${version}. ` +
           `Esperada: ${PROTOCOL_VERSION}`
       );
+    }
+
+    // Verify integrity before trusting any offset in the file.
+    if (version >= 2) {
+      const bodyLength = fileBuffer.length - CRC_SIZE;
+      const stored = fileBuffer.readUInt32LE(bodyLength);
+      const actual = crc32(fileBuffer.subarray(0, bodyLength));
+      if (stored !== actual) {
+        throw new Error(
+          `[BrainPersistence] CRC inválido (archivo corrupto): ` +
+            `0x${actual.toString(16)} ≠ 0x${stored.toString(16)}`
+        );
+      }
     }
 
     const numRegions = fileBuffer.readUInt32LE(readOffset);

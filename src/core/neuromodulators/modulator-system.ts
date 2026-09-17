@@ -143,6 +143,10 @@ export class NeuromodulatorSystem {
     const state = this.modulators.get(type);
     if (!state) return;
 
+    // A non-finite amount would turn the level into NaN, which no decay can
+    // ever recover from (and which would then be persisted to disk).
+    if (!Number.isFinite(amount)) return;
+
     // Clamp to the range [0, 1]
     state.level = Math.min(1.0, Math.max(0, state.level + amount));
     state.lastUpdate = Date.now();
@@ -261,9 +265,23 @@ export class NeuromodulatorSystem {
   deserialize(snapshot: NeuromodulatorSnapshot): void {
     for (const [typeStr, state] of Object.entries(snapshot.modulators)) {
       const type = typeStr as ModulatorType;
-      if (this.modulators.has(type)) {
-        this.modulators.set(type, { ...state });
-      }
+      const current = this.modulators.get(type);
+      if (!current) continue;
+
+      // Never trust persisted values blindly: a corrupted snapshot (e.g. a
+      // NaN level saved by an older build) must not poison the new session.
+      const baseline = Number.isFinite(state.baseline)
+        ? Math.min(1, Math.max(0, state.baseline))
+        : current.baseline;
+      const level = Number.isFinite(state.level)
+        ? Math.min(1, Math.max(0, state.level))
+        : baseline;
+      const decayRate = Number.isFinite(state.decayRate) && state.decayRate > 0
+        ? state.decayRate
+        : current.decayRate;
+      const lastUpdate = Number.isFinite(state.lastUpdate) ? state.lastUpdate : 0;
+
+      this.modulators.set(type, { level, baseline, decayRate, lastUpdate });
     }
   }
 

@@ -26,7 +26,7 @@ import { Connectome } from './core/bus/connectome.js';
 import { NeuromodulatorSystem, ModulatorType, type ModulationEffects } from './core/neuromodulators/modulator-system.js';
 import { type BrainRegion, type RegionActivity } from './core/brain-region.js';
 import { ConsolidationEngine } from './core/memory/consolidation.js';
-import { BrainPersistence } from './core/persistence/binary-protocol.js';
+import { BrainPersistence, BACKUP_SUFFIX, writeFileAtomic } from './core/persistence/binary-protocol.js';
 import { VisualEncoder } from './encoders/visual-encoder.js';
 import { AudioEncoder } from './encoders/audio-encoder.js';
 import { TextEncoder as BrainTextEncoder } from './encoders/text-encoder.js';
@@ -76,8 +76,14 @@ export interface BrainState {
   /** Vocabulary-acquisition stats (learned words, pending exposures). */
   vocabulary?: {
     total: number;
+    /** Most recent words learned this session (trimmed for streaming). */
     learnedThisSession: string[];
+    /** Total words learned this session (not trimmed). */
+    learnedCount: number;
+    /** Pending words closest to the threshold (trimmed for streaming). */
     pending: Array<{ word: string; count: number }>;
+    /** Total pending words (not trimmed). */
+    pendingCount: number;
     threshold: number;
   };
   /** Visual cortex learning metrics (engram, stability, convergence). */
@@ -117,6 +123,17 @@ export interface PerceptionResult {
   activeRegions: string[];
   /** Processing time (simulated ms) */
   processingTime: number;
+}
+
+/** Options shared by the perception entry points (`see`, `hear`, `read`). */
+export interface PerceptionOptions {
+  /**
+   * Run the propagation ticks inline (default `true`). Pass `false` to only
+   * inject the stimulus and let the caller drive `tick()` — the server does
+   * this through the PerceptionScheduler so the event loop is never blocked —
+   * then build the result with `describePerception()`.
+   */
+  propagate?: boolean;
 }
 
 /** Event emitted by the brain */
@@ -174,11 +191,40 @@ export class DigitalBrain {
    */
   private static readonly LEARN_THRESHOLD = 3;
 
+  /** Ticks a perception needs to propagate through the connectome (~50 ms simulated). */
+  static readonly PERCEPTION_TICKS = 50;
+
   /** Minimum token length to consider for acquisition (filters noise). */
   private static readonly MIN_WORD_LEN = 3;
 
-  /** Unknown words seen so far → exposure count (pending acquisition). */
+  /** Maximum token length to consider for acquisition (filters pasted junk). */
+  private static readonly MAX_WORD_LEN = 24;
+
+  /** Only plain alphabetic tokens (already lowercased / accent-stripped) can be learned. */
+  private static readonly LEARNABLE_WORD = /^[a-z]+$/;
+
+  /**
+   * Bounds on vocabulary acquisition. The brain is fed by untrusted users, so
+   * every structure that grows with input must be capped.
+   */
+  private static readonly MAX_PENDING_VOCAB = 500;
+  private static readonly MAX_LEXICON_SIZE = 5000;
+  private static readonly MAX_LEARNED_HISTORY = 200;
+  private static readonly MAX_WORDS_PER_READ = 100;
+
+  /** How many pending / learned words `getState()` streams to the dashboard. */
+  private static readonly STATE_PENDING_SHOWN = 6;
+  private static readonly STATE_LEARNED_SHOWN = 24;
+
+  /**
+   * Unknown words seen so far → exposure count (pending acquisition).
+   * Insertion-ordered by recency, so the first key is the least recently seen
+   * (evicted first when the map is full).
+   */
   private pendingVocab: Map<string, number> = new Map();
+
+  /** Total words committed to the lexicon during this session. */
+  private learnedCount: number = 0;
 
   /** Words learned (committed to the lexicon) during this session. */
   private learnedThisSession: string[] = [];
@@ -352,7 +398,12 @@ export class DigitalBrain {
    * @param width - Width
    * @param height - Height
    */
-  see(pixels: number[] | Float32Array | Uint8Array, width: number, height: number): PerceptionResult {
+  see(
+    pixels: number[] | Float32Array | Uint8Array,
+    width: number,
+    height: number,
+    options: PerceptionOptions = {},
+  ): PerceptionResult {
     console.log(`👁️  Perceiving image (${width}×${height})...`);
 
     // Encode to spikes
@@ -362,7 +413,7 @@ export class DigitalBrain {
     this.injectSensoryInput('visual', spikes);
 
     // Process several ticks to propagate through the brain
-    return this.processPerception('visual');
+    return this.processPerception('visual', options);
   }
 
   /**
@@ -370,23 +421,23 @@ export class DigitalBrain {
    *
    * @param audioSamples - PCM samples
    */
-  hear(audioSamples: Float32Array | number[]): PerceptionResult {
+  hear(audioSamples: Float32Array | number[], options: PerceptionOptions = {}): PerceptionResult {
     // Encode to spikes via spectrogram
     const spikes = this.audioEncoder.encode(audioSamples, this.config.snn.dt);
 
     // Send to the thalamus
     this.injectSensoryInput('auditory', spikes);
 
-    return this.processPerception('auditory');
+    return this.processPerception('auditory', options);
   }
 
   /**
    * The brain "hears" an already-computed spectrogram (from 08_microphone_interaction).
    */
-  hearSpectrogram(spectrogram: number[] | Float32Array): PerceptionResult {
+  hearSpectrogram(spectrogram: number[] | Float32Array, options: PerceptionOptions = {}): PerceptionResult {
     const spikes = this.audioEncoder.encodeSpectrogram(spectrogram, this.config.snn.dt);
     this.injectSensoryInput('auditory', spikes);
-    return this.processPerception('auditory');
+    return this.processPerception('auditory', options);
   }
 
   /**
@@ -437,7 +488,7 @@ export class DigitalBrain {
     'sonar': [{ modulator: ModulatorType.Serotonin, amount: 0.1 }, { modulator: ModulatorType.Dopamine, amount: 0.05 }],
   };
 
-  read(text: string): PerceptionResult {
+  read(text: string, options: PerceptionOptions = {}): PerceptionResult {
     console.log(`📖 Reading: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`);
 
     // Encode the text in LEXICON SPACE (not with the TextEncoder's generic
@@ -480,7 +531,7 @@ export class DigitalBrain {
     // Vocabulary acquisition: learn unknown words after repeated exposure.
     this.acquireVocabulary(words);
 
-    return this.processPerception('text');
+    return this.processPerception('text', options);
   }
 
   /**
@@ -503,8 +554,9 @@ export class DigitalBrain {
     const dim = this.lexicon.dimensions;
 
     // Count one exposure per utterance (dedupe repeats within the same read).
-    for (const word of new Set(words)) {
-      if (word.length < DigitalBrain.MIN_WORD_LEN) continue;
+    for (const word of new Set(words.slice(0, DigitalBrain.MAX_WORDS_PER_READ))) {
+      if (word.length < DigitalBrain.MIN_WORD_LEN || word.length > DigitalBrain.MAX_WORD_LEN) continue;
+      if (!DigitalBrain.LEARNABLE_WORD.test(word)) continue;
 
       if (this.lexicon.has(word)) {
         // Known word → reinforce its engram (bumps frequency / recency).
@@ -512,15 +564,22 @@ export class DigitalBrain {
         continue;
       }
 
-      // Unknown word → accumulate exposures.
+      // Unknown word → accumulate exposures (delete + set keeps the map
+      // ordered by recency for the LRU eviction below).
       const seen = (this.pendingVocab.get(word) ?? 0) + 1;
+      this.pendingVocab.delete(word);
 
       if (seen >= DigitalBrain.LEARN_THRESHOLD) {
+        // The lexicon is searched linearly on every comprehension; stop
+        // acquiring once it is full rather than let it grow without bound.
+        if (this.lexicon.size >= DigitalBrain.MAX_LEXICON_SIZE) continue;
+
         // Commit the new word to the lexicon.
         this.lexicon.add(word, wordToPattern(word, dim));
-        this.pendingVocab.delete(word);
-        if (!this.learnedThisSession.includes(word)) {
-          this.learnedThisSession.push(word);
+        this.learnedCount++;
+        this.learnedThisSession.push(word);
+        if (this.learnedThisSession.length > DigitalBrain.MAX_LEARNED_HISTORY) {
+          this.learnedThisSession.shift();
         }
         // Reward + attention consolidation of the new engram.
         this.modulators.release(ModulatorType.Dopamine, 0.1);
@@ -528,6 +587,10 @@ export class DigitalBrain {
         console.log(`  💡 Learned new word: "${word}" (lexicon: ${this.lexicon.size} words)`);
       } else {
         this.pendingVocab.set(word, seen);
+        if (this.pendingVocab.size > DigitalBrain.MAX_PENDING_VOCAB) {
+          const oldest = this.pendingVocab.keys().next().value;
+          if (oldest !== undefined) this.pendingVocab.delete(oldest);
+        }
       }
     }
   }
@@ -538,7 +601,9 @@ export class DigitalBrain {
   getVocabularyStats(): {
     total: number;
     learnedThisSession: string[];
+    learnedCount: number;
     pending: Array<{ word: string; count: number }>;
+    pendingCount: number;
     threshold: number;
   } {
     const pending = Array.from(this.pendingVocab.entries())
@@ -547,8 +612,20 @@ export class DigitalBrain {
     return {
       total: this.lexicon.size,
       learnedThisSession: [...this.learnedThisSession],
+      learnedCount: this.learnedCount,
       pending,
+      pendingCount: pending.length,
       threshold: DigitalBrain.LEARN_THRESHOLD,
+    };
+  }
+
+  /** Vocabulary stats trimmed to what the dashboard displays (streamed 2×/s). */
+  private getVocabularyStateSlice(): NonNullable<BrainState['vocabulary']> {
+    const stats = this.getVocabularyStats();
+    return {
+      ...stats,
+      learnedThisSession: stats.learnedThisSession.slice(-DigitalBrain.STATE_LEARNED_SHOWN),
+      pending: stats.pending.slice(0, DigitalBrain.STATE_PENDING_SHOWN),
     };
   }
 
@@ -785,15 +862,27 @@ export class DigitalBrain {
   /**
    * Processes a perception: runs N ticks to propagate signals through the brain.
    */
-  private processPerception(inputType: 'visual' | 'auditory' | 'text' | 'image'): PerceptionResult {
+  private processPerception(
+    inputType: PerceptionResult['inputType'],
+    options: PerceptionOptions,
+  ): PerceptionResult {
     const startTime = this.currentTime;
-    const processingTicks = 50; // ~50ms of processing
 
-    // Run ticks
-    for (let i = 0; i < processingTicks; i++) {
-      this.tick();
+    if (options.propagate !== false) {
+      for (let i = 0; i < DigitalBrain.PERCEPTION_TICKS; i++) {
+        this.tick();
+      }
     }
 
+    return this.describePerception(inputType, startTime);
+  }
+
+  /**
+   * Summarizes the brain's reaction to a perception that started at
+   * `startTime` (simulation ms). Used directly by callers that inject with
+   * `propagate: false` and run the ticks themselves.
+   */
+  describePerception(inputType: PerceptionResult['inputType'], startTime: number): PerceptionResult {
     // Get the resulting emotional state
     const emotion = this.feel();
 
@@ -932,7 +1021,7 @@ export class DigitalBrain {
         confidence: brocaResponse.confidence,
       } : undefined,
       vocabCount: this.lexicon?.size ?? 0,
-      vocabulary: this.getVocabularyStats(),
+      vocabulary: this.getVocabularyStateSlice(),
       learning,
       learningHippocampus,
     };
@@ -951,7 +1040,7 @@ export class DigitalBrain {
     // The lexicon (incl. words learned from text) is not part of the binary
     // region format, so persist it as a JSON sidecar next to the .bin.
     try {
-      fs.writeFileSync(this.lexiconSidecarPath(filePath), JSON.stringify(this.lexicon.serialize()));
+      writeFileAtomic(this.lexiconSidecarPath(filePath), JSON.stringify(this.lexicon.serialize()));
     } catch (err) {
       console.error(`⚠️  Could not save lexicon: ${(err as Error).message}`);
     }
@@ -965,17 +1054,33 @@ export class DigitalBrain {
   /**
    * Restores the state from a previously saved file. Applies the weights
    * to each region by id; skips (without aborting) regions whose dimensions
-   * do not match the file —e.g. if neuronCount changed between versions—.
+   * do not match the file —e.g. if neuronCount changed between versions— or
+   * whose weights contain non-finite values.
    *
    * @returns Which regions were restored and which were skipped.
    */
   loadState(filePath: string): { loaded: string[]; skipped: string[] } {
-    const data = this.persistence.load(filePath);
+    // If the main file is missing or corrupted (failed CRC, truncated write),
+    // fall back to the previous snapshot instead of starting from scratch.
+    let data;
+    try {
+      data = this.persistence.load(filePath);
+    } catch (err) {
+      const backupPath = `${filePath}${BACKUP_SUFFIX}`;
+      if (!fs.existsSync(backupPath)) throw err;
+      console.warn(`⚠️  ${(err as Error).message} — restoring previous snapshot ${backupPath}`);
+      data = this.persistence.load(backupPath);
+    }
+
     const loaded: string[] = [];
     const skipped: string[] = [];
     for (const [id, region] of this.regions) {
       const rd = data.regions.get(id);
-      if (rd && rd.weights.length === region.getNetworkConfig().weights.length) {
+      if (
+        rd &&
+        rd.weights.length === region.getNetworkConfig().weights.length &&
+        rd.weights.every(Number.isFinite)
+      ) {
         region.loadWeights(rd.weights);
         loaded.push(id);
       } else {

@@ -13,6 +13,10 @@
 
 import { DigitalBrain } from '../src/brain.js';
 import { existsSync, rmSync } from 'fs';
+import { seedRandom } from './helpers/seed.js';
+
+// Reproducible brain: weights, noise and spike encoding all draw from Math.random.
+seedRandom(106);
 
 // Invented words guaranteed NOT to be in the seeded ES/EN lexicon.
 const NOVEL = 'zarpalio';

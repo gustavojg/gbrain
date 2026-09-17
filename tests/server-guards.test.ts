@@ -31,6 +31,10 @@ import {
   parseSpectrogramInput,
   parseTextInput,
 } from '../src/server-guards.js';
+import { seedRandom } from './helpers/seed.js';
+
+// Reproducible brain: weights, noise and spike encoding all draw from Math.random.
+seedRandom(107);
 
 const results: Array<[string, boolean]> = [];
 const check = (name: string, ok: boolean): void => {

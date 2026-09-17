@@ -15,6 +15,10 @@
 
 import { existsSync, rmSync } from 'fs';
 import { WebSocket } from 'ws';
+import { seedRandom } from './helpers/seed.js';
+
+// Reproducible brain (seeded before the server module builds it).
+seedRandom(108);
 
 const PORT = 38000 + (process.pid % 1000);
 const STATE_PATH = `/tmp/gbrain-server-test-${process.pid}.bin`;

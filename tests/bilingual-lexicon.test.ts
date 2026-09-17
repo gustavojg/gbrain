@@ -12,6 +12,10 @@ import { BrocaArea } from '../src/regions/broca-wernicke/broca.js';
 import { Lexicon } from '../src/regions/broca-wernicke/lexicon.js';
 import { seedSpanishLexicon, encodeSentenceToLexiconSpace } from '../src/regions/broca-wernicke/spanish-lexicon.js';
 import { seedEnglishLexicon } from '../src/regions/broca-wernicke/english-lexicon.js';
+import { seedRandom } from './helpers/seed.js';
+
+// Reproducible brain: weights, noise and spike encoding all draw from Math.random.
+seedRandom(105);
 
 const DIM = 1000; // same size used by the real brain
 const lexicon = new Lexicon(DIM);

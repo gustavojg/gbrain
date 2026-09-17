@@ -355,11 +355,15 @@ console.log('\n7. MEMORY');
   const overlap = Hippocampus.overlapBinary(episodeA, episodeB);
   check('different stimuli get well-separated episode codes', overlap <= 0.1, `overlap=${overlap.toFixed(2)}`);
 
-  for (const id of ['hippocampus', 'prefrontalCortex'] as const) {
+  // The PFC legitimately shares part of its input across stimuli (the amygdala's
+  // affect population, ~a quarter of its drive), so its ceiling for "different"
+  // is higher than the hippocampus's — but it must stay far below "same".
+  for (const [id, maxDifferent] of [['hippocampus', 0.3], ['prefrontalCortex', 0.5]] as const) {
     const same = Math.min(correlation(a2.counts[id], a3.counts[id]), correlation(b2.counts[id], b3.counts[id]));
     const diff = correlation(a3.counts[id], b3.counts[id]);
     check(`${id}: recalls the same stimulus alike, and different stimuli differently`,
-      same >= 0.8 && diff <= 0.3, `r(same)=${same.toFixed(2)} r(different)=${diff.toFixed(2)}`);
+      same >= 0.8 && diff <= maxDifferent && same - diff >= 0.4,
+      `r(same)=${same.toFixed(2)} r(different)=${diff.toFixed(2)}`);
   }
   const novelVsRecalled = correlation(a1.counts.hippocampus, a2.counts.hippocampus);
   check('a first experience looks different from its recall (novelty vs memory)',

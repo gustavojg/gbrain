@@ -491,7 +491,7 @@ export class PrefrontalCortex extends BrainRegion {
 
       // Simplified LIF model: integrate into the membrane potential
       this.potentials[n] += sum;
-      this.potentials[n] *= 0.95; // Leak (membrane leak)
+      this.potentials[n] *= PrefrontalCortex.MEMBRANE_RETENTION; // Leak (membrane leak)
 
       // The potential is a sum of dimensionless weights (~0 at rest), not mV.
       // Subtracting _modulatedThreshold (−55 mV) shifted it by +55 and the `>0` gate of
@@ -503,12 +503,14 @@ export class PrefrontalCortex extends BrainRegion {
     // 2. k-WTA competitive selection
     const outputSpikes = this.applyKWTA(activations);
 
-    // LIF reset: a neuron that fires discharges its membrane. Without it the
-    // integrator keeps its winners above the floor for hundreds of ticks after
-    // the input is gone, and the region never comes to rest.
-    for (let n = 0; n < this.neuronCount; n++) {
-      if (outputSpikes[n] > 0) this.potentials[n] = 0;
-    }
+    // No reset on firing: PFC units are rate-like. Under a SUSTAINED stimulus a
+    // reset hands the next tick to whoever had been accumulating meanwhile, so
+    // the winners rotate through most of the population (2,500 of 3,000 neurons
+    // fired during one presentation) and the sustained code says little about
+    // the stimulus. Persistent, selective firing is what prefrontal delay
+    // activity looks like (Goldman-Rakic, 1995). The region still comes to rest:
+    // with the fast leak below, potentials fall under the activation floor a
+    // few ticks after the input ends.
 
     // 3. Update spike state
     this.spikes.set(outputSpikes);
@@ -546,6 +548,22 @@ export class PrefrontalCortex extends BrainRegion {
    * @param postSpikes - Postsynaptic spikes (k-WTA output)
    * @param modulation - Neuromodulation effects (includes learningRate)
    */
+  /**
+   * Fraction of the membrane potential kept from one tick to the next. Fast on
+   * purpose: the potential must track the CURRENT drive (so the most driven
+   * neurons keep winning while a stimulus lasts) and vanish within ~10 ticks
+   * once it ends (so the region returns to rest without a reset).
+   */
+  private static readonly MEMBRANE_RETENTION = 0.5;
+
+  /** Total synaptic weight every neuron is scaled to (mean row total at first use). */
+  private weightBudget = 0;
+
+  /** Running average of each afferent's activity (presynaptic term of the covariance rule). */
+  private inputAverage: Float32Array | null = null;
+  /** Rate of that running average (per driven tick). */
+  private static readonly INPUT_AVERAGE_RATE = 0.02;
+
   private hebbianUpdate(
     preSpikes: Float32Array,
     postSpikes: Float32Array,
@@ -554,14 +572,43 @@ export class PrefrontalCortex extends BrainRegion {
     const lr = this._modulatedLearningRate * 0.01; // Scale for stability
     const inputLen = Math.min(preSpikes.length, this.inputCount);
 
+    // Covariance rule on the presynaptic side: an afferent potentiates only by
+    // how much it exceeds ITS OWN recent average. Afferents that are active for
+    // every stimulus (the amygdala's affect population) carry no information
+    // about which stimulus it is; under plain Hebb they were potentiated on
+    // every tick of every presentation, ended up deciding the winners, and the
+    // PFC answered any stimulus with the same neurons (Sejnowski, 1977).
+    if (!this.inputAverage || this.inputAverage.length !== inputLen) {
+      this.inputAverage = new Float32Array(inputLen);
+    }
+    const average = this.inputAverage;
+    const novelty = new Float32Array(inputLen);
+    for (let j = 0; j < inputLen; j++) {
+      novelty[j] = Math.max(0, preSpikes[j] - average[j]);
+      average[j] += PrefrontalCortex.INPUT_AVERAGE_RATE * (preSpikes[j] - average[j]);
+    }
+
+    // Synaptic scaling: every neuron keeps the same total synaptic weight.
+    // The soft LTD below shrinks a winner's total weight a little on every
+    // tick it wins; since feedforward inhibition is proportional to that
+    // total, frequent winners became steadily LESS inhibited than the rest —
+    // a rich-get-richer loop that, after a few sustained presentations, made
+    // the same neurons win for any stimulus (Turrigiano, 2008).
+    if (this.weightBudget === 0) {
+      let total = 0;
+      for (let i = 0; i < this.weights.length; i++) total += this.weights[i];
+      this.weightBudget = total / this.neuronCount;
+    }
+
     for (let n = 0; n < this.neuronCount; n++) {
       if (postSpikes[n] === 0) continue; // Only update active neurons
 
       const baseOffset = n * this.inputCount;
+      let rowTotal = 0;
       for (let j = 0; j < inputLen; j++) {
         if (preSpikes[j] > 0) {
-          // LTP: strengthen active pre→post connection
-          this.weights[baseOffset + j] += lr * preSpikes[j] * postSpikes[n];
+          // LTP: strengthen active pre→post connection (covariance term)
+          this.weights[baseOffset + j] += lr * novelty[j] * postSpikes[n];
         } else {
           // Soft LTD: weaken unused connections
           this.weights[baseOffset + j] *= (1 - lr * 0.1);
@@ -573,6 +620,12 @@ export class PrefrontalCortex extends BrainRegion {
         } else if (this.weights[baseOffset + j] < 0) {
           this.weights[baseOffset + j] = 0;
         }
+        rowTotal += this.weights[baseOffset + j];
+      }
+
+      if (rowTotal > 0) {
+        const scale = this.weightBudget / rowTotal;
+        for (let j = 0; j < inputLen; j++) this.weights[baseOffset + j] *= scale;
       }
     }
   }

@@ -36,6 +36,19 @@ import type { ModulationEffects } from '../../core/neuromodulators/modulator-sys
 import { SpikingNeuron, createNeuronPopulation } from '../../core/snn/neuron.js';
 import type { NeuronTypeName } from '../../core/snn/neuron.js';
 import { packArray, unpackFloat32, unpackInt32 } from '../../core/persistence/binary-protocol.js';
+import { PresentationTracker, PrototypeMemory, type Recognition } from '../../core/memory/prototype-memory.js';
+
+/**
+ * Minimum engram overlap (Jaccard) for a sound to count as a re-encounter of a
+ * known category. Engrams are tiny (kWinners = 3): 2 shared neurons of 3 → 0.5.
+ */
+const SOUND_CATEGORY_MATCH = 0.5;
+
+/** Minimum cosine match between a sound and a tuned neuron's weights for the neuron to compete. */
+const VIGILANCE = 0.9;
+
+/** Fraction of a neuron's fatigue kept after each sound (leaky: nobody is silenced for good). */
+const FATIGUE_RETENTION = 0.9;
 
 /** Labelled memories restored from disk are capped (the list is unbounded in memory). */
 const MAX_PERSISTED_MEMORIES = 2000;
@@ -200,7 +213,26 @@ export class AuditoryCortex extends BrainRegion {
    *   all the representations. Analogous to the homeostatic synaptic
    *   scaling observed in cultures of cortical neurons.
    */
-  private winCounts: Int32Array;
+  private winCounts: Float32Array;
+  /** 1 for neurons whose synapses have been tuned to a sound (see vigilance in processInput). */
+  private tuned: Int32Array;
+
+  // --- Learning by exposure (live path) ---
+  /**
+   * Whether sounds heard through `processInput` tune the cortex and form
+   * categories. Off for offline use of `learn()` / `autoProcess()`, which do
+   * their own bookkeeping.
+   */
+  liveLearning = true;
+  /** Segments the live activity into sounds and extracts their engrams. */
+  private presentation: PresentationTracker;
+  /** Spectrogram accumulated over the sound in progress. */
+  private presentationInput: Float32Array;
+  private presentationTicks = 0;
+  /** Sound categories learned by mere exposure (no labels). */
+  private prototypes: PrototypeMemory;
+  /** Outcome of the last completed sound. */
+  private lastRecognition: Recognition | null = null;
 
   /** Stored auditory memories */
   private memories: AuditoryMemory[] = [];
@@ -252,7 +284,15 @@ export class AuditoryCortex extends BrainRegion {
     super('auditoryCortex', 'Corteza Auditiva', cfg.neuronCount, cfg.inputCount);
 
     this.config = cfg;
-    this.winCounts = new Int32Array(cfg.neuronCount);
+    this.winCounts = new Float32Array(cfg.neuronCount);
+    this.tuned = new Int32Array(cfg.neuronCount);
+    this.presentation = new PresentationTracker(cfg.neuronCount, cfg.kWinners);
+    this.presentationInput = new Float32Array(cfg.inputCount);
+    this.prototypes = new PrototypeMemory({
+      labelPrefix: 'Sound',
+      matchThreshold: SOUND_CATEGORY_MATCH,
+      unitCount: cfg.neuronCount,
+    });
     this.localNeurons = createNeuronPopulation(cfg.neuronCount, cfg.neuronType);
     this.initializeAuditoryWeights();
   }
@@ -365,18 +405,42 @@ export class AuditoryCortex extends BrainRegion {
       }
       this.lastWinners = new Int32Array(0);
       this.lastPotentials = localPotentials;
+      if (this.liveLearning) this.closePresentation(this.presentation.tick(false, this.lastWinners));
       return activeSpikes;
     }
 
     // --- Feed-forward with activation threshold ---
+    const active: number[] = [];
+    let inputNorm2 = 0;
+    for (let i = 0; i < this.inputCount; i++) {
+      if (spikes[i] > 0.1) {
+        active.push(i);
+        inputNorm2 += spikes[i] * spikes[i];
+      }
+    }
+    const inputNorm = Math.sqrt(inputNorm2);
+
     for (let n = 0; n < this.neuronCount; n++) {
       let sum = 0;
       const offset = n * this.inputCount;
 
       // Sparse dot product: only significant values (> 0.1)
-      for (let i = 0; i < this.inputCount; i++) {
-        if (spikes[i] > 0.1) {
-          sum += spikes[i] * this.weights[offset + i];
+      for (let a = 0; a < active.length; a++) {
+        const i = active[a];
+        sum += spikes[i] * this.weights[offset + i];
+      }
+
+      // Vigilance: a neuron already TUNED to some sound only competes if this
+      // sound matches what it is tuned to. Otherwise its large learned weights
+      // win any sound that shares a few bands with its own, the first neurons
+      // ever trained end up answering everything, and every sound collapses
+      // into one category. A poor match leaves the field to untuned neurons,
+      // which get recruited for the new sound (adaptive resonance; Grossberg, 1987).
+      if (this.tuned[n] === 1) {
+        const match = inputNorm > 0 ? sum / (this.weightNorm(n) * inputNorm + 1e-9) : 0;
+        if (match < VIGILANCE) {
+          localPotentials[n] = 0;
+          continue;
         }
       }
 
@@ -412,7 +476,128 @@ export class AuditoryCortex extends BrainRegion {
 
     this.lastWinners = winners;
     this.lastPotentials = localPotentials;
+    if (this.liveLearning) {
+      for (let i = 0; i < this.inputCount; i++) this.presentationInput[i] += spikes[i];
+      this.presentationTicks++;
+      this.presentation.tick(true, winners);
+    }
     return activeSpikes;
+  }
+
+  /**
+   * End of a sound: learn from it and match it against the sound categories
+   * formed so far. This is learning by mere exposure — no label, no teacher:
+   * the neurons that answered the sound tune their synapses to it (so the same
+   * sound recruits them more reliably next time, even if degraded), and a
+   * leaky fatigue keeps any neuron from monopolizing every sound.
+   */
+  private closePresentation(engram: Int32Array | null): void {
+    if (this.presentationTicks === 0) return;
+    if (!engram) {
+      // The tracker is still waiting for the silence gap (or dropped a blip).
+      if (!this.presentation.active) this.resetPresentation();
+      return;
+    }
+
+    const mean = new Float32Array(this.inputCount);
+    for (let i = 0; i < mean.length; i++) mean[i] = this.presentationInput[i] / this.presentationTicks;
+    this.resetPresentation();
+
+    for (let i = 0; i < this.winCounts.length; i++) this.winCounts[i] *= FATIGUE_RETENTION;
+    this.adapt(mean, engram, 1.0);
+
+    const recognition = this.prototypes.observe(engram, this.currentTime);
+    if (recognition) this.lastRecognition = recognition;
+  }
+
+  private resetPresentation(): void {
+    this.presentationInput.fill(0);
+    this.presentationTicks = 0;
+  }
+
+  /** `processInput` for the offline APIs (`learn`, `autoProcess`), which do their own learning. */
+  private processOffline(input: Float32Array, effects: ModulationEffects): void {
+    const live = this.liveLearning;
+    this.liveLearning = false;
+    try {
+      this.processInput(input, effects);
+    } finally {
+      this.liveLearning = live;
+    }
+  }
+
+  /** Outcome of the last completed sound, or `null` if none yet. */
+  getRecognition(): Recognition | null {
+    return this.lastRecognition;
+  }
+
+  /** Number of sound categories learned by exposure. */
+  get categoryCount(): number {
+    return this.prototypes.size;
+  }
+
+  /**
+   * Hebbian tuning of the winners to a sound (LTP with vocal boost, global
+   * decay, synaptic budget), plus one unit of fatigue per winner.
+   *
+   * @param input - Spectrogram the winners answered to
+   * @param winners - Neurons to tune
+   * @param lrMultiplier - Neuromodulatory gain on the learning rate (1 = neutral)
+   */
+  private adapt(input: Float32Array, winners: ArrayLike<number>, lrMultiplier: number): void {
+    const effectiveLR = this.config.learningRate + (lrMultiplier - 1.0) * 0.4;
+    const { numBands, voiceBandRange } = this.config;
+
+    for (let w = 0; w < winners.length; w++) {
+      const winnerIdx = winners[w];
+      this.winCounts[winnerIdx]++;
+
+      const offset = winnerIdx * this.inputCount;
+      let totalWeight = 0;
+
+      // First tuning of a freshly recruited neuron: its random initial synapses
+      // are pruned, so that what it becomes tuned to is the sound itself.
+      // (Left in place, that random background is as large as one exposure's
+      // worth of learning, and the neuron would fail to match — by the
+      // vigilance test — the very sound that recruited it.)
+      if (this.tuned[winnerIdx] === 0) this.weights.fill(0, offset, offset + this.inputCount);
+
+      for (let i = 0; i < this.inputCount; i++) {
+        if (input[i] > 0.15) {
+          // Determine whether this bin is in the vocal range
+          const freqIndex = i % numBands;
+          const isVoiceFreq = freqIndex >= voiceBandRange[0] && freqIndex <= voiceBandRange[1];
+          const boost = isVoiceFreq ? this.config.voiceFreqBoost : 0.5;
+
+          // LTP with vocal boost
+          this.weights[offset + i] += input[i] * effectiveLR * boost;
+        }
+
+        // Global decay (natural synaptic degradation)
+        this.weights[offset + i] *= 0.995;
+
+        // Clamp to non-negative (the auditory cortex does not use negative weights)
+        if (this.weights[offset + i] < 0) this.weights[offset + i] = 0;
+        totalWeight += this.weights[offset + i];
+      }
+
+      // Synaptic normalization
+      if (totalWeight > this.config.maxWeightBudget) {
+        const factor = this.config.maxWeightBudget / totalWeight;
+        for (let i = 0; i < this.inputCount; i++) {
+          this.weights[offset + i] *= factor;
+        }
+      }
+      this.tuned[winnerIdx] = 1;
+    }
+  }
+
+  /** Euclidean norm of a neuron's afferent weights. */
+  private weightNorm(neuron: number): number {
+    const offset = neuron * this.inputCount;
+    let norm2 = 0;
+    for (let i = 0; i < this.inputCount; i++) norm2 += this.weights[offset + i] * this.weights[offset + i];
+    return Math.sqrt(norm2);
   }
 
   /**
@@ -483,7 +668,7 @@ export class AuditoryCortex extends BrainRegion {
       consolidationRate: 1.0,
       socialWeightBoost: 1.0,
     };
-    this.processInput(input, defaultMod);
+    this.processOffline(input, defaultMod);
     const winners = this.lastWinners;
     const potentials = this.lastPotentials;
 
@@ -492,42 +677,7 @@ export class AuditoryCortex extends BrainRegion {
     const effectiveLR = this.config.learningRate + (lrMultiplier - 1.0) * 0.4;
 
     // 3. Selective learning with vocal boost
-    const { numBands, voiceBandRange } = this.config;
-
-    for (let w = 0; w < winners.length; w++) {
-      const winnerIdx = winners[w];
-      this.winCounts[winnerIdx]++;
-
-      const offset = winnerIdx * this.inputCount;
-      let totalWeight = 0;
-
-      for (let i = 0; i < this.inputCount; i++) {
-        if (input[i] > 0.15) {
-          // Determine whether this bin is in the vocal range
-          const freqIndex = i % numBands;
-          const isVoiceFreq = freqIndex >= voiceBandRange[0] && freqIndex <= voiceBandRange[1];
-          const boost = isVoiceFreq ? this.config.voiceFreqBoost : 0.5;
-
-          // LTP with vocal boost
-          this.weights[offset + i] += input[i] * effectiveLR * boost;
-        }
-
-        // Global decay (natural synaptic degradation)
-        this.weights[offset + i] *= 0.995;
-
-        // Clamp to non-negative (the auditory cortex does not use negative weights)
-        if (this.weights[offset + i] < 0) this.weights[offset + i] = 0;
-        totalWeight += this.weights[offset + i];
-      }
-
-      // Synaptic normalization
-      if (totalWeight > this.config.maxWeightBudget) {
-        const factor = this.config.maxWeightBudget / totalWeight;
-        for (let i = 0; i < this.inputCount; i++) {
-          this.weights[offset + i] *= factor;
-        }
-      }
-    }
+    this.adapt(input, winners, lrMultiplier);
 
     // 4. Store auditory memory
     this.memories.push({
@@ -681,7 +831,7 @@ export class AuditoryCortex extends BrainRegion {
       consolidationRate: 1.0,
       socialWeightBoost: 1.0,
     };
-    this.processInput(input, defaultMod2);
+    this.processOffline(input, defaultMod2);
     const winners = this.lastWinners;
 
     // Check whether it is already known
@@ -836,6 +986,8 @@ export class AuditoryCortex extends BrainRegion {
   override serializeExtra(): unknown {
     return {
       winCounts: packArray(this.winCounts),
+      tuned: packArray(this.tuned),
+      categories: this.prototypes.serialize(),
       autoLearnCounter: this.autoLearnCounter,
       memories: this.memories.map((m) => ({
         pattern: Array.from(m.pattern),
@@ -849,8 +1001,11 @@ export class AuditoryCortex extends BrainRegion {
   override deserializeExtra(data: unknown): void {
     if (typeof data !== 'object' || data === null) return;
     const d = data as Record<string, unknown>;
-    const wins = unpackInt32(d.winCounts, this.neuronCount);
+    const wins = unpackFloat32(d.winCounts, this.neuronCount);
     if (wins) this.winCounts.set(wins);
+    const tuned = unpackInt32(d.tuned, this.neuronCount);
+    if (tuned) this.tuned.set(tuned);
+    this.prototypes.deserialize(d.categories);
     if (typeof d.autoLearnCounter === 'number' && Number.isInteger(d.autoLearnCounter) && d.autoLearnCounter >= 0) {
       this.autoLearnCounter = d.autoLearnCounter;
     }

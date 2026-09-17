@@ -787,6 +787,72 @@ body::after {
   color: var(--accent-red);
 }
 
+/* --- Perception panel (learning by exposure) --- */
+.percept-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.percept-row {
+  display: grid;
+  grid-template-columns: 3.6rem 1fr;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.7rem;
+}
+
+.percept-sense {
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.percept-what {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  color: var(--text-secondary);
+}
+
+.percept-empty {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.percept-label {
+  font-family: var(--font-mono);
+  color: var(--accent-cyan);
+}
+
+.percept-badge {
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  color: var(--text-secondary);
+}
+
+.percept-badge.is-new {
+  background: rgba(250, 204, 21, 0.15);
+  border-color: rgba(250, 204, 21, 0.45);
+  color: #fde68a;
+}
+
+.percept-badge.is-known {
+  background: rgba(34, 197, 94, 0.15);
+  border-color: rgba(34, 197, 94, 0.35);
+  color: #86efac;
+}
+
+.percept-total {
+  color: var(--text-muted);
+  font-size: 0.62rem;
+}
+
 /* --- Vocabulary panel --- */
 .vocab-panel {
   display: flex;

@@ -69,6 +69,23 @@ export class VisualEncoder {
    * @returns Spike vector (Float32Array)
    */
   encode(pixels: number[] | Float32Array | Uint8Array, width: number, height: number, dt: number = 1.0): Float32Array {
+    // 5. Convert to spikes via rate coding (one Bernoulli sample per channel)
+    return encodeSpikeVector(this.encodeRates(pixels, width, height), dt, 200);
+  }
+
+  /**
+   * Encodes an image as graded firing RATES (0–1): the retinal features
+   * themselves, before any spike sampling. This is what a sustained
+   * presentation needs: the visual cortex draws fresh Poisson spikes from the
+   * rates on every tick, so repeated presentations of one image share their
+   * statistics instead of being two unrelated single samples.
+   *
+   * @param pixels - Image data (grayscale, 0-255)
+   * @param width - Width of the input image
+   * @param height - Height of the input image
+   * @returns Rate vector (intensity map + edge maps), length `outputSize`
+   */
+  encodeRates(pixels: number[] | Float32Array | Uint8Array, width: number, height: number): Float32Array {
     // 1. Convert to normalized Float32Array (0-1)
     let normalized = new Float32Array(pixels.length);
     for (let i = 0; i < pixels.length; i++) {
@@ -95,8 +112,7 @@ export class VisualEncoder {
       output = processed;
     }
 
-    // 5. Convert to spikes via rate coding
-    return encodeSpikeVector(output, dt, 200);
+    return output;
   }
 
   /**

@@ -31,6 +31,14 @@ import { SpikingNeuron, createNeuronPopulation } from '../../core/snn/neuron.js'
 import type { NeuronTypeName } from '../../core/snn/neuron.js';
 import { rateCoding } from '../../core/snn/spike-train.js';
 import { packArray, unpackFloat32, unpackInt32 } from '../../core/persistence/binary-protocol.js';
+import { PresentationTracker, PrototypeMemory, type Recognition } from '../../core/memory/prototype-memory.js';
+
+/**
+ * Minimum engram overlap (Jaccard) for a stimulus to count as a re-encounter of
+ * a known visual category. Two unrelated engrams of 20 among 2000 neurons
+ * share ~0 units; a maturing engram of the SAME image keeps well over a third.
+ */
+const VISUAL_CATEGORY_MATCH = 0.35;
 
 /** Labelled memories restored from disk are capped (the list is unbounded in memory). */
 const MAX_PERSISTED_MEMORIES = 2000;
@@ -163,6 +171,13 @@ export class VisualCortex extends BrainRegion {
   private sortIdx: Int32Array;
 
   /** Stored visual memories (labeled engrams). */
+  /** Segments the live activity into presentations and extracts their engrams. */
+  private presentation!: PresentationTracker;
+  /** Perceptual categories learned by mere exposure (no labels). */
+  private prototypes!: PrototypeMemory;
+  /** Outcome of the last completed presentation. */
+  private lastRecognition: Recognition | null = null;
+
   private memories: VisualMemory[] = [];
 
   /** Reference to the spike bus. */
@@ -206,6 +221,12 @@ export class VisualCortex extends BrainRegion {
     this.currentBuf = new Float32Array(cfg.neuronCount);
     this.sortIdx = new Int32Array(cfg.neuronCount);
     this.recentSpikeCounts = new Float32Array(cfg.neuronCount);
+    this.presentation = new PresentationTracker(cfg.neuronCount, cfg.kWinners);
+    this.prototypes = new PrototypeMemory({
+      labelPrefix: 'Visual',
+      matchThreshold: VISUAL_CATEGORY_MATCH,
+      unitCount: cfg.neuronCount,
+    });
 
     this.initializeVisualWeights();
   }
@@ -422,6 +443,24 @@ export class VisualCortex extends BrainRegion {
    * @returns Output spike vector (1.0 = fired, 0.0 = silent).
    */
   processInput(spikes: Float32Array, modulationEffects: ModulationEffects): Float32Array {
+    // Nothing on the retina → nothing to compute. The cortex is silent at rest
+    // anyway (the background current is sub-threshold); skipping the dense
+    // synaptic pass makes an idle tick ~30% cheaper for the whole brain, and
+    // plasticity and homeostasis only ever run on actual experience.
+    let driven = false;
+    for (let i = 0; i < spikes.length; i++) {
+      if (spikes[i] > 0) {
+        driven = true;
+        break;
+      }
+    }
+    if (!driven) {
+      this.spikes.fill(0);
+      this.lastWinners = new Int32Array(0);
+      this.closePresentation(this.presentation.tick(false, this.lastWinners));
+      return new Float32Array(this.neuronCount);
+    }
+
     const lrMul = modulationEffects.learningRateMultiplier ?? 1.0;
     const gain = modulationEffects.spikeGainMultiplier ?? 1.0;
     const dw = this.dynamicsTick(spikes, this._dt, this.currentTime, true, lrMul, gain);
@@ -436,8 +475,29 @@ export class VisualCortex extends BrainRegion {
       }
     }
     this.lastWinners = Int32Array.from(winners);
+    this.presentation.tick(true, this.lastWinners);
     this.updateLearningMetrics(dw, winners.length);
     return out;
+  }
+
+  /**
+   * End of a presentation: its engram is matched against the perceptual
+   * categories learned so far ("have I seen this before?").
+   */
+  private closePresentation(engram: Int32Array | null): void {
+    if (!engram) return;
+    const recognition = this.prototypes.observe(engram, this.currentTime);
+    if (recognition) this.lastRecognition = recognition;
+  }
+
+  /** Outcome of the last completed presentation, or `null` if none yet. */
+  getRecognition(): Recognition | null {
+    return this.lastRecognition;
+  }
+
+  /** Number of visual categories learned by exposure. */
+  get categoryCount(): number {
+    return this.prototypes.size;
   }
 
   /**
@@ -655,6 +715,7 @@ export class VisualCortex extends BrainRegion {
       homeostaticBias: packArray(this.homeostaticBias),
       avgActivity: packArray(this.avgActivity),
       winCounts: packArray(this.winCounts),
+      categories: this.prototypes.serialize(),
       memories: this.memories.map((m) => ({
         pattern: Array.from(m.pattern),
         label: m.label,
@@ -674,6 +735,7 @@ export class VisualCortex extends BrainRegion {
     if (bias) this.homeostaticBias.set(bias);
     if (avg) this.avgActivity.set(avg);
     if (wins) this.winCounts.set(wins);
+    this.prototypes.deserialize(d.categories);
 
     const memories = Array.isArray(d.memories) ? d.memories : [];
     this.memories = [];

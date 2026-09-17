@@ -102,6 +102,13 @@ log('1. POISONING');
 
   const ok = await post('/api/modulator', { type: 'dopamine', amount: 0.2 });
   check('valid injection still works', ok.status === 200);
+
+  const frame = Array.from({ length: 128 }, (_, bin) => (bin > 1 && bin < 12 ? 0.8 : 0.02));
+  const badRate = await post('/api/input/audio', { spectrogram: frame, sampleRate: 'fast' });
+  const heard = await post('/api/input/audio', { spectrogram: frame, sampleRate: 48000 });
+  const heardBody = (await heard.json()) as { inputType?: string; activeRegions?: string[] };
+  check('microphone frame: bad sampleRate → 400, valid frame is heard',
+    badRate.status === 400 && heard.status === 200 && heardBody.inputType === 'auditory');
 }
 
 // ── 2. ORIGIN ───────────────────────────────────────────────────────────────

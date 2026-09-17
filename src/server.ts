@@ -7,7 +7,7 @@
  * Endpoints:
  * - POST /api/input/text    → The brain reads text
  * - POST /api/input/image   → The brain sees an image
- * - POST /api/input/audio   → The brain hears audio
+ * - POST /api/input/audio   → The brain hears one microphone frame ({ spectrogram: FFT magnitudes, sampleRate })
  * - GET  /api/state         → Complete brain state
  * - GET  /api/feel          → Emotional state
  * - GET  /api/speak         → The brain speaks
@@ -52,6 +52,7 @@ import {
   parseAllowlist,
   parseImageInput,
   parseModulatorInput,
+  parseSampleRate,
   parseSpectrogramInput,
   parseTextInput,
   type LimitedKind,
@@ -367,8 +368,11 @@ async function handleApiRoute(url: URL, req: http.IncomingMessage, res: http.Ser
   // POST /api/input/audio — Hear audio (spectrogram)
   if (url.pathname === '/api/input/audio' && req.method === 'POST') {
     enforceHttpLimit(req, 'audio');
-    const spectrogram = parseSpectrogramInput(await parseJsonBody(req));
-    sendJSON(await perceive('auditory', () => brain.hearSpectrogram(spectrogram, { propagate: false })));
+    // One frame of linear FFT magnitudes (+ the source's sample rate)
+    const body = await parseJsonBody(req);
+    const frame = parseSpectrogramInput(body);
+    const sampleRate = parseSampleRate(body);
+    sendJSON(await perceive('auditory', () => brain.hearFrame(frame, sampleRate, { propagate: false })));
     return;
   }
 
@@ -531,8 +535,9 @@ wss.on('connection', (ws: WebSocket) => {
           break;
         }
         case 'input:audio': {
-          const spectrogram = parseSpectrogramInput(msg.data);
-          submit('audio', 'auditory', () => brain.hearSpectrogram(spectrogram, { propagate: false }), true);
+          const frame = parseSpectrogramInput(msg.data);
+          const sampleRate = parseSampleRate(msg.data);
+          submit('audio', 'auditory', () => brain.hearFrame(frame, sampleRate, { propagate: false }), true);
           break;
         }
         case 'modulator': {

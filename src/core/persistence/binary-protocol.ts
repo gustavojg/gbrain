@@ -13,7 +13,7 @@
  * ┌─────────────────────────────────────────────────────────────┐
  * │ HEADER                                                      │
  * │  magic (4 bytes) = 0xBRA1001 ("BRAIN001")                  │
- * │  version (4 bytes) = 2  (1 = legacy, no CRC trailer)        │
+ * │  version (4 bytes) = 3  (1 = no CRC; 2 = CRC, no extras)    │
  * │  numRegions (4 bytes)                                       │
  * │  modulatorBlockOffset (4 bytes)                             │
  * │  modulatorBlockSize (4 bytes)                               │
@@ -30,6 +30,10 @@
  * │  numModulators(4) + per modulator:                          │
  * │    nameLength(4) + name(string) + level(4) + baseline(4)   │
  * │    + decayRate(4) + lastUpdate(8)                           │
+ * ├─────────────────────────────────────────────────────────────┤
+ * │ EXTRAS BLOCK (version ≥ 3)                                  │
+ * │  length(4) + UTF-8 JSON: everything learned that is not a   │
+ * │  weight matrix (episodic index, homeostatic state, clock…)  │
  * ├─────────────────────────────────────────────────────────────┤
  * │ TRAILER (version ≥ 2)                                       │
  * │  crc32 (4 bytes) of every preceding byte                    │
@@ -54,8 +58,8 @@ import type {
 /** Magic number to identify digital brain files: "BRA1N001" encoded */
 export const MAGIC_NUMBER = 0xb4a10001;
 
-/** Current version of the binary protocol (2 adds the CRC-32 trailer) */
-export const PROTOCOL_VERSION = 2;
+/** Current version of the binary protocol (2 added the CRC-32 trailer, 3 the extras block) */
+export const PROTOCOL_VERSION = 3;
 
 /** Oldest version `load()` still understands (no CRC trailer). */
 const LEGACY_PROTOCOL_VERSION = 1;
@@ -143,6 +147,33 @@ export interface LoadedBrainData {
   modulatorState: NeuromodulatorSnapshot | null;
   /** Protocol version the file was written with */
   version: number;
+  /** Non-weight learned state, keyed by region id (plus 'brain'); empty before v3 */
+  extras: Record<string, unknown>;
+}
+
+/** Packs a typed array as base64 (compact and bit-exact inside the JSON extras). */
+export function packArray(array: Float32Array | Int32Array): string {
+  return Buffer.from(array.buffer, array.byteOffset, array.byteLength).toString('base64');
+}
+
+/** Unpacks a base64 Float32Array; `null` unless it has exactly `length` finite values. */
+export function unpackFloat32(data: unknown, length: number): Float32Array | null {
+  if (typeof data !== 'string') return null;
+  const bytes = Buffer.from(data, 'base64');
+  if (bytes.length !== length * 4) return null;
+  const out = new Float32Array(length);
+  for (let i = 0; i < length; i++) out[i] = bytes.readFloatLE(i * 4);
+  return out.every(Number.isFinite) ? out : null;
+}
+
+/** Unpacks a base64 Int32Array; `null` unless it has exactly `length` values. */
+export function unpackInt32(data: unknown, length: number): Int32Array | null {
+  if (typeof data !== 'string') return null;
+  const bytes = Buffer.from(data, 'base64');
+  if (bytes.length !== length * 4) return null;
+  const out = new Int32Array(length);
+  for (let i = 0; i < length; i++) out[i] = bytes.readInt32LE(i * 4);
+  return out;
 }
 
 /**
@@ -335,9 +366,11 @@ export class BrainPersistence {
   save(
     filePath: string,
     regions: Map<string, BrainRegion>,
-    modulators: NeuromodulatorSystem
+    modulators: NeuromodulatorSystem,
+    extras: Record<string, unknown> = {}
   ): void {
     const numRegions = regions.size;
+    const extrasJson = Buffer.from(JSON.stringify(extras), 'utf-8');
 
     // 1. Serialize each region
     const regionBuffers: { id: string; buffer: Buffer }[] = [];
@@ -370,6 +403,7 @@ export class BrainPersistence {
       HEADER_SIZE + offsetTableSize +
       regionBuffers.reduce((sum, rb) => sum + rb.buffer.length, 0) +
       modulatorBlockSize +
+      4 + extrasJson.length +
       CRC_SIZE;
 
     const fileBuffer = Buffer.alloc(totalSize);
@@ -406,6 +440,12 @@ export class BrainPersistence {
     // Modulator block
     modulatorBuffer.copy(fileBuffer, writeOffset);
     writeOffset += modulatorBuffer.length;
+
+    // Extras block
+    fileBuffer.writeUInt32LE(extrasJson.length, writeOffset);
+    writeOffset += 4;
+    extrasJson.copy(fileBuffer, writeOffset);
+    writeOffset += extrasJson.length;
 
     // Trailer: CRC-32 of everything before it
     fileBuffer.writeUInt32LE(crc32(fileBuffer.subarray(0, writeOffset)), writeOffset);
@@ -445,7 +485,7 @@ export class BrainPersistence {
 
     const version = fileBuffer.readUInt32LE(readOffset);
     readOffset += 4;
-    if (version !== PROTOCOL_VERSION && version !== LEGACY_PROTOCOL_VERSION) {
+    if (version < LEGACY_PROTOCOL_VERSION || version > PROTOCOL_VERSION) {
       throw new Error(
         `[BrainPersistence] Versión de protocolo incompatible: ${version}. ` +
           `Esperada: ${PROTOCOL_VERSION}`
@@ -523,7 +563,19 @@ export class BrainPersistence {
       );
     }
 
-    return { regions, modulatorState, version };
+    // Read extras (v3+): right after the modulator block
+    let extras: Record<string, unknown> = {};
+    if (version >= 3) {
+      const extrasOffset = modulatorBlockOffset + modulatorBlockSize;
+      const extrasLength = fileBuffer.readUInt32LE(extrasOffset);
+      const json = fileBuffer.subarray(extrasOffset + 4, extrasOffset + 4 + extrasLength).toString('utf-8');
+      const parsed: unknown = JSON.parse(json);
+      if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+        extras = parsed as Record<string, unknown>;
+      }
+    }
+
+    return { regions, modulatorState, version, extras };
   }
 
   /**

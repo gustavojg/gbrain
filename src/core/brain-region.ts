@@ -466,6 +466,23 @@ export abstract class BrainRegion {
   }
 
   /**
+   * Learned state that is NOT in the weight matrix (episodic index, homeostatic
+   * variables, labelled memories…), as plain JSON. `null` when there is none.
+   * Persisted next to the weights so a restart resumes where the brain left off.
+   */
+  serializeExtra(): unknown {
+    return null;
+  }
+
+  /**
+   * Restores what `serializeExtra()` produced. The data comes from a file:
+   * implementations must validate it and ignore whatever does not fit.
+   */
+  deserializeExtra(_data: unknown): void {
+    // Nothing to restore by default.
+  }
+
+  /**
    * Offline reactivation (sleep replay): processes a pattern directly, without
    * going through the sensory buffer and without advancing the region's clock,
    * so replay never desynchronizes the region from the rest of the brain.

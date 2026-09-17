@@ -100,6 +100,13 @@ export interface HippocampusConfig {
    * units with some other episode (≤ 1.0), or novel cues would drift.
    */
   cueDriveFraction: number;
+  /**
+   * Minimum recurrent input for a unit OUTSIDE the cue to join the recalled
+   * pattern, as a fraction of kActive × maxWeight. At 0.15 (3.0 for k = 20) a
+   * unit needs the converging support of 4–6 active units of one engram;
+   * chance overlaps between codes (1–2 units) never reach it.
+   */
+  joinSupportFraction: number;
   /** Longest stretch of input bound into a single episode (ticks). */
   maxEventTicks: number;
   /**
@@ -121,6 +128,7 @@ const DEFAULT_HIPPO_CONFIG: HippocampusConfig = {
   inputEnergyThreshold: 1.0,
   noveltyOverlapThreshold: 0.9,
   cueDriveFraction: 0.0625,
+  joinSupportFraction: 0.15,
   maxEventTicks: 250,
   eventGapTicks: 25,
   dgSeed: 0x1d0c_a3e5,
@@ -397,6 +405,7 @@ export class Hippocampus extends BrainRegion {
     const n = this.neuronCount;
     const cue = new Float32Array(cueCode);
     const cueDrive = this.cfg.cueDriveFraction * this.kActive;
+    const joinSupport = this.cfg.joinSupportFraction * this.kActive;
     let state = this.stateBuf;
     let next = this.nextBuf;
     if (cueCode !== state) state.set(cueCode);
@@ -413,6 +422,12 @@ export class Hippocampus extends BrainRegion {
         const row = i * n;
         let h = 0;
         for (let a = 0; a < activeJ.length; a++) h += this.weights[row + activeJ[a]];
+        // A unit outside the cue joins only with recurrent support from several
+        // active units at once. Two codes share a unit or two by chance; with
+        // strong (rehearsed) weights that alone used to outweigh the cue drive
+        // and drag a NOVEL cue into a stored episode — false recognition, more
+        // likely the more episodes are stored.
+        if (cue[i] === 0 && h < joinSupport) h = 0;
         this.actBuf[i] = h + cueDrive * cue[i];
       }
 
@@ -481,6 +496,58 @@ export class Hippocampus extends BrainRegion {
       this.imprint(memory.pattern, this.cfg.learnRate); // engram reinforcement
     }
     return candidates;
+  }
+
+  // ----------------------------------------------------------------
+  // Persistence of the episodic index
+  // ----------------------------------------------------------------
+
+  /**
+   * The episodic index (the CA3 weights are persisted separately, as weights).
+   * Each DG code is stored as the list of its active units.
+   */
+  override serializeExtra(): unknown {
+    return {
+      episodes: this.episodicMemories.map((memory) => {
+        const active: number[] = [];
+        for (let i = 0; i < memory.pattern.length; i++) if (memory.pattern[i] > 0) active.push(i);
+        return {
+          active,
+          timestamp: memory.context.timestamp,
+          valence: memory.context.emotionalValence,
+          source: memory.context.sourceRegion,
+          strength: memory.strength,
+        };
+      }),
+    };
+  }
+
+  override deserializeExtra(data: unknown): void {
+    const episodes = (data as { episodes?: unknown } | null)?.episodes;
+    if (!Array.isArray(episodes)) return;
+
+    this.episodicMemories = [];
+    for (const raw of episodes.slice(-this.maxCapacity)) {
+      const e = raw as { active?: unknown; timestamp?: unknown; valence?: unknown; source?: unknown; strength?: unknown };
+      if (!Array.isArray(e?.active) || e.active.length === 0 || e.active.length > this.neuronCount) continue;
+      if (!e.active.every((i) => Number.isInteger(i) && i >= 0 && i < this.neuronCount)) continue;
+      if (typeof e.strength !== 'number' || !Number.isFinite(e.strength)) continue;
+
+      const pattern = new Float32Array(this.neuronCount);
+      for (const i of e.active as number[]) pattern[i] = 1;
+      this.episodicMemories.push({
+        pattern,
+        context: {
+          timestamp: typeof e.timestamp === 'number' && Number.isFinite(e.timestamp) ? e.timestamp : 0,
+          emotionalValence:
+            typeof e.valence === 'number' && Number.isFinite(e.valence) ? Math.max(-1, Math.min(1, e.valence)) : 0,
+          sourceRegion: typeof e.source === 'string' ? e.source.slice(0, 40) : 'unknown',
+        },
+        strength: Math.max(0, Math.min(1, e.strength)),
+      });
+    }
+    const last = this.episodicMemories[this.episodicMemories.length - 1];
+    if (last) this.lastStoredCode.set(last.pattern);
   }
 
   /**

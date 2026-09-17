@@ -117,6 +117,16 @@ export function parseSpectrogramInput(data: unknown): Float32Array {
   return out;
 }
 
+/** Validates the optional `sampleRate` of an audio frame (Hz); `undefined` if absent. */
+export function parseSampleRate(data: unknown): number | undefined {
+  const { sampleRate } = asRecord(data);
+  if (sampleRate === undefined) return undefined;
+  if (typeof sampleRate !== 'number' || !Number.isFinite(sampleRate) || sampleRate < 8000 || sampleRate > 192000) {
+    throw new HttpError(400, 'sampleRate must be a number between 8000 and 192000');
+  }
+  return sampleRate;
+}
+
 // ================================================================
 // RATE LIMITING
 // ================================================================

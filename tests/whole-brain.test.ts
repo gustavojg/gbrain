@@ -10,8 +10,10 @@
  *   1. REST          — with no input nothing fires, nothing is stored, nothing
  *                      travels on the bus, and the thought stream is empty.
  *   2. CASCADE       — a stimulus enters through the thalamus, reaches every
- *                      region of its pathway, and then the brain returns to
- *                      rest.
+ *                      region of ITS pathway and no other sensory cortex (text
+ *                      is neither seen nor heard; a voice reaches the auditory
+ *                      cortex, reproducibly and specifically; noise is gated
+ *                      out), and then the brain returns to rest.
  *   3. CONTENT CODE  — in the running brain, from the very first stimulus, the
  *                      thalamus and the language areas respond reproducibly to
  *                      the same text and differently to a different text
@@ -31,7 +33,9 @@
  *                      hippocampal and prefrontal responses; sleep replays
  *                      episodes into the cortex and leaves the brain at rest.
  *   8. PERSISTENCE   — save → fresh brain → load restores weights exactly,
- *                      plus neuromodulators and learned vocabulary.
+ *                      plus neuromodulators, vocabulary, the simulation clock
+ *                      and the episodic index: a restored brain RECOGNIZES
+ *                      what it had experienced before the restart.
  *   9. DETERMINISM   — same seed + same inputs ⇒ identical brain.
  *
  * KNOWN GAPS (measured and reported, but they do NOT fail the suite):
@@ -170,16 +174,43 @@ const mainBrain = newBrain();
 const waveA1 = perceive(mainBrain, TEXT_A);
 {
   const reached = REGION_IDS.filter((id) => waveA1.latency[id] !== undefined);
-  // The auditory cortex is not required here: reading is not hearing (see G4).
-  const textPathway = REGION_IDS.filter((id) => id !== 'auditoryCortex');
+  const sensoryCortices: string[] = ['visualCortex', 'auditoryCortex'];
+  const textPathway = REGION_IDS.filter((id) => !sensoryCortices.includes(id));
   check('text reaches its whole pathway', textPathway.every((id) => reached.includes(id)),
-    `${reached.filter((id) => id !== 'auditoryCortex').length}/7`);
+    `${reached.filter((id) => !sensoryCortices.includes(id)).length}/6`);
+  check('typed text is neither seen nor heard', sensoryCortices.every((id) => !(reached as string[]).includes(id)));
 
   const thalamusFirst = REGION_IDS.every((id) => (waveA1.latency[id] ?? Infinity) >= waveA1.latency.thalamus);
   check('the thalamus is the gateway (fires first)', thalamusFirst,
     REGION_IDS.map((id) => `${id.slice(0, 5)}@${waveA1.latency[id] ?? '—'}`).join(' '));
 
   check('the brain returns to rest after the wave', isSilent(mainBrain) && mainBrain.getBus().pendingCount === 0);
+
+  // One microphone frame: 128 linear FFT bins at 48 kHz (187.5 Hz per bin).
+  const rng = mulberry32(3);
+  const vowel = (formant1: number, formant2: number): number[] =>
+    Array.from({ length: 128 }, (_, bin) => {
+      const hz = bin * 187.5;
+      const peak = (centre: number, width: number): number => Math.exp(-((hz - centre) ** 2) / (2 * width * width));
+      return Math.min(1, 0.05 * rng() + 0.9 * peak(formant1, 250) + 0.7 * peak(formant2, 350));
+    });
+  const hiss = Array.from({ length: 128 }, (_, bin) => (bin > 40 ? 0.6 + 0.2 * rng() : 0.02));
+
+  const earBrain = newBrain();
+  const hear = (frame: number[]): Wave => observe(earBrain, () => earBrain.hearFrame(frame, 48000, { propagate: false }));
+  const voiceA1 = hear(vowel(500, 1500));
+  const voiceA2 = hear(vowel(500, 1500));
+  const voiceB = hear(vowel(300, 2500));
+  const noise = hear(hiss);
+
+  check('a voice reaches the auditory cortex — and not the visual one',
+    voiceA1.latency.auditoryCortex !== undefined && voiceA1.latency.visualCortex === undefined,
+    `first spike @${voiceA1.latency.auditoryCortex ?? '—'}`);
+  const sameVoice = jaccard(voiceA1.first.auditoryCortex ?? new Set(), voiceA2.first.auditoryCortex ?? new Set());
+  const otherVoice = jaccard(voiceA1.first.auditoryCortex ?? new Set(), voiceB.first.auditoryCortex ?? new Set());
+  check('the auditory code is reproducible and sound-specific', sameVoice >= 0.8 && otherVoice <= 0.3,
+    `J(same vowel)=${sameVoice.toFixed(2)} J(other vowel)=${otherVoice.toFixed(2)}`);
+  check('broadband noise is gated out (no voice)', noise.latency.auditoryCortex === undefined);
 }
 
 // ── 3. CONTENT CODE ─────────────────────────────────────────────────────────
@@ -385,6 +416,17 @@ let savedEpisodes = -1;
   const oxyLoaded = fresh.getModulators().getLevel(ModulatorType.Oxytocin);
   check('neuromodulator levels restored', Math.abs(oxySaved - oxyLoaded) < 1e-6, `oxytocin=${oxyLoaded.toFixed(3)}`);
   check('learned vocabulary restored', mainBrain.knowsWord(NOVEL) && fresh.knowsWord(NOVEL));
+  check('episodic index and simulation clock restored',
+    savedEpisodes > 0 && restoredEpisodes === savedEpisodes && fresh.time === mainBrain.time,
+    `episodes ${restoredEpisodes}/${savedEpisodes}, t=${fresh.time.toFixed(0)}ms`);
+
+  // The real point of persisting memory: the restored brain recognizes what
+  // it lived before the restart instead of storing it as something new.
+  perceive(fresh, TEXT_A);
+  check('a restored brain recognizes a pre-restart experience', fresh.getState().memoriesCount === savedEpisodes,
+    `episodes after re-reading: ${fresh.getState().memoriesCount}`);
+  perceive(fresh, 'los amigos caminan hacia la casa grande');
+  check('…and still stores a genuinely new one', fresh.getState().memoriesCount === savedEpisodes + 1);
   cleanup();
 }
 
@@ -409,24 +451,7 @@ console.log('\n9. DETERMINISM');
 // ── KNOWN GAPS ──────────────────────────────────────────────────────────────
 console.log('\nKNOWN GAPS (audit findings not fixed yet — reported, not enforced)');
 {
-  // G4. The auditory cortex's voice gate reads the last 40 of its 400 inputs as
-  // "the latest spectrogram frame", but the live pipeline delivers a 128-bin
-  // frame (padded with zeros) and the thalamic relay code — so it never sees
-  // real sound, and answers to text or not depending on which relay neurons win.
-  {
-    const rng = mulberry32(3);
-    const voice = Array.from({ length: 128 }, (_, i) => (i > 10 && i < 40 ? 0.6 + 0.4 * rng() : 0.05 * rng()));
-    const brain = newBrain();
-    const sound = observe(brain, () => brain.hearSpectrogram(voice, { propagate: false }));
-    const heardSound = sound.latency.auditoryCortex !== undefined;
-    const heardText = waveA1.latency.auditoryCortex !== undefined;
-    gap('G4 the auditory cortex responds to sound, and not to text', heardSound && !heardText,
-      `sound→${heardSound ? 'fires' : 'silent'} text→${heardText ? 'fires' : 'silent'}`);
-  }
-
-  // G5. Only weights are persisted: the episodic index is lost on restart.
-  gap('G5 hippocampal episodes survive save/load', savedEpisodes > 0 && restoredEpisodes === savedEpisodes,
-    `saved=${savedEpisodes} restored=${restoredEpisodes}`);
+  console.log('   (none — every audited defect covered by this test is now a hard check)');
 }
 
 // ── Verdict ─────────────────────────────────────────────────────────────────

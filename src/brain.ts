@@ -203,6 +203,22 @@ export class DigitalBrain {
   /** Ticks a perception needs to propagate through the connectome (~50 ms simulated). */
   static readonly PERCEPTION_TICKS = 50;
 
+  /** Cortical target of the thalamic relay, per modality (nodes of the connectome). */
+  private static readonly THALAMIC_RELAY = {
+    visual: 'visualCortex',
+    auditory: 'auditoryCortex',
+    linguistic: 'brocaWernicke',
+  } as const;
+  private static readonly SENSORY_RELAY_TARGETS: ReadonlySet<string> = new Set(
+    Object.values(DigitalBrain.THALAMIC_RELAY),
+  );
+
+  /** Cochlear (mel) bands × frames of the sliding spectrogram the auditory cortex reads. */
+  private static readonly COCHLEAR_BANDS = 40;
+  private static readonly SPECTROGRAM_FRAMES = 10;
+  /** Sample rate assumed for microphone frames that do not declare one (browser default). */
+  private static readonly DEFAULT_MIC_SAMPLE_RATE = 48000;
+
   /** Side of the (square) retinal image the visual encoder works on. */
   private static readonly RETINA_SIDE = 14;
   /** Input channels of the visual cortex. */
@@ -330,8 +346,8 @@ export class DigitalBrain {
     this.audioEncoder = new AudioEncoder({
       sampleRate: 16000,
       fftSize: 2048,
-      numBands: 40,
-      numFrames: 20,
+      numBands: DigitalBrain.COCHLEAR_BANDS,
+      numFrames: DigitalBrain.SPECTROGRAM_FRAMES,
     });
 
     this.textEncoder = new BrainTextEncoder({
@@ -389,7 +405,12 @@ export class DigitalBrain {
     // most salient channels at baseline modulation and ~67 under high ACh.
     this.addRegion(new Thalamus({ neuronCount: 500, totalInputSize: 500, bottleneckSize: 40 }));
     this.addRegion(new VisualCortex({ neuronCount: 2000, inputCount: DigitalBrain.VISUAL_CORTEX_INPUTS }));
-    this.addRegion(new AuditoryCortex({ neuronCount: 1000, inputCount: 400 }));
+    this.addRegion(new AuditoryCortex({
+      neuronCount: 1000,
+      inputCount: DigitalBrain.COCHLEAR_BANDS * DigitalBrain.SPECTROGRAM_FRAMES,
+      numBands: DigitalBrain.COCHLEAR_BANDS,
+      numFrames: DigitalBrain.SPECTROGRAM_FRAMES,
+    }));
     this.addRegion(new Hippocampus(1000, 1000));
     const amygdala = new Amygdala(500, 500);
     for (const [word, emotion] of AFFECTIVE_LEXICON) {
@@ -507,10 +528,36 @@ export class DigitalBrain {
   }
 
   /**
-   * The brain "hears" an already-computed spectrogram (from 08_microphone_interaction).
+   * The brain "hears" one frame of microphone audio, as linear FFT magnitudes
+   * in [0, 1] (what the dashboard's AnalyserNode produces). The frame goes
+   * through the cochlear front-end — mel bands + sliding window — so the
+   * auditory cortex receives the spectrogram layout it is built for.
+   *
+   * @param magnitudes - Linear-frequency magnitudes, bin 0 = DC
+   * @param sampleRate - Sample rate of the source in Hz (default: 48 kHz)
+   */
+  hearFrame(
+    magnitudes: number[] | Float32Array,
+    sampleRate: number = DigitalBrain.DEFAULT_MIC_SAMPLE_RATE,
+    options: PerceptionOptions = {},
+  ): PerceptionResult {
+    const spectrogram = this.audioEncoder.encodeMagnitudeFrame(magnitudes, sampleRate, this.currentTime);
+    this.injectSensoryInput('auditory', spectrogram);
+    return this.processPerception('auditory', options);
+  }
+
+  /**
+   * The brain "hears" an already-computed spectrogram: a flat
+   * `[frame0 band0…band39, frame1 …]` array of band energies in [0, 1], oldest
+   * frame first, in the auditory cortex's own layout. For raw microphone
+   * frames (linear FFT bins) use `hearFrame`, which builds this layout.
    */
   hearSpectrogram(spectrogram: number[] | Float32Array, options: PerceptionOptions = {}): PerceptionResult {
-    const spikes = this.audioEncoder.encodeSpectrogram(spectrogram, this.config.snn.dt);
+    const spikes = new Float32Array(spectrogram.length);
+    for (let i = 0; i < spectrogram.length; i++) {
+      const v = spectrogram[i] as number;
+      spikes[i] = Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 0;
+    }
     this.injectSensoryInput('auditory', spikes);
     return this.processPerception('auditory', options);
   }
@@ -896,13 +943,14 @@ export class DigitalBrain {
       relayed = thalamus.processAttention(spikes, this.modulators.getEffects()).filteredInput;
     }
 
-    const targets = type === 'visual' ? ['visualCortex'] :
-                    type === 'auditory' ? ['auditoryCortex'] :
-                    ['wernicke', 'broca'];
+    // Each modality has its own thalamic nucleus and cortical target
+    // (LGN → visual, MGN → auditory, pulvinar → language areas); the relay
+    // travels along that projection of the connectome (its delay and weight).
+    const target = DigitalBrain.THALAMIC_RELAY[type];
 
     this.bus.send({
       source: 'thalamus',
-      targets,
+      targets: [target],
       spikes: relayed,
       timestamp: this.currentTime,
       metadata: { inputType: type },
@@ -984,7 +1032,16 @@ export class DigitalBrain {
         // What leaves it toward memory is what was UNDERSTOOD, i.e. Wernicke's
         // output; Broca's output is motor (speech), not an afferent of memory.
         const nodeId = regionId === 'wernicke' ? 'brocaWernicke' : regionId;
-        const outgoing = this.connectome.getOutgoing(nodeId);
+        let outgoing = this.connectome.getOutgoing(nodeId);
+        // The thalamo-cortical projections carry the attention-filtered
+        // sensory signal (see injectSensoryInput). The relay neurons' own
+        // population code lives in a different space: written into cortical
+        // input channels it was read as a spectrogram / a retina / a sentence,
+        // and made the auditory cortex "hear" text. It only travels the
+        // non-sensory projections (the low road to the amygdala).
+        if (regionId === 'thalamus') {
+          outgoing = outgoing.filter((c) => !DigitalBrain.SENSORY_RELAY_TARGETS.has(c.to));
+        }
         if (outgoing.length > 0) {
           this.bus.send({
             source: nodeId,
@@ -1140,13 +1197,61 @@ export class DigitalBrain {
    * This is what makes learning survive process restarts.
    */
   saveState(filePath: string): void {
-    this.persistence.save(filePath, this.regions, this.modulators);
+    // Everything learned that is not a weight matrix: each region's own state
+    // (episodic index, homeostasis…), the simulation clock the episodes are
+    // dated with, and the words on their way to being learned.
+    const extras: Record<string, unknown> = {
+      brain: {
+        time: this.currentTime,
+        tickCount: this.tickCount,
+        pendingVocab: Array.from(this.pendingVocab.entries()),
+      },
+    };
+    for (const [id, region] of this.regions) {
+      const extra = region.serializeExtra();
+      if (extra !== null && extra !== undefined) extras[id] = extra;
+    }
+    this.persistence.save(filePath, this.regions, this.modulators, extras);
     // The lexicon (incl. words learned from text) is not part of the binary
     // region format, so persist it as a JSON sidecar next to the .bin.
     try {
       writeFileAtomic(this.lexiconSidecarPath(filePath), JSON.stringify(this.lexicon.serialize()));
     } catch (err) {
       console.error(`⚠️  Could not save lexicon: ${(err as Error).message}`);
+    }
+  }
+
+  /**
+   * Restores the simulation clock and the pending vocabulary. The clock matters:
+   * episodes are dated in simulated time, and recency (replay priority,
+   * forgetting) is measured against it — a clock restarted at 0 would make
+   * every restored episode look like it comes from the future.
+   */
+  private restoreBrainExtras(data: unknown): void {
+    if (typeof data !== 'object' || data === null) return;
+    const d = data as { time?: unknown; tickCount?: unknown; pendingVocab?: unknown };
+
+    if (typeof d.time === 'number' && Number.isFinite(d.time) && d.time >= 0) {
+      this.currentTime = d.time;
+      this.lastConsolidation = d.time;
+      for (const region of this.regions.values()) region.currentTime = d.time;
+    }
+    if (typeof d.tickCount === 'number' && Number.isInteger(d.tickCount) && d.tickCount >= 0) {
+      this.tickCount = d.tickCount;
+    }
+    if (Array.isArray(d.pendingVocab)) {
+      this.pendingVocab.clear();
+      for (const entry of d.pendingVocab.slice(-DigitalBrain.MAX_PENDING_VOCAB)) {
+        if (!Array.isArray(entry)) continue;
+        const [word, count] = entry as [unknown, unknown];
+        if (
+          typeof word === 'string' && DigitalBrain.LEARNABLE_WORD.test(word) &&
+          word.length <= DigitalBrain.MAX_WORD_LEN &&
+          typeof count === 'number' && Number.isInteger(count) && count > 0
+        ) {
+          this.pendingVocab.set(word, Math.min(count, DigitalBrain.LEARN_THRESHOLD - 1));
+        }
+      }
     }
   }
 
@@ -1191,6 +1296,8 @@ export class DigitalBrain {
         rd.weights.every(Number.isFinite)
       ) {
         region.loadWeights(rd.weights);
+        // The non-weight state belongs to these weights: restore them together.
+        if (data.extras[id] !== undefined) region.deserializeExtra(data.extras[id]);
         loaded.push(id);
       } else {
         skipped.push(id);
@@ -1199,6 +1306,7 @@ export class DigitalBrain {
     if (data.modulatorState) {
       this.modulators.deserialize(data.modulatorState);
     }
+    this.restoreBrainExtras(data.extras.brain);
 
     // Restore the persisted lexicon (incl. learned words) if present and
     // dimensionally compatible; otherwise keep the freshly seeded vocabulary.

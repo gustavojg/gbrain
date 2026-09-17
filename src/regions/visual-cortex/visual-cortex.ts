@@ -30,6 +30,10 @@ import type { ModulationEffects } from '../../core/neuromodulators/modulator-sys
 import { SpikingNeuron, createNeuronPopulation } from '../../core/snn/neuron.js';
 import type { NeuronTypeName } from '../../core/snn/neuron.js';
 import { rateCoding } from '../../core/snn/spike-train.js';
+import { packArray, unpackFloat32, unpackInt32 } from '../../core/persistence/binary-protocol.js';
+
+/** Labelled memories restored from disk are capped (the list is unbounded in memory). */
+const MAX_PERSISTED_MEMORIES = 2000;
 
 // ====================================================================
 // Visual Cortex types
@@ -635,6 +639,55 @@ export class VisualCortex extends BrainRegion {
       timestamp,
       metadata: { winnerCount: this.lastWinners.length, activity: this.getLocalActivity() },
     });
+  }
+
+  // ----------------------------------------------------------------
+  // Persistence of the non-weight learned state
+  // ----------------------------------------------------------------
+
+  /**
+   * Homeostatic state and labelled memories. The weights alone are not the
+   * whole skill: they were learned under a given homeostatic bias and fatigue,
+   * and without those the same stimulus recruits different winners after a restart.
+   */
+  override serializeExtra(): unknown {
+    return {
+      homeostaticBias: packArray(this.homeostaticBias),
+      avgActivity: packArray(this.avgActivity),
+      winCounts: packArray(this.winCounts),
+      memories: this.memories.map((m) => ({
+        pattern: Array.from(m.pattern),
+        label: m.label,
+        strength: m.strength,
+        createdAt: m.createdAt,
+      })),
+    };
+  }
+
+  override deserializeExtra(data: unknown): void {
+    if (typeof data !== 'object' || data === null) return;
+    const d = data as Record<string, unknown>;
+    const n = this.neuronCount;
+    const bias = unpackFloat32(d.homeostaticBias, n);
+    const avg = unpackFloat32(d.avgActivity, n);
+    const wins = unpackFloat32(d.winCounts, n);
+    if (bias) this.homeostaticBias.set(bias);
+    if (avg) this.avgActivity.set(avg);
+    if (wins) this.winCounts.set(wins);
+
+    const memories = Array.isArray(d.memories) ? d.memories : [];
+    this.memories = [];
+    for (const raw of memories.slice(-MAX_PERSISTED_MEMORIES)) {
+      const m = raw as { pattern?: unknown; label?: unknown; strength?: unknown; createdAt?: unknown };
+      if (!Array.isArray(m?.pattern) || typeof m.label !== 'string') continue;
+      if (!m.pattern.every((i) => Number.isInteger(i) && i >= 0 && i < this.neuronCount)) continue;
+      this.memories.push({
+        pattern: Int32Array.from(m.pattern as number[]),
+        label: m.label.slice(0, 80),
+        strength: typeof m.strength === 'number' && Number.isFinite(m.strength) ? m.strength : 1,
+        createdAt: typeof m.createdAt === 'number' && Number.isFinite(m.createdAt) ? m.createdAt : 0,
+      });
+    }
   }
 
   get memoryCount(): number {

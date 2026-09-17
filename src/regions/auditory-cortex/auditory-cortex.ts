@@ -35,6 +35,10 @@ import { BrainRegion } from '../../core/brain-region.js';
 import type { ModulationEffects } from '../../core/neuromodulators/modulator-system.js';
 import { SpikingNeuron, createNeuronPopulation } from '../../core/snn/neuron.js';
 import type { NeuronTypeName } from '../../core/snn/neuron.js';
+import { packArray, unpackFloat32, unpackInt32 } from '../../core/persistence/binary-protocol.js';
+
+/** Labelled memories restored from disk are capped (the list is unbounded in memory). */
+const MAX_PERSISTED_MEMORIES = 2000;
 
 // ====================================================================
 // Auditory Cortex Types
@@ -237,6 +241,14 @@ export class AuditoryCortex extends BrainRegion {
    */
   constructor(config: Partial<AuditoryCortexConfig> = {}) {
     const cfg = { ...DEFAULT_AUDITORY_CONFIG, ...config };
+    if (cfg.inputCount !== cfg.numBands * cfg.numFrames) {
+      // The voice gate and the tonotopic weighting index the input as a
+      // spectrogram; any other size silently reads the wrong channels.
+      throw new Error(
+        `[auditoryCortex] inputCount (${cfg.inputCount}) must equal numBands × numFrames ` +
+          `(${cfg.numBands} × ${cfg.numFrames})`,
+      );
+    }
     super('auditoryCortex', 'Corteza Auditiva', cfg.neuronCount, cfg.inputCount);
 
     this.config = cfg;
@@ -378,8 +390,13 @@ export class AuditoryCortex extends BrainRegion {
     for (let i = 0; i < this.neuronCount; i++) indices[i] = i;
     indices.sort((a, b) => localPotentials[b] - localPotentials[a]);
 
-    const winners = new Int32Array(this.config.kWinners);
-    for (let i = 0; i < this.config.kWinners; i++) {
+    // Only neurons with actual drive can win: when fatigue (or a weak input)
+    // clamps every potential to 0, the sort is a tie and neurons 0, 1, 2 used
+    // to "win" by index.
+    let winnerCount = 0;
+    while (winnerCount < this.config.kWinners && localPotentials[indices[winnerCount]] > 0) winnerCount++;
+    const winners = new Int32Array(winnerCount);
+    for (let i = 0; i < winnerCount; i++) {
       winners[i] = indices[i];
     }
 
@@ -387,7 +404,7 @@ export class AuditoryCortex extends BrainRegion {
     for (let i = 0; i < this.localNeurons.length; i++) {
       this.localNeurons[i].fired = false;
     }
-    for (let i = 0; i < this.config.kWinners; i++) {
+    for (let i = 0; i < winnerCount; i++) {
       const winnerIdx = winners[i];
       this.localNeurons[winnerIdx].fired = true;
       activeSpikes[winnerIdx] = 1.0;
@@ -809,6 +826,48 @@ export class AuditoryCortex extends BrainRegion {
       shortTermBufferSize: this.shortTermBuffer.length,
       activity: this.getLocalActivity(),
     };
+  }
+
+  // ----------------------------------------------------------------
+  // Persistence of the non-weight learned state
+  // ----------------------------------------------------------------
+
+  /** Fatigue, self-learned sound categories and the counter that names them. */
+  override serializeExtra(): unknown {
+    return {
+      winCounts: packArray(this.winCounts),
+      autoLearnCounter: this.autoLearnCounter,
+      memories: this.memories.map((m) => ({
+        pattern: Array.from(m.pattern),
+        label: m.label,
+        strength: m.strength,
+        createdAt: m.createdAt,
+      })),
+    };
+  }
+
+  override deserializeExtra(data: unknown): void {
+    if (typeof data !== 'object' || data === null) return;
+    const d = data as Record<string, unknown>;
+    const wins = unpackInt32(d.winCounts, this.neuronCount);
+    if (wins) this.winCounts.set(wins);
+    if (typeof d.autoLearnCounter === 'number' && Number.isInteger(d.autoLearnCounter) && d.autoLearnCounter >= 0) {
+      this.autoLearnCounter = d.autoLearnCounter;
+    }
+
+    const memories = Array.isArray(d.memories) ? d.memories : [];
+    this.memories = [];
+    for (const raw of memories.slice(-MAX_PERSISTED_MEMORIES)) {
+      const m = raw as { pattern?: unknown; label?: unknown; strength?: unknown; createdAt?: unknown };
+      if (!Array.isArray(m?.pattern) || typeof m.label !== 'string') continue;
+      if (!m.pattern.every((i) => Number.isInteger(i) && i >= 0 && i < this.neuronCount)) continue;
+      this.memories.push({
+        pattern: Int32Array.from(m.pattern as number[]),
+        label: m.label.slice(0, 80),
+        strength: typeof m.strength === 'number' && Number.isFinite(m.strength) ? m.strength : 1,
+        createdAt: typeof m.createdAt === 'number' && Number.isFinite(m.createdAt) ? m.createdAt : 0,
+      });
+    }
   }
 
   /** Number of stored memories */

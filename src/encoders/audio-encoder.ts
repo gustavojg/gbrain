@@ -159,6 +159,64 @@ export class AudioEncoder {
   }
 
   /**
+   * Encodes ONE frame of linear FFT magnitudes (what a browser's AnalyserNode
+   * delivers) into the cortex's spectrogram representation.
+   *
+   * The frame is grouped into the encoder's cochlear (mel) bands, appended to
+   * the sliding window of recent frames, and the whole window is returned as
+   * GRADED band energies laid out `[oldest frame … newest frame]`, each frame
+   * being `numBands` values — so the last `numBands` channels are always the
+   * current frame, which is what the auditory cortex's voice gate inspects.
+   *
+   * Graded, not Bernoulli-sampled: the auditory cortex reads intensities, and
+   * a 15% spike probability per band would turn a clear voice frame into two
+   * or three random spikes that the voice gate accepts or rejects by chance.
+   *
+   * @param magnitudes - Linear-frequency magnitudes in [0, 1], bin 0 = DC
+   * @param sampleRate - Sample rate of the source (Hz); the bins span 0 … sampleRate/2
+   * @param now - Current time (ms). Frames older than `maxFrameAgeMs` are
+   *   dropped first, so a new utterance is not glued to one heard long ago.
+   * @returns Flat spectrogram, `numBands × numFrames` values in [0, 1]
+   */
+  encodeMagnitudeFrame(
+    magnitudes: number[] | Float32Array,
+    sampleRate: number,
+    now: number,
+  ): Float32Array {
+    const { numBands, numFrames } = this.config;
+    const binHz = sampleRate / 2 / Math.max(1, magnitudes.length);
+    const bands = new Float32Array(numBands);
+
+    for (let b = 0; b < numBands; b++) {
+      const lo = this.bandEdges[b] / binHz;
+      const hi = this.bandEdges[b + 1] / binHz;
+      const first = Math.floor(lo);
+      const last = Math.min(magnitudes.length - 1, Math.max(first, Math.ceil(hi) - 1));
+      if (first >= magnitudes.length) break; // band above the source's Nyquist
+
+      // Mean of the bins the band overlaps (low bands are narrower than a bin
+      // at 48 kHz: they take the value of the bin they fall in).
+      let sum = 0;
+      for (let i = first; i <= last; i++) sum += magnitudes[i] as number;
+      const value = sum / (last - first + 1);
+      bands[b] = Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0;
+    }
+
+    if (now - this.lastFrameTime > AudioEncoder.MAX_FRAME_AGE_MS) this.spectrogramBuffer = [];
+    this.lastFrameTime = now;
+    this.spectrogramBuffer.push(bands);
+    if (this.spectrogramBuffer.length > numFrames) this.spectrogramBuffer.shift();
+
+    return this.getSpectrogram();
+  }
+
+  /** Time of the last frame pushed by `encodeMagnitudeFrame` (ms). */
+  private lastFrameTime: number = -Infinity;
+
+  /** Silence (ms of simulated time) after which the sliding window starts over. */
+  private static readonly MAX_FRAME_AGE_MS = 300;
+
+  /**
    * Computes an FFT frame with a Hanning window.
    * Simplified FFT (DFT) — in production fft.js would be used
    */

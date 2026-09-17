@@ -1182,7 +1182,7 @@ document.getElementById('toggleMic')?.addEventListener('click', async () => {
       if (energy < MIC_SILENCE_THRESHOLD) return;
 
       if (ws && ws.readyState === 1) {
-        ws.send(JSON.stringify({ type: 'input:audio', data: { spectrogram } }));
+        ws.send(JSON.stringify({ type: 'input:audio', data: { spectrogram, sampleRate: audioCtx.sampleRate } }));
       }
     }, MIC_FRAME_INTERVAL_MS);
   } catch (err) {

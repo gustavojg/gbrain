@@ -46,8 +46,10 @@ const active: Record<string, number> = {};
 const activeF: Record<string, number> = {};
 const activeN: Record<string, number> = {};
 for (let r = 0; r < 5; r++) {
-  brain.read('hola cerebro como estas hoy');
-  for (let i = 0; i < 20; i++) {
+  // Inject only, and observe the WHOLE wave tick by tick (read() would run its
+  // 50 propagation ticks inline, before we can look: most of the wave is over by then).
+  brain.read('hola cerebro como estas hoy', { propagate: false });
+  for (let i = 0; i < 120; i++) {
     brain.tick();
     const s = snapshot(brain);
     for (const [id, v] of Object.entries(s)) {

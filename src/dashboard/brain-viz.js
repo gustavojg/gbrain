@@ -790,7 +790,8 @@ function updateRegionActivity(regions) {
   // Update values. drive is scaled ×2 for the bar (typical range 0..0.3) so it is
   // visible, but the label shows the raw %. novelty already spans 0..1.
   for (const [id, data] of Object.entries(regions)) {
-    const drive = Math.max(0, Math.min(1, data.drive || 0));
+    // drivePeak: a wave crosses the early regions faster than the 2 Hz state stream.
+    const drive = Math.max(0, Math.min(1, data.drivePeak ?? data.drive ?? 0));
     const nov = Math.max(0, Math.min(1, data.novelty || 0));
 
     const driveBar = document.getElementById(`rdrive-${id}`);

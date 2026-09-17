@@ -286,11 +286,18 @@ export class Thalamus extends BrainRegion {
    * @returns Vector filtered by attention
    */
   /**
-   * Amplitude of the intrinsic noise added to each relay neuron's potential.
-   * It only breaks ties between driven neurons: it is also the activation
-   * floor, so noise by itself can never make a neuron fire.
+   * Activation floor of a relay neuron: synaptic drive below this never makes
+   * it fire, however it ranks in the k-WTA.
    */
   private static readonly NOISE_AMPLITUDE = 0.01;
+
+  /**
+   * Intrinsic noise added to each relay neuron's potential. It must only break
+   * exact ties: relay potentials are close to each other (dense afferents), so
+   * noise at the scale of the floor reshuffled the winners and made the
+   * thalamic code of one and the same stimulus differ between presentations.
+   */
+  private static readonly TIE_BREAK_NOISE = 1e-6;
 
   processInput(spikes: Float32Array, modulationEffects: ModulationEffects): Float32Array {
     // 1. Apply the attentional filter, gated by the current neuromodulation
@@ -311,7 +318,7 @@ export class Thalamus extends BrainRegion {
       }
 
       // Neuronal noise (intrinsic variability)
-      excitation += Math.random() * Thalamus.NOISE_AMPLITUDE;
+      excitation += Math.random() * Thalamus.TIE_BREAK_NOISE;
       localPotentials[n] = excitation;
     }
 

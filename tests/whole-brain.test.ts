@@ -9,10 +9,13 @@
  * HARD CHECKS (must hold — they fail the suite):
  *   1. REST          — with no input nothing fires, nothing is stored, nothing
  *                      travels on the bus, and the thought stream is empty.
- *   2. CASCADE       — a stimulus reaches all 8 regions, entering through the
- *                      thalamus first, and then the brain returns to rest.
- *   3. SENSORY CODE  — the thalamic response is reproducible for the same text
- *                      and different for a different text.
+ *   2. CASCADE       — a stimulus enters through the thalamus, reaches every
+ *                      region of its pathway, and then the brain returns to
+ *                      rest.
+ *   3. CONTENT CODE  — in the running brain, from the very first stimulus, the
+ *                      thalamus and the language areas respond reproducibly to
+ *                      the same text and differently to a different text
+ *                      (feedback pathways modulate; they do not drive).
  *   4. INTEGRATORS   — in isolation, the leaky-integrator regions (Wernicke,
  *                      Broca, PFC) give reproducible, input-specific responses
  *                      (guards the LIF reset: without it the same neurons won
@@ -86,6 +89,8 @@ const jaccard = (a: Set<number>, b: Set<number>): number => {
 };
 
 interface Wave {
+  /** Spikes per neuron of each region over the whole wave. */
+  counts: Record<string, Float32Array>;
   /** First non-empty firing pattern of each region. */
   first: Record<string, Set<number>>;
   /** Tick (1-based) at which each region first fired. */
@@ -94,14 +99,22 @@ interface Wave {
 
 /** Reads `text`, observes the wave tick by tick, then lets the brain recover. */
 function perceive(brain: DigitalBrain, text: string): Wave {
-  const wave: Wave = { first: {}, latency: {} };
-  quiet(() => brain.read(text, { propagate: false }));
+  return observe(brain, () => brain.read(text, { propagate: false }));
+}
+
+/** Injects a stimulus, observes the wave tick by tick, then lets the brain recover. */
+function observe(brain: DigitalBrain, inject: () => void): Wave {
+  const wave: Wave = { counts: {}, first: {}, latency: {} };
+  quiet(inject);
   for (let t = 1; t <= WAVE_TICKS; t++) {
     brain.tick();
     const { regions } = brain.getState();
     for (const id of REGION_IDS) {
-      if (wave.first[id] === undefined && regions[id].activeNeurons.length > 0) {
-        wave.first[id] = new Set(regions[id].activeNeurons);
+      const active = regions[id].activeNeurons;
+      wave.counts[id] ??= new Float32Array(regions[id].outputSpikes.length);
+      for (const n of active) wave.counts[id][n]++;
+      if (wave.first[id] === undefined && active.length > 0) {
+        wave.first[id] = new Set(active);
         wave.latency[id] = t;
       }
     }
@@ -109,6 +122,27 @@ function perceive(brain: DigitalBrain, text: string): Wave {
   for (let t = 0; t < RECOVERY_TICKS; t++) brain.tick();
   return wave;
 }
+
+/** Pearson correlation of two spike-count vectors. */
+const correlation = (a: Float32Array, b: Float32Array): number => {
+  const n = a.length;
+  let meanA = 0;
+  let meanB = 0;
+  for (let i = 0; i < n; i++) { meanA += a[i]; meanB += b[i]; }
+  meanA /= n;
+  meanB /= n;
+  let cov = 0;
+  let varA = 0;
+  let varB = 0;
+  for (let i = 0; i < n; i++) {
+    const x = a[i] - meanA;
+    const y = b[i] - meanB;
+    cov += x * y;
+    varA += x * x;
+    varB += y * y;
+  }
+  return varA > 0 && varB > 0 ? cov / Math.sqrt(varA * varB) : 0;
+};
 
 const isSilent = (brain: DigitalBrain): boolean =>
   Object.values(brain.getState().regions).every((r) => r.firingRate === 0);
@@ -133,7 +167,10 @@ const mainBrain = newBrain();
 const waveA1 = perceive(mainBrain, TEXT_A);
 {
   const reached = REGION_IDS.filter((id) => waveA1.latency[id] !== undefined);
-  check('a stimulus reaches all 8 regions', reached.length === REGION_IDS.length, `${reached.length}/8`);
+  // The auditory cortex is not required here: reading is not hearing (see G4).
+  const textPathway = REGION_IDS.filter((id) => id !== 'auditoryCortex');
+  check('text reaches its whole pathway', textPathway.every((id) => reached.includes(id)),
+    `${reached.filter((id) => id !== 'auditoryCortex').length}/7`);
 
   const thalamusFirst = REGION_IDS.every((id) => (waveA1.latency[id] ?? Infinity) >= waveA1.latency.thalamus);
   check('the thalamus is the gateway (fires first)', thalamusFirst,
@@ -142,15 +179,22 @@ const waveA1 = perceive(mainBrain, TEXT_A);
   check('the brain returns to rest after the wave', isSilent(mainBrain) && mainBrain.getBus().pendingCount === 0);
 }
 
-// ── 3. SENSORY CODE ─────────────────────────────────────────────────────────
-console.log('\n3. SENSORY CODE');
+// ── 3. CONTENT CODE ─────────────────────────────────────────────────────────
+console.log('\n3. CONTENT CODE');
 const waveA2 = perceive(mainBrain, TEXT_A);
 const waveB = perceive(mainBrain, TEXT_B);
 {
-  const same = jaccard(waveA1.first.thalamus, waveA2.first.thalamus);
-  const diff = jaccard(waveA1.first.thalamus, waveB.first.thalamus);
-  check('thalamic code is reproducible for the same text', same >= 0.6, `J(A,A')=${same.toFixed(2)}`);
-  check('thalamic code differs for a different text', diff <= 0.3, `J(A,B)=${diff.toFixed(2)}`);
+  // waveA1 is the very first stimulus this brain ever received.
+  for (const id of ['thalamus', 'wernicke', 'broca'] as const) {
+    const same = jaccard(waveA1.first[id], waveA2.first[id]);
+    const diff = jaccard(waveA1.first[id], waveB.first[id]);
+    check(`${id}: first response is reproducible and content-specific`, same >= 0.8 && diff <= 0.3,
+      `J(A,A')=${same.toFixed(2)} J(A,B)=${diff.toFixed(2)}`);
+  }
+  const same = correlation(waveA1.counts.wernicke, waveA2.counts.wernicke);
+  const diff = correlation(waveA1.counts.wernicke, waveB.counts.wernicke);
+  check('wernicke: the WHOLE wave stays content-specific (feedback does not swamp it)',
+    same >= 0.8 && diff <= 0.3, `r(A,A')=${same.toFixed(2)} r(A,B)=${diff.toFixed(2)}`);
 }
 
 // ── 4. INTEGRATORS (in isolation) ───────────────────────────────────────────
@@ -215,23 +259,25 @@ const valenceAfter = (text: string): number => {
 // ── 6. NEUROMODULATION (in the running brain) ───────────────────────────────
 console.log('\n6. NEUROMODULATION');
 {
-  // A dense image: far more active channels than the thalamic bottleneck lets through.
-  const rng = mulberry32(5);
-  const image = Array.from({ length: 64 * 64 }, () => Math.floor(rng() * 256));
+  // A long sentence: it activates more lexical channels than the thalamic
+  // bottleneck lets through, so widening the gate is observable downstream.
+  const longText =
+    'el perro corre por el parque mientras la musica suena en la noche y los amigos ' +
+    'caminan hacia la casa grande para comer juntos cerca del rio con mucha calma';
 
-  const see = (modulator: ModulatorType | null, amount = 0): { visualDrive: number; pfcRecruited: number } => {
+  const see = (modulator: ModulatorType | null, amount = 0): { relayedDrive: number; pfcRecruited: number } => {
     const brain = newBrain();
     if (modulator) brain.getModulators().release(modulator, amount);
-    quiet(() => brain.see(image, 64, 64, { propagate: false }));
-    let visualDrive = 0;
+    quiet(() => brain.read(longText, { propagate: false }));
+    let relayedDrive = 0;
     let pfcRecruited = 0;
     for (let t = 0; t < 120; t++) {
       brain.tick();
       const { regions } = brain.getState();
-      visualDrive = Math.max(visualDrive, regions.visualCortex.drive);
+      relayedDrive = Math.max(relayedDrive, regions.wernicke.drive);
       pfcRecruited = Math.max(pfcRecruited, regions.prefrontalCortex.activeNeurons.length);
     }
-    return { visualDrive, pfcRecruited };
+    return { relayedDrive, pfcRecruited };
   };
 
   const baseline = see(null);
@@ -240,8 +286,8 @@ console.log('\n6. NEUROMODULATION');
   const cortisol = see(ModulatorType.Cortisol, 0.6);
 
   check('acetylcholine widens the thalamic gate (more signal reaches the cortex)',
-    acetylcholine.visualDrive > baseline.visualDrive * 1.05,
-    `visual drive ${baseline.visualDrive.toFixed(3)} → ${acetylcholine.visualDrive.toFixed(3)}`);
+    acetylcholine.relayedDrive > baseline.relayedDrive * 1.05,
+    `Wernicke drive ${baseline.relayedDrive.toFixed(3)} → ${acetylcholine.relayedDrive.toFixed(3)}`);
   check('serotonin raises the firing threshold (fewer PFC neurons recruited)',
     serotonin.pfcRecruited < baseline.pfcRecruited * 0.95, `${baseline.pfcRecruited} → ${serotonin.pfcRecruited}`);
   check('cortisol raises the firing threshold (fewer PFC neurons recruited)',
@@ -329,27 +375,54 @@ console.log('\n9. DETERMINISM');
 // ── KNOWN GAPS ──────────────────────────────────────────────────────────────
 console.log('\nKNOWN GAPS (audit findings not fixed yet — reported, not enforced)');
 {
-  // G1. In the assembled brain the language areas' response is dominated by
-  // feedback traffic and by Hebbian learning on it, not by what was read.
-  const same = jaccard(waveA1.first.wernicke, waveA2.first.wernicke);
-  const diff = jaccard(waveA1.first.wernicke, waveB.first.wernicke);
-  gap('G1 Wernicke response in the whole brain is content-specific', same >= 0.6 && diff <= 0.3,
-    `J(A,A')=${same.toFixed(2)} J(A,B)=${diff.toFixed(2)}; target ≥0.60 / ≤0.30`);
+  // G1. The PFC integrates the hippocampus and the amygdala; both outputs are
+  // largely content-agnostic (see G2/G3 and the amygdala's tonic affect
+  // population), so over a whole wave the PFC barely tells stimuli apart.
+  {
+    const same = correlation(waveA1.counts.prefrontalCortex, waveA2.counts.prefrontalCortex);
+    const diff = correlation(waveA1.counts.prefrontalCortex, waveB.counts.prefrontalCortex);
+    gap('G1 the prefrontal response over a wave is content-specific', same >= 0.8 && diff <= 0.3,
+      `r(A,A')=${same.toFixed(2)} r(A,B)=${diff.toFixed(2)}; target ≥0.80 / ≤0.30`);
+  }
 
-  // G2. Episode codes inherit G1: the hippocampus is fed by cortical traffic
-  // that barely depends on content, so pattern separation cannot tell two
-  // stimuli apart much better than two presentations of the same one.
+  // G2. Episode codes: a re-experience should land on (or next to) its first
+  // episode, and a different stimulus far from it. Much better since feedback
+  // stopped driving the cortex, but not yet reliable for every seed.
+  // G3. CA3 weights only ever grow, so stored episodes merge into one big
+  // attractor and pattern completion outputs nearly the same engram for any cue.
   {
     const brain = newBrain();
-    for (const text of [TEXT_A, TEXT_A, TEXT_B]) perceive(brain, text);
+    const waves = [TEXT_A, TEXT_B, TEXT_A, TEXT_B].map((text) => perceive(brain, text));
     const hippocampus = brain.getRegion('hippocampus') as Hippocampus;
-    const [a1, a2, b1] = hippocampus.replay(3)
+    const episodes = hippocampus.replay(10)
       .sort((x, y) => x.context.timestamp - y.context.timestamp)
       .map((episode) => episode.pattern);
-    const same = Hippocampus.overlapBinary(a1, a2);
-    const diff = Hippocampus.overlapBinary(a1, b1);
+    // Episodes 0 and 1 are A and B; a re-experienced A either merged into
+    // episode 0 (overlap 1) or was stored right after them.
+    const same = episodes.length >= 3 ? Hippocampus.overlapBinary(episodes[0], episodes[2]) : 1;
+    const diff = Hippocampus.overlapBinary(episodes[0], episodes[1]);
     gap('G2 episode codes separate different stimuli', same - diff >= 0.3,
       `overlap(A,A')=${same.toFixed(2)} overlap(A,B)=${diff.toFixed(2)}; target Δ≥0.30`);
+
+    const sameOut = correlation(waves[2].counts.hippocampus, waves[0].counts.hippocampus);
+    const diffOut = correlation(waves[2].counts.hippocampus, waves[3].counts.hippocampus);
+    gap('G3 the hippocampal output (CA3 completion) is content-specific', sameOut - diffOut >= 0.3,
+      `r(A,A')=${sameOut.toFixed(2)} r(A,B)=${diffOut.toFixed(2)}; target Δ≥0.30`);
+  }
+
+  // G4. The auditory cortex's voice gate reads the last 40 of its 400 inputs as
+  // "the latest spectrogram frame", but the live pipeline delivers a 128-bin
+  // frame (padded with zeros) and the thalamic relay code — so it never sees
+  // real sound, and answers to text or not depending on which relay neurons win.
+  {
+    const rng = mulberry32(3);
+    const voice = Array.from({ length: 128 }, (_, i) => (i > 10 && i < 40 ? 0.6 + 0.4 * rng() : 0.05 * rng()));
+    const brain = newBrain();
+    const sound = observe(brain, () => brain.hearSpectrogram(voice, { propagate: false }));
+    const heardSound = sound.latency.auditoryCortex !== undefined;
+    const heardText = waveA1.latency.auditoryCortex !== undefined;
+    gap('G4 the auditory cortex responds to sound, and not to text', heardSound && !heardText,
+      `sound→${heardSound ? 'fires' : 'silent'} text→${heardText ? 'fires' : 'silent'}`);
   }
 
   // G5. Only weights are persisted: the episodic index is lost on restart.

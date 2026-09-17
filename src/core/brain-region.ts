@@ -40,6 +40,12 @@ export interface RegionActivity {
    */
   drive: number;
   /**
+   * Peak of `drive` held with a slow decay (~1 s of server time). A perception
+   * wave crosses the early regions in a few ticks; the dashboard samples the
+   * state at 2 Hz and would otherwise miss it. Only set by `DigitalBrain.getState()`.
+   */
+  drivePeak?: number;
+  /**
    * Novelty of the firing pattern (EMA, 0..1). ~0 when the region repeats the
    * same pattern (rest / stable attractor) and rises when a stimulus changes
    * WHICH neurons fire. It is the reactive signal of the activity panel:
@@ -181,7 +187,11 @@ export abstract class BrainRegion {
 
     // Initialize state vectors
     this.potentials = new Float32Array(neuronCount);
-    this.potentials.fill(-70); // Resting potential
+    // Rest = 0: `potentials` is a dimensionless drive accumulator (sum of
+    // weights × spikes), not a voltage in mV. Starting at −70 kept the
+    // integrator regions below their activation floor for the first ~25 ticks
+    // of input, so the first stimulus after boot was lost.
+    this.potentials.fill(0);
     this.spikes = new Float32Array(neuronCount);
 
     // Sensory buffer for recent inputs
@@ -270,6 +280,15 @@ export abstract class BrainRegion {
       inputSpikes = new Float32Array(this.inputCount);
     }
 
+    // Top-down gain: modulatory afferents scale the response to the drivers.
+    // They never add input of their own, so with no driver the region stays
+    // silent, and WHAT it represents is decided by the drivers alone.
+    const topDownGain = 1 + BrainRegion.TOP_DOWN_GAIN * this.topDownLevel;
+    this.topDownLevel *= BrainRegion.TOP_DOWN_DECAY;
+    if (topDownGain !== 1) {
+      for (let i = 0; i < inputSpikes.length; i++) inputSpikes[i] *= topDownGain;
+    }
+
     // Update the perceived drive level (EMA). We measure the fraction of
     // input channels with signal: 0 = region at rest, rises during interaction.
     let driven = 0;
@@ -282,6 +301,9 @@ export abstract class BrainRegion {
 
     // Apply modulation to parameters
     this.modulateBy(modulationEffects);
+
+    // Attended populations recruit more neurons (top-down widens the k-WTA).
+    this.sparsity = Math.min(0.3, this.sparsity * (1 + BrainRegion.TOP_DOWN_RECRUITMENT * (topDownGain - 1)));
 
     // Process through the region's specific implementation
     const outputSpikes = this.processInput(inputSpikes, modulationEffects);
@@ -405,8 +427,43 @@ export abstract class BrainRegion {
       this.baseLearningRate * effects.learningRateMultiplier;
   }
 
+  /** Trace of recent modulatory (top-down) input, 0–1. */
+  private topDownLevel: number = 0;
+  /** Maximum gain added by top-down modulation (×1 … ×1.5). */
+  private static readonly TOP_DOWN_GAIN = 0.5;
+  /** Per-tick decay of the top-down trace (≈ 10 ms time constant). */
+  private static readonly TOP_DOWN_DECAY = 0.9;
+  /** Mean activity per fibre at which top-down modulation saturates. */
+  private static readonly TOP_DOWN_SATURATION = 0.1;
+  /** How much of the top-down gain also widens the winning fraction. */
+  private static readonly TOP_DOWN_RECRUITMENT = 0.5;
+
   /** Learning rate after modulation */
   protected _modulatedLearningRate: number = 0.1;
+
+  /**
+   * Receives a volley from a MODULATORY projection (feedback / top-down).
+   *
+   * Biology: feedback projections target distal dendrites and change the gain
+   * of the neurons they reach rather than making them fire (Sherman &
+   * Guillery, 1998; Reynolds & Heeger, 2009). Only the overall strength of the
+   * volley matters here — the fraction of active fibres, scaled by their
+   * weight — not its spatial pattern, which lives in the source's own space.
+   *
+   * @param data - Spike vector of the modulatory volley (already weighted)
+   */
+  feedModulation(data: Float32Array): void {
+    if (data.length === 0) return;
+    let sum = 0;
+    for (let i = 0; i < data.length; i++) sum += data[i];
+    const level = Math.min(1, sum / data.length / BrainRegion.TOP_DOWN_SATURATION);
+    if (level > this.topDownLevel) this.topDownLevel = level;
+  }
+
+  /** Current top-down modulation level (0–1), for monitoring. */
+  get topDown(): number {
+    return this.topDownLevel;
+  }
 
   /**
    * Offline reactivation (sleep replay): processes a pattern directly, without

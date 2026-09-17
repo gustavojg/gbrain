@@ -166,6 +166,14 @@ export class DigitalBrain {
   // --- Brain regions ---
   private regions: Map<string, BrainRegion> = new Map();
 
+  /** Slow-decaying peak of each region's drive (what the dashboard bars show). */
+  private drivePeaks: Map<string, number> = new Map();
+  /** Per-tick decay of the held peak (≈ 1 s at the server's 10 Hz tick). */
+  private static readonly DRIVE_PEAK_DECAY = 0.9;
+
+  /** "from->to" of the connectome projections that modulate instead of drive. */
+  private modulatoryPathways: Set<string> = new Set();
+
   // --- Encoders (inputs) ---
   private visualEncoder: VisualEncoder;
   private audioEncoder: AudioEncoder;
@@ -194,6 +202,11 @@ export class DigitalBrain {
 
   /** Ticks a perception needs to propagate through the connectome (~50 ms simulated). */
   static readonly PERCEPTION_TICKS = 50;
+
+  /** Side of the (square) retinal image the visual encoder works on. */
+  private static readonly RETINA_SIDE = 14;
+  /** Input channels of the visual cortex. */
+  private static readonly VISUAL_CORTEX_INPUTS = 1000;
 
   // ── Sleep (memory consolidation) ──
   /** Cortical target of hippocampal replay (the hippocampus → PFC projection). */
@@ -286,12 +299,22 @@ export class DigitalBrain {
     this.consolidationEngine = new ConsolidationEngine(DigitalBrain.SLEEP_REPLAY_CYCLES);
 
     // 5. Initialize encoders
+    // 14×14 × (intensity + 4 edge orientations) = 980 channels: the whole
+    // retinal code fits the visual cortex's 1000 inputs. At 32×32 the encoder
+    // emitted 5120 channels and the cortex silently kept the first 1000 — the
+    // top rows of the intensity map, with every edge channel thrown away.
     this.visualEncoder = new VisualEncoder({
-      processWidth: 32,
-      processHeight: 32,
+      processWidth: DigitalBrain.RETINA_SIDE,
+      processHeight: DigitalBrain.RETINA_SIDE,
       foveation: true,
       edgeDetection: true,
     });
+    if (this.visualEncoder.outputSize > DigitalBrain.VISUAL_CORTEX_INPUTS) {
+      throw new Error(
+        `Visual encoder emits ${this.visualEncoder.outputSize} channels but the visual cortex has ` +
+          `${DigitalBrain.VISUAL_CORTEX_INPUTS} inputs`,
+      );
+    }
 
     this.audioEncoder = new AudioEncoder({
       sampleRate: 16000,
@@ -348,8 +371,13 @@ export class DigitalBrain {
 
     // ── Instantiate regions with reduced sizes ──
     // Total: ~10K neurons (vs 50K before) → smooth performance
-    this.addRegion(new Thalamus({ neuronCount: 500, totalInputSize: 500, bottleneckSize: 100 }));
-    this.addRegion(new VisualCortex({ neuronCount: 2000, inputCount: 1000 }));
+    // The attentional bottleneck must be NARROWER than a typical stimulus, or
+    // attention never selects anything: a sentence activates ~90 lexical
+    // channels and an image ~50 retinal ones, so a gate of 100 let everything
+    // through and ACh/NE had nothing to widen. At 40 the gate passes the ~55
+    // most salient channels at baseline modulation and ~67 under high ACh.
+    this.addRegion(new Thalamus({ neuronCount: 500, totalInputSize: 500, bottleneckSize: 40 }));
+    this.addRegion(new VisualCortex({ neuronCount: 2000, inputCount: DigitalBrain.VISUAL_CORTEX_INPUTS }));
     this.addRegion(new AuditoryCortex({ neuronCount: 1000, inputCount: 400 }));
     this.addRegion(new Hippocampus(1000, 1000));
     const amygdala = new Amygdala(500, 500);
@@ -366,8 +394,15 @@ export class DigitalBrain {
     this.bus.onReceive('brocaWernicke', (packet: SpikePacket) => {
       const broca = this.regions.get('broca');
       const wernicke = this.regions.get('wernicke');
+      // The prefrontal projection carries the INTENTION to speak: it drives
+      // Broca (production) but is top-down for Wernicke (comprehension), whose
+      // content must come from what is actually heard or read.
+      const topDown = packet.source === 'prefrontalCortex';
       // Stamp with the ARRIVAL time (see addRegion).
-      if (wernicke) wernicke.feedInput(packet.spikes, this.currentTime);
+      if (wernicke) {
+        if (topDown) wernicke.feedModulation(packet.spikes);
+        else wernicke.feedInput(packet.spikes, this.currentTime);
+      }
       if (broca) broca.feedInput(packet.spikes, this.currentTime);
     });
 
@@ -390,6 +425,10 @@ export class DigitalBrain {
 
     // Subscribe the region to the bus to receive spikes
     this.bus.onReceive(region.id, (packet: SpikePacket) => {
+      if (this.modulatoryPathways.has(`${packet.source}->${region.id}`)) {
+        region.feedModulation(packet.spikes);
+        return;
+      }
       // Stamp with the ARRIVAL time, not the send time: the axonal delay has
       // already elapsed on the bus, and the region's sensory trace must start
       // when the spikes actually reach it.
@@ -407,6 +446,7 @@ export class DigitalBrain {
     for (const conn of connections) {
       this.bus.setDelay(conn.from, conn.to, conn.delay);
       this.bus.setWeight(conn.from, conn.to, conn.weight);
+      if (conn.role === 'modulator') this.modulatoryPathways.add(`${conn.from}->${conn.to}`);
     }
     console.log(`  🔗 Connectome configured: ${connections.length} connections`);
   }
@@ -922,13 +962,21 @@ export class DigitalBrain {
     // 2. Process each region
     for (const [regionId, region] of this.regions) {
       const activity = region.step(dt, effects);
+      this.drivePeaks.set(
+        regionId,
+        Math.max(activity.drive, (this.drivePeaks.get(regionId) ?? 0) * DigitalBrain.DRIVE_PEAK_DECAY),
+      );
 
       // 3. Send output spikes to the bus
       if (activity.activeNeurons.length > 0) {
-        const outgoing = this.connectome.getOutgoing(regionId);
+        // In the connectome the language areas are one node ('brocaWernicke').
+        // What leaves it toward memory is what was UNDERSTOOD, i.e. Wernicke's
+        // output; Broca's output is motor (speech), not an afferent of memory.
+        const nodeId = regionId === 'wernicke' ? 'brocaWernicke' : regionId;
+        const outgoing = this.connectome.getOutgoing(nodeId);
         if (outgoing.length > 0) {
           this.bus.send({
-            source: regionId,
+            source: nodeId,
             targets: outgoing.map(c => c.to),
             spikes: activity.outputSpikes,
             timestamp: this.currentTime,
@@ -1024,7 +1072,7 @@ export class DigitalBrain {
   getState(): BrainState {
     const regionsActivity: Record<string, RegionActivity> = {};
     for (const [id, region] of this.regions) {
-      regionsActivity[id] = region.getActivity();
+      regionsActivity[id] = { ...region.getActivity(), drivePeak: this.drivePeaks.get(id) ?? 0 };
     }
 
     const busTraffic: Record<string, { sent: number; received: number }> = {};

@@ -74,6 +74,20 @@ export interface ConnectionConfig {
   delay: number;
   /** Whether the weight can be modulated by neuromodulators */
   modulatable: boolean;
+  /**
+   * What the projection does to its target (default: 'driver').
+   *
+   * - 'driver': carries the message. Its spikes are the target's input and
+   *   can make it fire (feedforward pathways).
+   * - 'modulator': sets the gain. It cannot make the target fire by itself
+   *   nor change WHAT the target represents; it scales how strongly the
+   *   target responds to its drivers (feedback / top-down pathways).
+   *
+   * Biology: the driver/modulator distinction of thalamo-cortical circuits
+   * (Sherman & Guillery, 1998) and the multiplicative-gain account of
+   * top-down attention (Reynolds & Heeger, 2009).
+   */
+  role?: 'driver' | 'modulator';
 }
 
 export interface BrainConfiguration {
@@ -232,25 +246,28 @@ export const DEFAULT_BRAIN_CONFIG: BrainConfiguration = {
     { from: 'brocaWernicke', to: 'hippocampus', weight: 0.6, delay: 10, modulatable: true },
 
     // === FEEDBACK (Top-Down — Executive control) ===
+    // Modulators: they set the gain of their targets, they do not drive them.
+    // As drivers, these dense and content-agnostic projections swamped the
+    // sensory input of every region they reached and closed excitatory loops.
 
     // Prefrontal Cortex → Thalamus (top-down attentional control)
-    { from: 'prefrontalCortex', to: 'thalamus',      weight: 0.5, delay: 15, modulatable: true },
+    { from: 'prefrontalCortex', to: 'thalamus',      weight: 0.5, delay: 15, modulatable: true,  role: 'modulator' },
 
     // Prefrontal Cortex → Visual Cortex (imagination, expectations)
-    { from: 'prefrontalCortex', to: 'visualCortex',   weight: 0.4, delay: 12, modulatable: true },
+    { from: 'prefrontalCortex', to: 'visualCortex',   weight: 0.4, delay: 12, modulatable: true,  role: 'modulator' },
 
     // Prefrontal Cortex → Auditory Cortex (auditory selective attention)
-    { from: 'prefrontalCortex', to: 'auditoryCortex',  weight: 0.4, delay: 12, modulatable: true },
+    { from: 'prefrontalCortex', to: 'auditoryCortex',  weight: 0.4, delay: 12, modulatable: true,  role: 'modulator' },
 
     // Amygdala → Thalamus (emotional modulation of attention)
-    { from: 'amygdala', to: 'thalamus',               weight: 0.6, delay: 8,  modulatable: true },
+    { from: 'amygdala', to: 'thalamus',               weight: 0.6, delay: 8,  modulatable: true,  role: 'modulator' },
 
     // Hippocampus → Cortices (memory reactivation)
-    { from: 'hippocampus', to: 'visualCortex',         weight: 0.3, delay: 12, modulatable: true },
-    { from: 'hippocampus', to: 'auditoryCortex',        weight: 0.3, delay: 12, modulatable: true },
+    { from: 'hippocampus', to: 'visualCortex',         weight: 0.3, delay: 12, modulatable: true,  role: 'modulator' },
+    { from: 'hippocampus', to: 'auditoryCortex',        weight: 0.3, delay: 12, modulatable: true,  role: 'modulator' },
 
     // Amygdala → Hippocampus (emotional memories consolidate more strongly)
-    { from: 'amygdala', to: 'hippocampus',             weight: 0.8, delay: 5,  modulatable: false },
+    { from: 'amygdala', to: 'hippocampus',             weight: 0.8, delay: 5,  modulatable: false, role: 'modulator' },
   ],
 
   // --- SERVER CONFIGURATION ---

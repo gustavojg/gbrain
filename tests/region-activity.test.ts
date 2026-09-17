@@ -4,9 +4,14 @@
  * k = sparsity·N neurons every tick (≈13.8%) because the gate compared against
  * _modulatedThreshold (−55 mV) on dimensionless potentials ~0.
  *
- * Expected after the fix:
+ * Expected:
  *   (1) Rest (zero input, several ticks): firingRate == 0.
- *   (2) With signal: firingRate > 0, variable across patterns, and ≤ sparsity (k-WTA cap).
+ *   (2) With signal: the region responds from the VERY FIRST pattern (it used
+ *       to stay dead for ~2 patterns because potentials booted at −70; that
+ *       boot artefact was the only "variability" this test originally saw),
+ *       never exceeds the k-WTA cap, and WHICH neurons fire depends on the
+ *       pattern (activity is not a constant set of winners).
+ *   (3) After the signal stops, the region returns to rest.
  */
 
 import { WernickeArea } from '../src/regions/broca-wernicke/wernicke.js';
@@ -43,7 +48,7 @@ function randomPattern(n: number, density: number): Float32Array {
 
 interface Region {
   feedInput(d: Float32Array, t?: number): void;
-  step(dt: number, m: ModulationEffects): { firingRate: number };
+  step(dt: number, m: ModulationEffects): { firingRate: number; activeNeurons: number[] };
 }
 
 function idleRate(r: Region, ticks: number): number {
@@ -52,13 +57,26 @@ function idleRate(r: Region, ticks: number): number {
   return last;
 }
 
-function drivenRates(r: Region, inputCount: number, trials: number): number[] {
+function drivenResponses(r: Region, inputCount: number, trials: number): { rates: number[]; winners: Set<number>[] } {
   const rates: number[] = [];
+  const winners: Set<number>[] = [];
   for (let t = 0; t < trials; t++) {
     r.feedInput(randomPattern(inputCount, 0.1));
-    rates.push(r.step(10, NEUTRAL).firingRate);
+    const activity = r.step(10, NEUTRAL);
+    rates.push(activity.firingRate);
+    winners.push(new Set(activity.activeNeurons));
+    // Rest between patterns, so residual membrane potential (not the input)
+    // cannot be what makes consecutive winner sets differ.
+    idleRate(r, 100);
   }
-  return rates;
+  return { rates, winners };
+}
+
+function jaccard(a: Set<number>, b: Set<number>): number {
+  let inter = 0;
+  for (const x of a) if (b.has(x)) inter++;
+  const union = a.size + b.size - inter;
+  return union === 0 ? 1 : inter / union;
 }
 
 const lex = new Lexicon();
@@ -73,17 +91,21 @@ console.log('── Actividad por región: reposo vs señal ──\n');
 let ok = true;
 for (const c of cases) {
   const idle = idleRate(c.region, 30);
-  const driven = drivenRates(c.region, c.inputCount, 8);
-  const variable = new Set(driven.map((x) => x.toFixed(4))).size > 1;
+  const { rates: driven, winners } = drivenResponses(c.region, c.inputCount, 8);
   const meanDriven = driven.reduce((a, b) => a + b, 0) / driven.length;
+  let maxOverlap = 0;
+  for (let i = 1; i < winners.length; i++) maxOverlap = Math.max(maxOverlap, jaccard(winners[i - 1], winners[i]));
+  const variable = maxOverlap < 0.5;
+  const after = idleRate(c.region, 30);
 
-  const restOk = idle === 0;
-  const activeOk = meanDriven > 0 && variable;
+  const restOk = idle === 0 && after === 0;
+  const activeOk = driven.every((x) => x > 0 && x <= 0.3) && variable;
   ok = ok && restOk && activeOk;
 
   console.log(`${c.name}:`);
   console.log(`  reposo (30 ticks):  ${(idle * 100).toFixed(1)}%   ${restOk ? '✅' : '❌ debería ser 0%'}`);
-  console.log(`  señal (8 patrones): media ${(meanDriven * 100).toFixed(1)}%, variable=${variable}   ${activeOk ? '✅' : '❌'}`);
+  console.log(`  señal (8 patrones): media ${(meanDriven * 100).toFixed(1)}%, ganadores dependen del patrón=${variable} (solape máx. ${(maxOverlap * 100).toFixed(0)}%)   ${activeOk ? '✅' : '❌'}`);
+  console.log(`  tras la señal (30 ticks): ${(after * 100).toFixed(1)}%   ${after === 0 ? '✅' : '❌ debería volver a 0%'}`);
   console.log(`    muestras: ${driven.map((x) => (x * 100).toFixed(1) + '%').join(', ')}\n`);
 }
 

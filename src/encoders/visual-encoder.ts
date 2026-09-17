@@ -138,6 +138,29 @@ export class VisualEncoder {
    */
   private resize(src: Float32Array, srcW: number, srcH: number, dstW: number, dstH: number): Float32Array {
     const dst = new Float32Array(dstW * dstH);
+
+    // Area pooling when shrinking: each retinal cell reports the mean of the
+    // patch of image it covers, as a photoreceptor pools the light over its
+    // receptive field (so isolated noisy pixels barely register). Point sampling (the previous bilinear lookup at
+    // one position per cell) simply missed thin strokes that fell between two
+    // sample points — parts of a drawing vanished depending on where it was.
+    if (srcW >= dstW && srcH >= dstH) {
+      for (let y = 0; y < dstH; y++) {
+        const y0 = Math.floor((y * srcH) / dstH);
+        const y1 = Math.max(y0 + 1, Math.floor(((y + 1) * srcH) / dstH));
+        for (let x = 0; x < dstW; x++) {
+          const x0 = Math.floor((x * srcW) / dstW);
+          const x1 = Math.max(x0 + 1, Math.floor(((x + 1) * srcW) / dstW));
+          let sum = 0;
+          for (let sy = y0; sy < y1; sy++) {
+            for (let sx = x0; sx < x1; sx++) sum += src[sy * srcW + sx];
+          }
+          dst[y * dstW + x] = sum / ((y1 - y0) * (x1 - x0));
+        }
+      }
+      return dst;
+    }
+
     const xRatio = srcW / dstW;
     const yRatio = srcH / dstH;
 
@@ -177,14 +200,20 @@ export class VisualEncoder {
    * Refactored from 06_visual_interface/server.ts
    */
   private foveate(img: Float32Array, w: number, h: number): Float32Array {
-    // Compute the center of mass of the content
+    // Compute the center of mass of the CONTENT: what stands out from the
+    // background level. (Counting the background itself — a uniformly grey
+    // canvas weighs more than the strokes drawn on it — dragged the centre of
+    // mass toward the middle of the image and the content was left off-centre.)
+    let background = Infinity;
+    for (let i = 0; i < img.length; i++) if (img[i] < background) background = img[i];
+
     let totalMass = 0;
     let cx = 0;
     let cy = 0;
 
     for (let y = 0; y < h; y++) {
       for (let x = 0; x < w; x++) {
-        const val = img[y * w + x];
+        const val = img[y * w + x] - background;
         totalMass += val;
         cx += x * val;
         cy += y * val;

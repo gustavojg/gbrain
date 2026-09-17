@@ -47,6 +47,8 @@ export interface RecalledCode {
 }
 
 export interface RecallResult {
+  /** Conjunction units the cue reactivated (what `reinforce` acts upon). */
+  units: number[];
   /** Reinstated code per modality (the cue's own modality excluded). */
   recalled: Record<string, RecalledCode>;
   /** How well the cue matches a learned conjunction (0–1). */
@@ -286,12 +288,14 @@ export class AssociationMemory {
     const drive = this.drive(modality, code);
     if (drive.size === 0) return null;
 
-    // Every conjunction the cue drives at least half as strongly as its best
-    // one takes part: a cue bound to two things reinstates both.
+    // Every conjunction the cue drives about as strongly as its best one takes
+    // part: a cue bound to two things reinstates both. (Not the merely similar
+    // ones: "cuadrado" shares letters with "cruz", and at a lower bar the cross
+    // leaked into what "cuadrado" brought to mind.)
     const ranked = [...drive].sort((a, b) => b[1] - a[1] || a[0] - b[0]);
     const best = ranked[0][1];
     if (best <= 0) return null;
-    const winners = ranked.filter(([, value]) => value >= best * 0.5).slice(0, this.activeUnits * 4);
+    const winners = ranked.filter(([, value]) => value >= best * 0.8).slice(0, this.activeUnits * 4);
     const top = winners.slice(0, this.activeUnits);
     const match = top.reduce((sum, [, value]) => sum + value, 0) / this.activeUnits;
 
@@ -335,7 +339,38 @@ export class AssociationMemory {
       recalled[other] = { pattern, strength };
     }
 
-    return Object.keys(recalled).length > 0 ? { recalled, match } : null;
+    return Object.keys(recalled).length > 0 ? { units: winners.map(([unit]) => unit), recalled, match } : null;
+  }
+
+  /**
+   * Reward-modulated plasticity on the conjunction units of a recall (the
+   * third factor of a three-factor rule: the synapses that were just used are
+   * still "eligible", and the outcome decides their fate).
+   *
+   * @param units - Conjunction units of the recall being judged (`RecallResult.units`)
+   * @param reward - > 0 strengthens the association (toward saturation),
+   *   < 0 weakens it (toward extinction); magnitude 0–1
+   */
+  reinforce(units: readonly number[], reward: number): void {
+    const r = Math.max(-1, Math.min(1, reward));
+    if (r === 0 || units.length === 0) return;
+    for (const [modality, byUnit] of this.forward) {
+      const carriers = this.carriers.get(modality);
+      for (const unit of units) {
+        const synapses = byUnit.get(unit);
+        if (!synapses) continue;
+        for (const [channel, w] of synapses) {
+          const next = r > 0 ? w + r * 0.5 * (1 - w) * w : w * (1 + r * 0.5);
+          if (next < 1e-3) {
+            synapses.delete(channel);
+            carriers?.get(channel)?.delete(unit);
+          } else {
+            synapses.set(channel, Math.min(1, next));
+          }
+        }
+      }
+    }
+    this.totalsCache.clear();
   }
 
   /** Sum of the synaptic weights onto each channel of a modality (cached until the next `bind`). */

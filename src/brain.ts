@@ -50,6 +50,8 @@ import { WernickeArea } from './regions/broca-wernicke/wernicke.js';
 import { Lexicon } from './regions/broca-wernicke/lexicon.js';
 import { MotorCortex, type MotorOutput } from './regions/motor-cortex/motor-cortex.js';
 import { synthesizeSpectrum, type VocalCommand } from './core/voice/vocal-tract.js';
+import { HandMotorCortex, type HandOutput } from './regions/motor-cortex/hand-motor-cortex.js';
+import { BOARD_SIDE, GRID_SIDE, renderDrawing, type Drawing } from './core/hand/whiteboard.js';
 import { seedSpanishLexicon, encodeSentenceToLexiconSpace, wordToPattern } from './regions/broca-wernicke/spanish-lexicon.js';
 import { seedEnglishLexicon } from './regions/broca-wernicke/english-lexicon.js';
 import * as fs from 'fs';
@@ -109,6 +111,8 @@ export interface BrainState {
   association?: { lastRecall: AssociationRecall | null; bindings: number };
   /** The voice: what is switched on, how much it has babbled, the last sound it made. */
   voice?: { babbling: boolean; imitation: boolean; babbles: number; lastVocalization: Vocalization | null };
+  /** The hand: what is switched on, how much it has scribbled, the last thing it drew. */
+  hand?: { scribbling: boolean; copying: boolean; scribbles: number; lastDrawing: HandDrawing | null };
   /** Visual cortex learning metrics (engram, stability, convergence). */
   learning?: {
     engram: number[];
@@ -186,6 +190,18 @@ export interface Vocalization {
   serial: number;
 }
 
+/** Something the brain drew on the whiteboard with its own hand. */
+export interface HandDrawing {
+  /** Inked cells of the GRID_SIDE × GRID_SIDE grid (`row * gridSide + col`). */
+  cells: Drawing;
+  gridSide: number;
+  /** A scribble (exploration), a copy of what it has just seen, or a drawing of what came to mind. */
+  source: 'scribble' | 'copy' | 'from-memory';
+  confidence: number;
+  timestamp: number;
+  serial: number;
+}
+
 /** Sensory channels of the thalamic relay. */
 type SensoryModality = 'visual' | 'auditory' | 'linguistic';
 
@@ -240,6 +256,14 @@ export class DigitalBrain {
   /** Rendered length of a vocalization (ms of real time). */
   private static readonly VOCALIZATION_MS = 350;
 
+  // ── Hand (scribbling, copying and drawing from memory) ──
+  private scribbling = false;
+  private lastDrawing: HandDrawing | null = null;
+  private drawingSerial = 0;
+  private ticksSinceDrawing = 0;
+  /** Pause between spontaneous scribbles (ticks). */
+  private static readonly SCRIBBLE_INTERVAL_TICKS = 75;
+
   // ── Cross-modal association (learning what goes with what) ──
   private associations = new AssociationMemory();
   /** Latest percept of each modality, kept available for binding (working-memory span). */
@@ -251,6 +275,8 @@ export class DigitalBrain {
   /** Percept counters of the sensory cortices already handled (see `collectPercepts`). */
   private handledPercepts = { visual: 0, auditory: 0 };
   private lastRecall: AssociationRecall | null = null;
+  /** Conjunction units behind `lastRecall` (what feedback reinforces or weakens). */
+  private lastRecallUnits: number[] = [];
   /** Lexical pattern reinstated by the last confident recall (drives `think()` / `speak()`). */
   private recalledLexicalPattern: Float32Array | null = null;
   private ticksSinceRecall: number = Number.MAX_SAFE_INTEGER;
@@ -322,13 +348,14 @@ export class DigitalBrain {
   static readonly PERCEPTION_TICKS = 50;
 
   /** Cortical target of the thalamic relay, per modality (nodes of the connectome). */
-  private static readonly THALAMIC_RELAY = {
-    visual: 'visualCortex',
-    auditory: 'auditoryCortex',
-    linguistic: 'brocaWernicke',
-  } as const;
+  private static readonly THALAMIC_RELAY: Record<SensoryModality, readonly string[]> = {
+    // Ventral stream (what it is) and dorsal stream (how to act on it).
+    visual: ['visualCortex', 'handMotorCortex'],
+    auditory: ['auditoryCortex'],
+    linguistic: ['brocaWernicke'],
+  };
   private static readonly SENSORY_RELAY_TARGETS: ReadonlySet<string> = new Set(
-    Object.values(DigitalBrain.THALAMIC_RELAY),
+    Object.values(DigitalBrain.THALAMIC_RELAY).flat(),
   );
 
   /** Neurons of the auditory cortex (= afferents of the vocal motor cortex). */
@@ -540,6 +567,7 @@ export class DigitalBrain {
     this.addRegion(amygdala);
     this.addRegion(new PrefrontalCortex(3000, 1000));
     this.addRegion(new MotorCortex({ inputCount: DigitalBrain.AUDITORY_NEURONS }));
+    this.addRegion(new HandMotorCortex({ inputCount: DigitalBrain.VISUAL_CORTEX_INPUTS }));
     this.addRegion(new BrocaArea(this.lexicon, 1000, 1000));
     this.addRegion(new WernickeArea(this.lexicon, 1000, 1000));
 
@@ -890,12 +918,101 @@ export class DigitalBrain {
     this.lastVocalization = vocalization;
     this.ticksSinceVocalization = 0;
 
+    // A babble is exploration, not a sound of the world (see `draw`).
+    if (output.source === 'babble') {
+      (this.regions.get('auditoryCortex') as AuditoryCortex | undefined)?.suppressNextPercept();
+    }
     const spectrum = synthesizeSpectrum(output.command);
     const spectrogram = this.audioEncoder.encodeMagnitudeFrame(spectrum, 48000, false);
     this.injectSensoryInput('auditory', spectrogram);
 
     this.emitEvent({ type: 'response', timestamp: this.currentTime, data: { kind: 'vocalization', ...vocalization } });
     return vocalization;
+  }
+
+  // ================================================================
+  // HAND — scribbling, copying and drawing from memory
+  // ================================================================
+
+  /**
+   * Switches the hand on or off.
+   *
+   * @param options.scribble - Scribble spontaneously when idle (exploration: this is how the visuomotor map is learned)
+   * @param options.copy - Draw what it sees or what comes to its mind (needs a map, i.e. to have scribbled)
+   */
+  setHand(options: { scribble?: boolean; copy?: boolean }): void {
+    const hand = this.regions.get('handMotorCortex') as HandMotorCortex | undefined;
+    if (typeof options.scribble === 'boolean') this.scribbling = options.scribble;
+    if (typeof options.copy === 'boolean' && hand) hand.copy = options.copy;
+  }
+
+  /** Produces one scribble right now (what spontaneous scribbling does on its own schedule). */
+  scribbleOnce(): HandDrawing | null {
+    const hand = this.regions.get('handMotorCortex') as HandMotorCortex | undefined;
+    if (!hand || hand.drawing) return null;
+    return this.draw(hand.scribble());
+  }
+
+  /** The last thing the brain drew, or `null`. */
+  getLastDrawing(): HandDrawing | null {
+    return this.lastDrawing;
+  }
+
+  /** Draws from memory: executes the hand command for an image reinstated by a word or a sound. */
+  private drawImaginedImage(retinalPattern: Float32Array): void {
+    const hand = this.regions.get('handMotorCortex') as HandMotorCortex | undefined;
+    const output = hand?.drawImagined(retinalPattern);
+    if (output) this.draw(output);
+  }
+
+  private driveHand(): void {
+    const hand = this.regions.get('handMotorCortex') as HandMotorCortex | undefined;
+    if (!hand) return;
+    this.ticksSinceDrawing++;
+
+    const copy = hand.takeCommand();
+    if (copy) {
+      this.draw(copy);
+      return;
+    }
+    if (
+      this.scribbling &&
+      !hand.drawing &&
+      !this.presentations.has('visual') &&
+      this.ticksSinceDrawing >= DigitalBrain.SCRIBBLE_INTERVAL_TICKS
+    ) {
+      this.draw(hand.scribble());
+    }
+  }
+
+  /**
+   * Executes a drawing command: the marks go onto the whiteboard (event →
+   * dashboard) and the brain SEES what it has drawn — the image enters through
+   * the same visual pathway as anything else it looks at, which is what lets
+   * the hand motor cortex learn what its commands look like.
+   */
+  private draw(output: HandOutput): HandDrawing {
+    const drawing: HandDrawing = {
+      cells: output.cells,
+      gridSide: GRID_SIDE,
+      source: output.source,
+      confidence: output.confidence,
+      timestamp: this.currentTime,
+      serial: ++this.drawingSerial,
+    };
+    this.lastDrawing = drawing;
+    this.ticksSinceDrawing = 0;
+
+    // A scribble is exploration, not an object of the world: the visual cortex
+    // learns from it but it founds no category and is not bound to anything.
+    if (output.source === 'scribble') {
+      (this.regions.get('visualCortex') as VisualCortex | undefined)?.suppressNextPercept();
+    }
+    const rates = this.visualEncoder.encodeRates(renderDrawing(output.cells), BOARD_SIDE, BOARD_SIDE);
+    this.injectSensoryInput('visual', rates);
+
+    this.emitEvent({ type: 'response', timestamp: this.currentTime, data: { kind: 'drawing', ...drawing } });
+    return drawing;
   }
 
   // ================================================================
@@ -1008,8 +1125,15 @@ export class DigitalBrain {
 
     const visual = this.regions.get('visualCortex') as VisualCortex | undefined;
     if (result.recalled.visual && visual) {
-      const match = visual.matchCategory(topUnits(result.recalled.visual.pattern, 20));
-      if (match && match.overlap >= 0.3) recall.visual = { label: match.label, overlap: match.overlap };
+      const units = topUnits(result.recalled.visual.pattern, 20);
+      const match = visual.matchCategory(units);
+      if (match && match.overlap >= 0.3) {
+        recall.visual = { label: match.label, overlap: match.overlap };
+        // What comes to the mind's eye is drawn — if the hand is on and knows
+        // how. (Something SEEN is already handled by copying; this is for what
+        // it reads or hears.)
+        if (confident && modality !== 'visual') this.drawImaginedImage(visual.imagine(units));
+      }
     }
     const auditory = this.regions.get('auditoryCortex') as AuditoryCortex | undefined;
     if (result.recalled.auditory && auditory) {
@@ -1024,13 +1148,44 @@ export class DigitalBrain {
       }
     }
 
+    this.lastRecallUnits = result.units;
     // Recorded even when nothing could be NAMED yet (e.g. the word that comes
     // back is not in the lexicon yet): something does come to mind.
     this.lastRecall = recall;
     if (confident && lexicalPattern && recall.words.length > 0) {
       this.recalledLexicalPattern = lexicalPattern;
       this.ticksSinceRecall = 0;
+      // It WRITES the word that came to mind (the dashboard has a text area for it).
+      this.emitEvent({
+        type: 'response',
+        timestamp: this.currentTime,
+        data: { kind: 'writing', text: recall.words[0].word, cue: label, confidence: result.match },
+      });
     }
+  }
+
+  /**
+   * Feedback from the teacher on what the brain has just recalled (named,
+   * said or drawn): "yes, that's it" / "no, that's not it".
+   *
+   * Biology: reward is a dopamine burst, its opposite a dip plus stress; the
+   * synapses that produced the judged response are still eligible and are
+   * strengthened or weakened accordingly (three-factor learning; Schultz, 1998).
+   * The neuromodulators released also colour whatever is learned next.
+   *
+   * @returns Whether there was a recent recall to apply the feedback to
+   */
+  giveFeedback(positive: boolean): boolean {
+    if (positive) {
+      this.modulators.release(ModulatorType.Dopamine, 0.25);
+      this.modulators.release(ModulatorType.Serotonin, 0.05);
+    } else {
+      this.modulators.release(ModulatorType.Cortisol, 0.12);
+      this.modulators.release(ModulatorType.Norepinephrine, 0.08);
+    }
+    if (this.lastRecallUnits.length === 0 || this.lastRecall === null) return false;
+    this.associations.reinforce(this.lastRecallUnits, positive ? 0.6 : -0.8);
+    return true;
   }
 
   /** What the last percept brought back from memory (or `null`). */
@@ -1340,7 +1495,7 @@ export class DigitalBrain {
       // travels along that projection of the connectome (its delay and weight).
       this.bus.send({
         source: 'thalamus',
-        targets: [DigitalBrain.THALAMIC_RELAY[type]],
+        targets: [...DigitalBrain.THALAMIC_RELAY[type]],
         spikes: relayed,
         timestamp: this.currentTime,
         metadata: { inputType: type },
@@ -1451,6 +1606,8 @@ export class DigitalBrain {
 
     //    Voice: an imitation the motor cortex has just decided on, or a babble.
     this.driveVoice();
+    //    Hand: a copy the hand motor cortex has just decided on, or a scribble.
+    this.driveHand();
 
     //    Percepts completed by the sensory cortices this tick → association.
     this.collectPercepts();
@@ -1593,6 +1750,12 @@ export class DigitalBrain {
         imitation: (this.regions.get('motorCortex') as MotorCortex | undefined)?.imitate ?? false,
         babbles: (this.regions.get('motorCortex') as MotorCortex | undefined)?.babbleCount ?? 0,
         lastVocalization: this.lastVocalization,
+      },
+      hand: {
+        scribbling: this.scribbling,
+        copying: (this.regions.get('handMotorCortex') as HandMotorCortex | undefined)?.copy ?? false,
+        scribbles: (this.regions.get('handMotorCortex') as HandMotorCortex | undefined)?.scribbleCount ?? 0,
+        lastDrawing: this.lastDrawing,
       },
       learning,
       learningHippocampus,

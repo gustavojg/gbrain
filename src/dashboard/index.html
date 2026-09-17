@@ -203,6 +203,24 @@
         </div>
       </div>
 
+      <!-- Hand -->
+      <div class="io-section">
+        <label class="io-label">✍️ Hand (draw &amp; write) <span class="io-hint">— it scribbles, sees the marks it leaves and learns to draw what it sees or remembers</span></label>
+        <div class="draw-container">
+          <canvas id="brainCanvas2d" width="140" height="140" aria-label="What the brain drew"></canvas>
+          <div class="draw-controls">
+            <button class="small-btn" id="toggleHand" aria-pressed="false">▶ Enable</button>
+            <span class="webcam-status" id="handStatus" aria-live="polite">Still</span>
+          </div>
+        </div>
+        <textarea id="brainWriting" class="brain-writing" rows="2" readonly aria-label="What the brain wrote" placeholder="What it writes will appear here…"></textarea>
+        <div class="draw-controls">
+          <span class="io-hint">Was that right?</span>
+          <button class="small-btn" id="feedbackYes" title="Yes — reward (dopamine): strengthens what it has just recalled">👍 Yes</button>
+          <button class="small-btn" id="feedbackNo" title="No — weakens what it has just recalled">👎 No</button>
+        </div>
+      </div>
+
       <!-- Response -->
       <div class="io-section">
         <label class="io-label">💬 Response</label>

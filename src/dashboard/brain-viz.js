@@ -29,6 +29,7 @@ const REGION_COLORS = {
   wernicke:         { h: 130, s: 65, l: 55, label: 'Wernicke' },
   broca:            { h: 95,  s: 70, l: 50, label: 'Broca' },
   motorCortex:      { h: 25,  s: 85, l: 58, label: 'Vocal Motor' },
+  handMotorCortex:  { h: 320, s: 70, l: 62, label: 'Hand Motor' },
 };
 
 // 3D positions of brain regions (x, y, z) normalized -1..1
@@ -42,6 +43,7 @@ const REGION_POSITIONS = {
   wernicke:         { x: -0.5, y: -0.1, z: 0.05,  size: 24 },
   broca:            { x: -0.4, y: -0.3, z: 0.35,  size: 24 },
   motorCortex:      { x: -0.15, y: 0.35, z: 0.3,  size: 20 },
+  handMotorCortex:  { x: 0.2,   y: 0.4,  z: 0.25, size: 20 },
 };
 
 // Connections between regions (for drawing axon lines)
@@ -59,6 +61,7 @@ const CONNECTIONS = [
   ['amygdala', 'prefrontalCortex'],
   ['prefrontalCortex', 'broca'],
   ['auditoryCortex', 'motorCortex'],
+  ['thalamus', 'handMotorCortex'],
   ['prefrontalCortex', 'thalamus'],
   ['prefrontalCortex', 'visualCortex'],
   ['amygdala', 'hippocampus'],
@@ -116,6 +119,10 @@ function connectWebSocket() {
       addThought(msg.data);
     } else if (msg.type === 'vocalization' && msg.data) {
       playVocalization(msg.data);
+    } else if (msg.type === 'drawing' && msg.data) {
+      showBrainDrawing(msg.data);
+    } else if (msg.type === 'writing' && msg.data) {
+      showBrainWriting(msg.data);
     } else if (msg.type === 'notice' && msg.data) {
       addLog('error', `Server: ${msg.data.message}`);
     }
@@ -1350,6 +1357,73 @@ function playVocalization(v) {
   source.onended = () => out.disconnect();
 
   ownVoiceUntil = performance.now() + seconds * 1000 + 300;
+}
+
+// ================================================================
+// HAND — what the brain draws and writes, and the teacher's feedback
+// ================================================================
+
+let handEnabled = false;
+
+function sendControl(type, data, fallbackPath) {
+  if (ws && ws.readyState === 1) {
+    ws.send(JSON.stringify({ type, data }));
+  } else {
+    fetch(`${API_URL}/${fallbackPath}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    }).catch(err => addLog('error', err.message));
+  }
+}
+
+document.getElementById('toggleHand')?.addEventListener('click', () => {
+  const btn = document.getElementById('toggleHand');
+  handEnabled = !handEnabled;
+  btn.textContent = handEnabled ? '⏹ Disable' : '▶ Enable';
+  btn.setAttribute('aria-pressed', String(handEnabled));
+  document.getElementById('handStatus').textContent = handEnabled ? 'Scribbling — it learns what marks its commands leave' : 'Still';
+  addLog('info', handEnabled ? '✍️ Hand enabled: scribbling + drawing' : '✍️ Hand disabled');
+  sendControl('hand', { scribble: handEnabled, copy: handEnabled }, 'hand');
+});
+
+document.getElementById('feedbackYes')?.addEventListener('click', () => {
+  addLog('info', '👍 Yes, that was right');
+  sendControl('feedback', { positive: true }, 'feedback');
+});
+document.getElementById('feedbackNo')?.addEventListener('click', () => {
+  addLog('info', '👎 No, that was not it');
+  sendControl('feedback', { positive: false }, 'feedback');
+});
+
+function showBrainDrawing(d) {
+  const canvas = document.getElementById('brainCanvas2d');
+  const side = Number(d.gridSide);
+  if (!canvas || !Array.isArray(d.cells) || !(side > 0 && side <= 64)) return;
+  const ctx = canvas.getContext('2d');
+  const cell = canvas.width / side;
+  ctx.fillStyle = '#111827';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = d.source === 'scribble' ? '#64748b' : '#f8fafc';
+  for (const index of d.cells) {
+    const i = Number(index);
+    if (!Number.isInteger(i) || i < 0 || i >= side * side) continue;
+    ctx.fillRect((i % side) * cell, Math.floor(i / side) * cell, cell, cell);
+  }
+  const what = { scribble: 'Scribbling', copy: 'Copying what it saw', 'from-memory': 'Drawing what came to mind' }[d.source] || 'Drawing';
+  const status = document.getElementById('handStatus');
+  if (status) status.textContent = what;
+  if (d.source !== 'scribble') addLog('info', `✍️ ${what} (${d.cells.length} cells)`);
+}
+
+function showBrainWriting(w) {
+  const area = document.getElementById('brainWriting');
+  if (!area || typeof w.text !== 'string') return;
+  // A textarea's value is plain text: nothing the brain writes can become markup.
+  area.value = (area.value ? area.value + ' ' : '') + w.text.slice(0, 40);
+  if (area.value.length > 400) area.value = area.value.slice(-400);
+  area.scrollTop = area.scrollHeight;
+  addLog('info', `✍️ Writes “${w.text.slice(0, 40)}” on seeing ${String(w.cue).slice(0, 40)}`);
 }
 
 // ================================================================

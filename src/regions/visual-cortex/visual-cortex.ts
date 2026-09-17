@@ -40,6 +40,11 @@ import { PresentationTracker, PrototypeMemory, type Recognition } from '../../co
  */
 const VISUAL_CATEGORY_MATCH = 0.35;
 
+/** Minimum cosine match between an image and a tuned neuron's weights for the neuron to compete on equal terms. */
+const VISUAL_VIGILANCE = 0.3;
+/** Handicap (in cosine units) of a tuned neuron whose match is below the vigilance. */
+const MISMATCH_PENALTY = 0.3;
+
 /** Labelled memories restored from disk are capped (the list is unbounded in memory). */
 const MAX_PERSISTED_MEMORIES = 2000;
 
@@ -177,6 +182,9 @@ export class VisualCortex extends BrainRegion {
   private prototypes!: PrototypeMemory;
   /** Outcome of the last completed presentation. */
   private lastRecognition: Recognition | null = null;
+  private suppressPercept = false;
+  /** 1 for neurons that are part of a learned engram (see vigilance in dynamicsTick). */
+  private tuned!: Int32Array;
   private lastEngram: Int32Array = new Int32Array(0);
   private perceptCount = 0;
 
@@ -223,6 +231,7 @@ export class VisualCortex extends BrainRegion {
     this.currentBuf = new Float32Array(cfg.neuronCount);
     this.sortIdx = new Int32Array(cfg.neuronCount);
     this.recentSpikeCounts = new Float32Array(cfg.neuronCount);
+    this.tuned = new Int32Array(cfg.neuronCount);
     this.presentation = new PresentationTracker(cfg.neuronCount, cfg.kWinners);
     this.prototypes = new PrototypeMemory({
       labelPrefix: 'Visual',
@@ -292,6 +301,10 @@ export class VisualCortex extends BrainRegion {
       }
     }
 
+    let rateNorm2 = 0;
+    for (let a = 0; a < activeInputs.length; a++) rateNorm2 += rates[activeInputs[a]] * rates[activeInputs[a]];
+    const rateNorm = Math.sqrt(rateNorm2);
+
     // --- 1. CONTINUOUS excitation (Σ w·rate) and cosine match SCORE ---
     // excBuf = w·rate (magnitude, for the membrane current).
     // scoreBuf = (w·rate)/‖w‖ → cosine similarity with the pattern: measures how well
@@ -310,6 +323,15 @@ export class VisualCortex extends BrainRegion {
       }
       this.excBuf[nn] = exc;
       score[nn] = exc / (Math.sqrt(norm2) + 1e-6);
+
+      // Vigilance: a neuron already TUNED to some image competes at a
+      // disadvantage for an image that does not match what it is tuned to.
+      // Otherwise its large learned weights win any image that shares a few
+      // channels with its own, STDP then re-tunes it toward that image, and
+      // what it had learned is eroded (a cross seen after 150 unrelated
+      // drawings was no longer recognized). A poor match leaves the field to
+      // untuned neurons, which get recruited (adaptive resonance; Grossberg, 1987).
+      if (this.tuned[nn] === 1 && score[nn] < VISUAL_VIGILANCE * rateNorm) score[nn] -= MISMATCH_PENALTY * rateNorm;
     }
 
     // --- 2. k-WTA lateral inhibition by cosine score (+ homeostatic bias) ---
@@ -465,7 +487,10 @@ export class VisualCortex extends BrainRegion {
 
     const lrMul = modulationEffects.learningRateMultiplier ?? 1.0;
     const gain = modulationEffects.spikeGainMultiplier ?? 1.0;
-    const dw = this.dynamicsTick(spikes, this._dt, this.currentTime, true, lrMul, gain);
+    // The brain's own scribbles are motor exploration, not objects: the hand
+    // learns from them (dorsal stream), this cortex does not.
+    const plastic = !this.suppressPercept;
+    const dw = this.dynamicsTick(spikes, this._dt, this.currentTime, plastic, lrMul, gain);
 
     // Instantaneous engram: neurons that fired this tick
     const winners: number[] = [];
@@ -488,12 +513,64 @@ export class VisualCortex extends BrainRegion {
    */
   private closePresentation(engram: Int32Array | null): void {
     if (!engram) return;
+    // Self-generated exploration (a babble, a scribble) is not an object of
+    // the world: it founds no category and is not offered for association.
+    if (this.suppressPercept) {
+      this.suppressPercept = false;
+      return;
+    }
+    for (let i = 0; i < engram.length; i++) this.tuned[engram[i]] = 1;
     const recognition = this.prototypes.observe(engram, this.currentTime);
     if (recognition) {
       this.lastRecognition = recognition;
       this.lastEngram = engram;
       this.perceptCount++;
     }
+  }
+
+  /**
+   * Mental imagery: the retinal pattern a set of cortical neurons stands for.
+   *
+   * Runs the cortex backwards — from an engram (e.g. one reinstated from memory
+   * by a word) to the input its neurons are tuned to: the mean of their
+   * afferent weights, minus what the average neuron would give (so only what
+   * is specific to the engram remains), scaled to 0–1.
+   *
+   * Biology: visual imagery reactivates early visual cortex through feedback
+   * connections, with the retinotopy of the imagined object (Kosslyn et al., 1995).
+   *
+   * @param units - Neurons of this cortex (an engram)
+   * @returns Imagined retinal pattern (length = inputCount), all zeros if the
+   *   neurons are not tuned to anything in particular
+   */
+  imagine(units: ArrayLike<number>): Float32Array {
+    const m = this.inputCount;
+    const image = new Float32Array(m);
+    if (units.length === 0) return image;
+
+    const baseline = new Float32Array(m);
+    for (let nn = 0; nn < this.neuronCount; nn++) {
+      const offset = nn * m;
+      for (let i = 0; i < m; i++) baseline[i] += this.weights[offset + i];
+    }
+    let peak = 0;
+    for (let i = 0; i < m; i++) {
+      let sum = 0;
+      for (let u = 0; u < units.length; u++) sum += this.weights[units[u] * m + i];
+      const specific = sum / units.length - baseline[i] / this.neuronCount;
+      image[i] = specific > 0 ? specific : 0;
+      if (image[i] > peak) peak = image[i];
+    }
+    if (peak > 0) for (let i = 0; i < m; i++) image[i] /= peak;
+    return image;
+  }
+
+  /**
+   * The presentation that is starting is the brain's own motor exploration:
+   * learn from it as usual, but do not treat it as a percept.
+   */
+  suppressNextPercept(): void {
+    this.suppressPercept = true;
   }
 
   /** Engram of the last completed presentation (what `getRecognition()` refers to). */
@@ -736,6 +813,7 @@ export class VisualCortex extends BrainRegion {
       homeostaticBias: packArray(this.homeostaticBias),
       avgActivity: packArray(this.avgActivity),
       winCounts: packArray(this.winCounts),
+      tuned: packArray(this.tuned),
       categories: this.prototypes.serialize(),
       memories: this.memories.map((m) => ({
         pattern: Array.from(m.pattern),
@@ -756,6 +834,8 @@ export class VisualCortex extends BrainRegion {
     if (bias) this.homeostaticBias.set(bias);
     if (avg) this.avgActivity.set(avg);
     if (wins) this.winCounts.set(wins);
+    const tuned = unpackInt32(d.tuned, n);
+    if (tuned) this.tuned.set(tuned);
     this.prototypes.deserialize(d.categories);
 
     const memories = Array.isArray(d.memories) ? d.memories : [];

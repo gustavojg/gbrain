@@ -48,6 +48,8 @@ import { PrefrontalCortex } from './regions/prefrontal-cortex/prefrontal-cortex.
 import { BrocaArea, type LanguageResponse } from './regions/broca-wernicke/broca.js';
 import { WernickeArea } from './regions/broca-wernicke/wernicke.js';
 import { Lexicon } from './regions/broca-wernicke/lexicon.js';
+import { MotorCortex, type MotorOutput } from './regions/motor-cortex/motor-cortex.js';
+import { synthesizeSpectrum, type VocalCommand } from './core/voice/vocal-tract.js';
 import { seedSpanishLexicon, encodeSentenceToLexiconSpace, wordToPattern } from './regions/broca-wernicke/spanish-lexicon.js';
 import { seedEnglishLexicon } from './regions/broca-wernicke/english-lexicon.js';
 import * as fs from 'fs';
@@ -105,6 +107,8 @@ export interface BrainState {
    * and how many multimodal events have been bound so far.
    */
   association?: { lastRecall: AssociationRecall | null; bindings: number };
+  /** The voice: what is switched on, how much it has babbled, the last sound it made. */
+  voice?: { babbling: boolean; imitation: boolean; babbles: number; lastVocalization: Vocalization | null };
   /** Visual cortex learning metrics (engram, stability, convergence). */
   learning?: {
     engram: number[];
@@ -165,6 +169,20 @@ export interface AssociationRecall {
   timestamp: number;
 }
 
+/** A sound the brain produced with its own voice. */
+export interface Vocalization {
+  command: VocalCommand;
+  /** Spontaneous exploration, or an attempt to repeat a sound it heard. */
+  source: 'babble' | 'imitation';
+  /** For an imitation: how well the heard sound was known to the motor map (0–1). */
+  confidence: number;
+  /** How long the sound lasts when rendered (ms of real time). */
+  durationMs: number;
+  /** Simulation time (ms) and running number of the vocalization. */
+  timestamp: number;
+  serial: number;
+}
+
 /** Sensory channels of the thalamic relay. */
 type SensoryModality = 'visual' | 'auditory' | 'linguistic';
 
@@ -207,6 +225,17 @@ export class DigitalBrain {
 
   // --- Brain regions ---
   private regions: Map<string, BrainRegion> = new Map();
+
+  // ── Voice (babbling and vocal imitation) ──
+  /** Whether the brain babbles on its own when nothing is going on. Off by default. */
+  private babbling = false;
+  private lastVocalization: Vocalization | null = null;
+  private vocalizationSerial = 0;
+  private ticksSinceVocalization = 0;
+  /** Pause between spontaneous babbles (ticks): the utterance, its echo in the brain, a breath. */
+  private static readonly BABBLE_INTERVAL_TICKS = 70;
+  /** Rendered length of a vocalization (ms of real time). */
+  private static readonly VOCALIZATION_MS = 350;
 
   // ── Cross-modal association (learning what goes with what) ──
   private associations = new AssociationMemory();
@@ -298,6 +327,9 @@ export class DigitalBrain {
   private static readonly SENSORY_RELAY_TARGETS: ReadonlySet<string> = new Set(
     Object.values(DigitalBrain.THALAMIC_RELAY),
   );
+
+  /** Neurons of the auditory cortex (= afferents of the vocal motor cortex). */
+  private static readonly AUDITORY_NEURONS = 1000;
 
   /** Cochlear (mel) bands × frames of the sliding spectrogram the auditory cortex reads. */
   private static readonly COCHLEAR_BANDS = 40;
@@ -492,7 +524,7 @@ export class DigitalBrain {
     this.addRegion(new Thalamus({ neuronCount: 500, totalInputSize: 500, bottleneckSize: 40 }));
     this.addRegion(new VisualCortex({ neuronCount: 2000, inputCount: DigitalBrain.VISUAL_CORTEX_INPUTS }));
     this.addRegion(new AuditoryCortex({
-      neuronCount: 1000,
+      neuronCount: DigitalBrain.AUDITORY_NEURONS,
       inputCount: DigitalBrain.COCHLEAR_BANDS * DigitalBrain.SPECTROGRAM_FRAMES,
       numBands: DigitalBrain.COCHLEAR_BANDS,
       numFrames: DigitalBrain.SPECTROGRAM_FRAMES,
@@ -504,6 +536,7 @@ export class DigitalBrain {
     }
     this.addRegion(amygdala);
     this.addRegion(new PrefrontalCortex(3000, 1000));
+    this.addRegion(new MotorCortex({ inputCount: DigitalBrain.AUDITORY_NEURONS }));
     this.addRegion(new BrocaArea(this.lexicon, 1000, 1000));
     this.addRegion(new WernickeArea(this.lexicon, 1000, 1000));
 
@@ -779,6 +812,80 @@ export class DigitalBrain {
         }
       }
     }
+  }
+
+  // ================================================================
+  // VOICE — babbling and vocal imitation
+  // ================================================================
+
+  /**
+   * Switches the voice on or off.
+   *
+   * @param options.babble - Babble spontaneously when idle (exploration: this is how the motor map is learned)
+   * @param options.imitate - Try to repeat the sounds it hears (needs a motor map, i.e. to have babbled)
+   */
+  setVoice(options: { babble?: boolean; imitate?: boolean }): void {
+    const motor = this.regions.get('motorCortex') as MotorCortex | undefined;
+    if (typeof options.babble === 'boolean') this.babbling = options.babble;
+    if (typeof options.imitate === 'boolean' && motor) motor.imitate = options.imitate;
+  }
+
+  /** Produces one babble right now (what spontaneous babbling does on its own schedule). */
+  babbleOnce(): Vocalization | null {
+    const motor = this.regions.get('motorCortex') as MotorCortex | undefined;
+    if (!motor || motor.vocalizing) return null;
+    return this.vocalize(motor.babble());
+  }
+
+  /** The last sound the brain made, or `null`. */
+  getLastVocalization(): Vocalization | null {
+    return this.lastVocalization;
+  }
+
+  private driveVoice(): void {
+    const motor = this.regions.get('motorCortex') as MotorCortex | undefined;
+    if (!motor) return;
+    this.ticksSinceVocalization++;
+
+    const imitation = motor.takeCommand();
+    if (imitation) {
+      this.vocalize(imitation);
+      return;
+    }
+    if (
+      this.babbling &&
+      !motor.vocalizing &&
+      !this.presentations.has('auditory') &&
+      this.ticksSinceVocalization >= DigitalBrain.BABBLE_INTERVAL_TICKS
+    ) {
+      this.vocalize(motor.babble());
+    }
+  }
+
+  /**
+   * Executes a motor command: the sound goes out (event → dashboard
+   * synthesizer) and the brain hears itself — the acoustic consequence of the
+   * command enters through the same auditory pathway as any other sound, which
+   * is what lets the motor cortex learn what its commands sound like.
+   */
+  private vocalize(output: MotorOutput): Vocalization {
+    const vocalization: Vocalization = {
+      command: output.command,
+      source: output.source,
+      confidence: output.confidence,
+      durationMs: DigitalBrain.VOCALIZATION_MS,
+      timestamp: this.currentTime,
+      serial: ++this.vocalizationSerial,
+    };
+    this.lastVocalization = vocalization;
+    this.ticksSinceVocalization = 0;
+
+    const spectrum = synthesizeSpectrum(output.command);
+    const spectrogram = this.audioEncoder.encodeMagnitudeFrame(spectrum, 48000, false);
+    this.injectSensoryInput('auditory', spectrogram);
+
+    this.emitEvent({ type: 'response', timestamp: this.currentTime, data: { kind: 'vocalization', ...vocalization } });
+    return vocalization;
   }
 
   // ================================================================
@@ -1325,6 +1432,9 @@ export class DigitalBrain {
       }
     }
 
+    //    Voice: an imitation the motor cortex has just decided on, or a babble.
+    this.driveVoice();
+
     //    Percepts completed by the sensory cortices this tick → association.
     this.collectPercepts();
     if (this.ticksSinceRecall < Number.MAX_SAFE_INTEGER) this.ticksSinceRecall++;
@@ -1461,6 +1571,12 @@ export class DigitalBrain {
       vocabulary: this.getVocabularyStateSlice(),
       recognition: this.getRecognition(),
       association: { lastRecall: this.lastRecall, bindings: this.associations.bindings },
+      voice: {
+        babbling: this.babbling,
+        imitation: (this.regions.get('motorCortex') as MotorCortex | undefined)?.imitate ?? false,
+        babbles: (this.regions.get('motorCortex') as MotorCortex | undefined)?.babbleCount ?? 0,
+        lastVocalization: this.lastVocalization,
+      },
       learning,
       learningHippocampus,
     };

@@ -13,6 +13,7 @@
  * - GET  /api/speak         → The brain speaks
  * - GET  /api/imagine       → The brain imagines
  * - POST /api/modulator     → Inject a neuromodulator manually
+ * - POST /api/voice         → Switch babbling / vocal imitation ({ babble?, imitate? })
  * - WS   /ws                → Real-time stream
  *
  * The WebSocket streams state updates at 2 Hz.
@@ -55,6 +56,7 @@ import {
   parseSampleRate,
   parseSpectrogramInput,
   parseTextInput,
+  parseVoiceInput,
   type LimitedKind,
 } from './server-guards.js';
 
@@ -385,6 +387,14 @@ async function handleApiRoute(url: URL, req: http.IncomingMessage, res: http.Ser
     return;
   }
 
+  // POST /api/voice — Switch babbling / vocal imitation
+  if (url.pathname === '/api/voice' && req.method === 'POST') {
+    enforceHttpLimit(req, 'modulator');
+    brain.setVoice(parseVoiceInput(await parseJsonBody(req)));
+    sendJSON({ ok: true, voice: brain.getState().voice });
+    return;
+  }
+
   // POST /api/tick — Run a manual tick (admin)
   if (url.pathname === '/api/tick' && req.method === 'POST') {
     requireAdmin(req);
@@ -546,6 +556,12 @@ wss.on('connection', (ws: WebSocket) => {
           else notify('Too many injections — slow down');
           break;
         }
+        case 'voice': {
+          const voice = parseVoiceInput(msg.data);
+          if (limiter.allow('modulator')) brain.setVoice(voice);
+          else notify('Too many changes — slow down');
+          break;
+        }
         case 'tick':
           if (limiter.allow('tick')) brain.tick();
           break;
@@ -573,6 +589,16 @@ wss.on('connection', (ws: WebSocket) => {
 // ================================================================
 // MAIN LOOP — State broadcast
 // ================================================================
+
+// The brain's own voice: every vocalization is pushed to the dashboards, which
+// render it with their synthesizer.
+brain.on('response', (event) => {
+  if (event.data.kind !== 'vocalization' || clients.size === 0) return;
+  const msg = JSON.stringify({ type: 'vocalization', data: event.data });
+  for (const client of clients) {
+    if (client.readyState === 1) client.send(msg);
+  }
+});
 
 let tickTimer: ReturnType<typeof setInterval>;
 let broadcastTimer: ReturnType<typeof setInterval>;

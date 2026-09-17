@@ -117,6 +117,18 @@ export function parseSpectrogramInput(data: unknown): Float32Array {
   return out;
 }
 
+/** Validates `{ babble?, imitate? }`: which parts of the voice to switch. */
+export function parseVoiceInput(data: unknown): { babble?: boolean; imitate?: boolean } {
+  const { babble, imitate } = asRecord(data);
+  if ((babble !== undefined && typeof babble !== 'boolean') || (imitate !== undefined && typeof imitate !== 'boolean')) {
+    throw new HttpError(400, 'babble and imitate must be booleans');
+  }
+  if (babble === undefined && imitate === undefined) {
+    throw new HttpError(400, 'Expected babble and/or imitate');
+  }
+  return { babble: babble as boolean | undefined, imitate: imitate as boolean | undefined };
+}
+
 /** Validates the optional `sampleRate` of an audio frame (Hz); `undefined` if absent. */
 export function parseSampleRate(data: unknown): number | undefined {
   const { sampleRate } = asRecord(data);

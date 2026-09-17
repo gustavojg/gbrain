@@ -101,7 +101,7 @@ for (const id of Object.keys(activeF)) {
 console.log('');
 const ok = idleSilent && nonZero > 3 && distinctF > 3 && anyRose && backToRest;
 if (ok) {
-  console.log(`✅ PANEL HONESTO: silencio en reposo, ${nonZero}/8 regiones activas al leer (${distinctF} tasas distintas) y vuelta al reposo después.`);
+  console.log(`✅ PANEL HONESTO: silencio en reposo, ${nonZero}/9 regiones activas al leer (${distinctF} tasas distintas) y vuelta al reposo después.`);
   process.exit(0);
 } else {
   console.log(`❌ FALLO: idleSilent=${idleSilent} nonZero=${nonZero} distinctF=${distinctF} driveRose=${anyRose} backToRest=${backToRest}`);

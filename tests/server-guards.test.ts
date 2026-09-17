@@ -238,7 +238,7 @@ console.log('\n7. PERSISTENCE');
   } catch {
     restored = null;
   }
-  check('corrupted file detected; previous snapshot restored', restored !== null && restored.loaded.length === 8);
+  check('corrupted file detected; previous snapshot restored', restored !== null && restored.loaded.length === 9);
 
   rmSync(`${statePath}.bak`);
   let threw = false;

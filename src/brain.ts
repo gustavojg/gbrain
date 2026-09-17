@@ -25,7 +25,7 @@ import { SpikeBus, type SpikePacket } from './core/bus/spike-bus.js';
 import { Connectome } from './core/bus/connectome.js';
 import { NeuromodulatorSystem, ModulatorType, type ModulationEffects } from './core/neuromodulators/modulator-system.js';
 import { type BrainRegion, type RegionActivity } from './core/brain-region.js';
-import { ConsolidationEngine } from './core/memory/consolidation.js';
+import { ConsolidationEngine, type ConsolidationStats, type ShortTermEntry } from './core/memory/consolidation.js';
 import { BrainPersistence, BACKUP_SUFFIX, writeFileAtomic } from './core/persistence/binary-protocol.js';
 import { VisualEncoder } from './encoders/visual-encoder.js';
 import { AudioEncoder } from './encoders/audio-encoder.js';
@@ -41,6 +41,7 @@ import { VisualCortex } from './regions/visual-cortex/visual-cortex.js';
 import { AuditoryCortex } from './regions/auditory-cortex/auditory-cortex.js';
 import { Hippocampus } from './regions/hippocampus/hippocampus.js';
 import { Amygdala } from './regions/amygdala/amygdala.js';
+import { AFFECTIVE_LEXICON } from './regions/amygdala/affective-lexicon.js';
 import { PrefrontalCortex } from './regions/prefrontal-cortex/prefrontal-cortex.js';
 import { BrocaArea, type LanguageResponse } from './regions/broca-wernicke/broca.js';
 import { WernickeArea } from './regions/broca-wernicke/wernicke.js';
@@ -194,6 +195,21 @@ export class DigitalBrain {
   /** Ticks a perception needs to propagate through the connectome (~50 ms simulated). */
   static readonly PERCEPTION_TICKS = 50;
 
+  // ── Sleep (memory consolidation) ──
+  /** Cortical target of hippocampal replay (the hippocampus → PFC projection). */
+  private static readonly CONSOLIDATION_TARGET = 'prefrontalCortex';
+  /**
+   * Episodes replayed per sleep, and replays of each. Replay runs inline, so
+   * the product bounds how long a sleep can hold the event loop (~0.1 s).
+   */
+  private static readonly SLEEP_REPLAY_EPISODES = 8;
+  private static readonly SLEEP_REPLAY_CYCLES = 3;
+  /** Per-sleep decay of the episodic index (emotional episodes decay slower). */
+  private static readonly SLEEP_EPISODIC_DECAY = 0.97;
+
+  /** Fraction of the amygdala's commanded release that reaches the modulator pools per appraisal. */
+  private static readonly PHASIC_RELEASE_GAIN = 0.6;
+
   /** Minimum token length to consider for acquisition (filters noise). */
   private static readonly MIN_WORD_LEN = 3;
 
@@ -267,7 +283,7 @@ export class DigitalBrain {
     this.modulators = new NeuromodulatorSystem();
 
     // 4. Initialize consolidation
-    this.consolidationEngine = new ConsolidationEngine();
+    this.consolidationEngine = new ConsolidationEngine(DigitalBrain.SLEEP_REPLAY_CYCLES);
 
     // 5. Initialize encoders
     this.visualEncoder = new VisualEncoder({
@@ -336,7 +352,11 @@ export class DigitalBrain {
     this.addRegion(new VisualCortex({ neuronCount: 2000, inputCount: 1000 }));
     this.addRegion(new AuditoryCortex({ neuronCount: 1000, inputCount: 400 }));
     this.addRegion(new Hippocampus(1000, 1000));
-    this.addRegion(new Amygdala(500, 500));
+    const amygdala = new Amygdala(500, 500);
+    for (const [word, emotion] of AFFECTIVE_LEXICON) {
+      amygdala.conditionSemantic(wordToPattern(word, this.lexicon.dimensions), emotion);
+    }
+    this.addRegion(amygdala);
     this.addRegion(new PrefrontalCortex(3000, 1000));
     this.addRegion(new BrocaArea(this.lexicon, 1000, 1000));
     this.addRegion(new WernickeArea(this.lexicon, 1000, 1000));
@@ -449,49 +469,6 @@ export class DigitalBrain {
    *
    * @param text - Text to process
    */
-  /**
-   * Map of emotional words → neuromodulator effects.
-   * Biology: Wernicke's area recognizes emotionally charged words
-   * and activates the amygdala, which in turn releases neuromodulators.
-   */
-  private static readonly EMOTIONAL_WORDS: Record<string, { modulator: ModulatorType; amount: number }[]> = {
-    // Positive → dopamine + serotonin
-    'feliz': [{ modulator: ModulatorType.Dopamine, amount: 0.15 }, { modulator: ModulatorType.Serotonin, amount: 0.1 }],
-    'alegria': [{ modulator: ModulatorType.Dopamine, amount: 0.2 }],
-    'amor': [{ modulator: ModulatorType.Oxytocin, amount: 0.2 }, { modulator: ModulatorType.Dopamine, amount: 0.1 }],
-    'carino': [{ modulator: ModulatorType.Oxytocin, amount: 0.15 }],
-    'bien': [{ modulator: ModulatorType.Serotonin, amount: 0.1 }],
-    'gracias': [{ modulator: ModulatorType.Oxytocin, amount: 0.1 }, { modulator: ModulatorType.Serotonin, amount: 0.05 }],
-    'hola': [{ modulator: ModulatorType.Dopamine, amount: 0.05 }, { modulator: ModulatorType.Oxytocin, amount: 0.05 }],
-    'bonito': [{ modulator: ModulatorType.Dopamine, amount: 0.1 }],
-    'entusiasmo': [{ modulator: ModulatorType.Dopamine, amount: 0.2 }, { modulator: ModulatorType.Norepinephrine, amount: 0.1 }],
-    'esperanza': [{ modulator: ModulatorType.Serotonin, amount: 0.15 }],
-    'paz': [{ modulator: ModulatorType.Serotonin, amount: 0.2 }],
-    'calma': [{ modulator: ModulatorType.Serotonin, amount: 0.15 }],
-    'curiosidad': [{ modulator: ModulatorType.Dopamine, amount: 0.1 }, { modulator: ModulatorType.Acetylcholine, amount: 0.1 }],
-    'genial': [{ modulator: ModulatorType.Dopamine, amount: 0.15 }, { modulator: ModulatorType.Serotonin, amount: 0.1 }],
-    'contento': [{ modulator: ModulatorType.Dopamine, amount: 0.1 }, { modulator: ModulatorType.Serotonin, amount: 0.1 }],
-    // Negative → cortisol + norepinephrine
-    'triste': [{ modulator: ModulatorType.Cortisol, amount: 0.1 }],
-    'tristeza': [{ modulator: ModulatorType.Cortisol, amount: 0.15 }],
-    'miedo': [{ modulator: ModulatorType.Cortisol, amount: 0.2 }, { modulator: ModulatorType.Norepinephrine, amount: 0.15 }],
-    'odio': [{ modulator: ModulatorType.Cortisol, amount: 0.15 }, { modulator: ModulatorType.Norepinephrine, amount: 0.1 }],
-    'ansiedad': [{ modulator: ModulatorType.Cortisol, amount: 0.2 }, { modulator: ModulatorType.Norepinephrine, amount: 0.1 }],
-    'estres': [{ modulator: ModulatorType.Cortisol, amount: 0.25 }],
-    'enojo': [{ modulator: ModulatorType.Norepinephrine, amount: 0.2 }, { modulator: ModulatorType.Cortisol, amount: 0.1 }],
-    'mal': [{ modulator: ModulatorType.Cortisol, amount: 0.1 }],
-    'feo': [{ modulator: ModulatorType.Cortisol, amount: 0.05 }],
-    'soledad': [{ modulator: ModulatorType.Cortisol, amount: 0.1 }],
-    'frustracion': [{ modulator: ModulatorType.Cortisol, amount: 0.15 }, { modulator: ModulatorType.Norepinephrine, amount: 0.1 }],
-    // Activation → acetylcholine + norepinephrine
-    'pensar': [{ modulator: ModulatorType.Acetylcholine, amount: 0.1 }],
-    'aprender': [{ modulator: ModulatorType.Acetylcholine, amount: 0.15 }, { modulator: ModulatorType.Dopamine, amount: 0.05 }],
-    'recordar': [{ modulator: ModulatorType.Acetylcholine, amount: 0.1 }],
-    'atencion': [{ modulator: ModulatorType.Acetylcholine, amount: 0.15 }, { modulator: ModulatorType.Norepinephrine, amount: 0.1 }],
-    'dormir': [{ modulator: ModulatorType.Serotonin, amount: 0.2 }],
-    'sonar': [{ modulator: ModulatorType.Serotonin, amount: 0.1 }, { modulator: ModulatorType.Dopamine, amount: 0.05 }],
-  };
-
   read(text: string, options: PerceptionOptions = {}): PerceptionResult {
     console.log(`📖 Reading: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`);
 
@@ -509,24 +486,22 @@ export class DigitalBrain {
     // Send to the thalamus (linguistic route)
     this.injectSensoryInput('linguistic', spikes);
 
-    // ── Emotional word detection ──
-    // Biology: Wernicke recognizes emotional words → activates the amygdala
-    // → the amygdala releases neuromodulators according to valence
+    // ── Affective appraisal ──
+    // Biology: comprehended words reach the amygdala through the temporal
+    // association cortex; words with a conditioned association evoke their
+    // emotion there, and the central nucleus turns the resulting state into a
+    // phasic neuromodulator release.
     const words = text.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\w\sáéíóúüñ]/g, '').split(/\s+/).filter(w => w.length > 0);
+    const amygdala = this.regions.get('amygdala') as Amygdala | undefined;
     let emotionalHits = 0;
-    for (const word of words) {
-      // Also compare without accents
-      const effects = DigitalBrain.EMOTIONAL_WORDS[word];
-      if (effects) {
-        for (const effect of effects) {
-          this.modulators.release(effect.modulator, effect.amount);
-        }
-        emotionalHits++;
+    if (amygdala) {
+      for (const word of words.slice(0, DigitalBrain.MAX_WORDS_PER_READ)) {
+        if (amygdala.appraise(wordToPattern(word, this.lexicon.dimensions))) emotionalHits++;
       }
-    }
-
-    if (emotionalHits > 0) {
-      console.log(`  💭 ${emotionalHits} emotional words detected`);
+      if (emotionalHits > 0) {
+        this.releaseFromAmygdala(amygdala);
+        console.log(`  💭 ${emotionalHits} emotional words detected`);
+      }
     }
 
     // Novelty → norepinephrine
@@ -536,6 +511,21 @@ export class DigitalBrain {
     this.acquireVocabulary(words);
 
     return this.processPerception('text', options);
+  }
+
+  /**
+   * Phasic neuromodulator release commanded by the amygdala's central nucleus
+   * for its current affective state.
+   */
+  private releaseFromAmygdala(amygdala: Amygdala): void {
+    const release = amygdala.produceNeuromodulators();
+    const gain = DigitalBrain.PHASIC_RELEASE_GAIN;
+    this.modulators.release(ModulatorType.Dopamine, release.dopamine * gain);
+    this.modulators.release(ModulatorType.Serotonin, release.serotonin * gain);
+    this.modulators.release(ModulatorType.Norepinephrine, release.norepinephrine * gain);
+    this.modulators.release(ModulatorType.Cortisol, release.cortisol * gain);
+    this.modulators.release(ModulatorType.Acetylcholine, release.acetylcholine * gain);
+    this.modulators.release(ModulatorType.Oxytocin, release.oxytocin * gain);
   }
 
   /**
@@ -844,12 +834,17 @@ export class DigitalBrain {
    * Injects sensory input into the thalamus.
    */
   private injectSensoryInput(type: 'visual' | 'auditory' | 'linguistic', spikes: Float32Array): void {
-    const thalamus = this.regions.get('thalamus');
+    const thalamus = this.regions.get('thalamus') as Thalamus | undefined;
+
+    // The thalamus is the gateway to the cortex: what it relays is the
+    // attention-filtered signal (top-K salient channels, with the bottleneck
+    // and gain set by ACh/NE), not the raw sensory vector.
+    let relayed = spikes;
     if (thalamus) {
       thalamus.feedInput(spikes, this.currentTime);
+      relayed = thalamus.processAttention(spikes, this.modulators.getEffects()).filteredInput;
     }
 
-    // Also send directly to the appropriate cortex via the bus
     const targets = type === 'visual' ? ['visualCortex'] :
                     type === 'auditory' ? ['auditoryCortex'] :
                     ['wernicke', 'broca'];
@@ -857,7 +852,7 @@ export class DigitalBrain {
     this.bus.send({
       source: 'thalamus',
       targets,
-      spikes,
+      spikes: relayed,
       timestamp: this.currentTime,
       metadata: { inputType: type },
     });
@@ -920,6 +915,10 @@ export class DigitalBrain {
     // 1. Get neuromodulation effects
     const effects = this.modulators.getEffects();
 
+    //    The hippocampus stamps the episodes it encodes with the current affect
+    //    (emotional episodes are forgotten more slowly).
+    (this.regions.get('hippocampus') as Hippocampus | undefined)?.setAffectiveContext(this.feel().valence);
+
     // 2. Process each region
     for (const [regionId, region] of this.regions) {
       const activity = region.step(dt, effects);
@@ -945,23 +944,58 @@ export class DigitalBrain {
     this.modulators.decay(dt);
 
     // 6. Periodic consolidation ("sleep")
-    if (this.currentTime - this.lastConsolidation > this.config.memory.consolidationIntervalMs) {
+    //    Only at rest: sleeping in the middle of a perception would replay
+    //    over live activity and cut the wave short.
+    if (
+      this.currentTime - this.lastConsolidation > this.config.memory.consolidationIntervalMs &&
+      this.bus.pendingCount === 0
+    ) {
       this.sleep();
     }
   }
 
   /**
    * Consolidation process ("sleep").
-   * Replay of hippocampus memories to strengthen the cortices.
+   *
+   * Biology: during slow-wave sleep the hippocampus replays recent episodes
+   * (sharp-wave ripples) toward the neocortex, which gradually absorbs them
+   * (systems consolidation; McClelland et al., 1995). Here the strongest and
+   * most recent episodes are reactivated in CA3 and replayed along the
+   * hippocampus → prefrontal projection of the connectome, where Hebbian
+   * plasticity strengthens the synapses they drive. Afterwards the episodic
+   * index fades a little: what the cortex has learned no longer depends on it.
+   *
+   * @returns What was actually replayed and strengthened
    */
-  sleep(): void {
+  sleep(): ConsolidationStats {
     console.log(`💤 Consolidation started (t=${this.currentTime.toFixed(0)}ms)...`);
     this.lastConsolidation = this.currentTime;
 
-    // Consolidation would be delegated to the hippocampus
-    const hippocampus = this.regions.get('hippocampus');
-    if (hippocampus) {
-      const stats = this.consolidationEngine.consolidate([], this.regions);
+    const hippocampus = this.regions.get('hippocampus') as Hippocampus | undefined;
+    const cortex = this.regions.get(DigitalBrain.CONSOLIDATION_TARGET);
+    let stats: ConsolidationStats = {
+      memoriesReplayed: 0,
+      synapsesStrengthened: 0,
+      duration: 0,
+      consolidatedLabels: [],
+      prunedLabels: [],
+    };
+
+    if (hippocampus && cortex) {
+      const episodes = hippocampus.replay(DigitalBrain.SLEEP_REPLAY_EPISODES);
+      const entries: ShortTermEntry[] = episodes.map((episode) => ({
+        pattern: episode.pattern,
+        label: `episode@${episode.context.timestamp.toFixed(0)}`,
+        timestamp: episode.context.timestamp,
+        strength: episode.strength,
+        associatedRegion: DigitalBrain.CONSOLIDATION_TARGET,
+        replayCount: 0,
+      }));
+
+      stats = this.consolidationEngine.consolidate(entries, this.regions);
+      cortex.settle();
+      hippocampus.forget(DigitalBrain.SLEEP_EPISODIC_DECAY);
+
       console.log(`   Memories replayed: ${stats.memoriesReplayed}`);
       console.log(`   Synapses strengthened: ${stats.synapsesStrengthened}`);
     }
@@ -970,8 +1004,14 @@ export class DigitalBrain {
     this.emitEvent({
       type: 'consolidation',
       timestamp: this.currentTime,
-      data: { consolidated: true },
+      data: {
+        consolidated: stats.consolidatedLabels.length,
+        memoriesReplayed: stats.memoriesReplayed,
+        synapsesStrengthened: stats.synapsesStrengthened,
+      },
     });
+
+    return stats;
   }
 
   // ================================================================

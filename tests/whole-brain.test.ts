@@ -17,10 +17,16 @@
  *                      Broca, PFC) give reproducible, input-specific responses
  *                      (guards the LIF reset: without it the same neurons won
  *                      for every input).
- *   5. AFFECT        — positive vs negative Spanish text moves valence apart.
- *   6. PERSISTENCE   — save → fresh brain → load restores weights exactly,
+ *   5. AFFECT        — the amygdala appraises emotional words in Spanish AND
+ *                      English and drives the neuromodulators accordingly.
+ *   6. NEUROMODULATION — in the running brain, acetylcholine widens the
+ *                      thalamic gate and serotonin/cortisol raise the firing
+ *                      threshold (fewer cortical neurons recruited).
+ *   7. MEMORY        — one stimulus is encoded as one episode; sleep replays
+ *                      episodes into the cortex and leaves the brain at rest.
+ *   8. PERSISTENCE   — save → fresh brain → load restores weights exactly,
  *                      plus neuromodulators and learned vocabulary.
- *   7. DETERMINISM   — same seed + same inputs ⇒ identical brain.
+ *   9. DETERMINISM   — same seed + same inputs ⇒ identical brain.
  *
  * KNOWN GAPS (measured and reported, but they do NOT fail the suite):
  *   Defects found by the audit that are not fixed yet. Each one prints its
@@ -33,11 +39,12 @@ import { DigitalBrain } from '../src/brain.js';
 import type { BrainRegion } from '../src/core/brain-region.js';
 import { ModulatorType, NeuromodulatorSystem } from '../src/core/neuromodulators/modulator-system.js';
 import { BrocaArea } from '../src/regions/broca-wernicke/broca.js';
+import { Hippocampus } from '../src/regions/hippocampus/hippocampus.js';
 import { Lexicon } from '../src/regions/broca-wernicke/lexicon.js';
 import { encodeSentenceToLexiconSpace, seedSpanishLexicon } from '../src/regions/broca-wernicke/spanish-lexicon.js';
 import { WernickeArea } from '../src/regions/broca-wernicke/wernicke.js';
 import { PrefrontalCortex } from '../src/regions/prefrontal-cortex/prefrontal-cortex.js';
-import { quiet, seedRandom } from './helpers/seed.js';
+import { mulberry32, quiet, seedRandom } from './helpers/seed.js';
 
 /** Override with TEST_SEED=n to check that the results are not seed-specific. */
 const SEED = Number(process.env.TEST_SEED ?? 20260917);
@@ -191,14 +198,83 @@ const valenceAfter = (text: string): number => {
   return brain.feel().valence;
 };
 {
-  const positive = valenceAfter('estoy feliz con alegria y amor');
-  const negative = valenceAfter('tengo miedo tristeza y odio');
-  check('Spanish: positive text ≫ negative text in valence', positive - negative >= 0.5,
-    `+${positive.toFixed(2)} vs ${negative.toFixed(2)}`);
+  const pairs: Array<[string, string, string]> = [
+    ['Spanish', 'estoy feliz con alegria y amor', 'tengo miedo tristeza y odio'],
+    ['English', 'i am happy with joy and love', 'i feel fear sadness and hate'],
+  ];
+  for (const [language, positiveText, negativeText] of pairs) {
+    const positive = valenceAfter(positiveText);
+    const negative = valenceAfter(negativeText);
+    check(`${language}: positive text ≫ negative text in valence`, positive - negative >= 0.5 && negative < 0,
+      `+${positive.toFixed(2)} vs ${negative.toFixed(2)}`);
+  }
+  const neutral = valenceAfter('the hat is on the table');
+  check('a neutral look-alike ("hat" ≠ "hate") evokes no negative affect', neutral > 0, `valence=${neutral.toFixed(2)}`);
 }
 
-// ── 6. PERSISTENCE ──────────────────────────────────────────────────────────
-console.log('\n6. PERSISTENCE');
+// ── 6. NEUROMODULATION (in the running brain) ───────────────────────────────
+console.log('\n6. NEUROMODULATION');
+{
+  // A dense image: far more active channels than the thalamic bottleneck lets through.
+  const rng = mulberry32(5);
+  const image = Array.from({ length: 64 * 64 }, () => Math.floor(rng() * 256));
+
+  const see = (modulator: ModulatorType | null, amount = 0): { visualDrive: number; pfcRecruited: number } => {
+    const brain = newBrain();
+    if (modulator) brain.getModulators().release(modulator, amount);
+    quiet(() => brain.see(image, 64, 64, { propagate: false }));
+    let visualDrive = 0;
+    let pfcRecruited = 0;
+    for (let t = 0; t < 120; t++) {
+      brain.tick();
+      const { regions } = brain.getState();
+      visualDrive = Math.max(visualDrive, regions.visualCortex.drive);
+      pfcRecruited = Math.max(pfcRecruited, regions.prefrontalCortex.activeNeurons.length);
+    }
+    return { visualDrive, pfcRecruited };
+  };
+
+  const baseline = see(null);
+  const acetylcholine = see(ModulatorType.Acetylcholine, 0.6);
+  const serotonin = see(ModulatorType.Serotonin, 0.5);
+  const cortisol = see(ModulatorType.Cortisol, 0.6);
+
+  check('acetylcholine widens the thalamic gate (more signal reaches the cortex)',
+    acetylcholine.visualDrive > baseline.visualDrive * 1.05,
+    `visual drive ${baseline.visualDrive.toFixed(3)} → ${acetylcholine.visualDrive.toFixed(3)}`);
+  check('serotonin raises the firing threshold (fewer PFC neurons recruited)',
+    serotonin.pfcRecruited < baseline.pfcRecruited * 0.95, `${baseline.pfcRecruited} → ${serotonin.pfcRecruited}`);
+  check('cortisol raises the firing threshold (fewer PFC neurons recruited)',
+    cortisol.pfcRecruited < baseline.pfcRecruited * 0.95, `${baseline.pfcRecruited} → ${cortisol.pfcRecruited}`);
+}
+
+// ── 7. MEMORY ───────────────────────────────────────────────────────────────
+console.log('\n7. MEMORY');
+{
+  const brain = newBrain();
+  perceive(brain, TEXT_A);
+  const afterOne = brain.getState().memoriesCount;
+  perceive(brain, TEXT_B);
+  const afterTwo = brain.getState().memoriesCount;
+  check('one stimulus is encoded as one episode (at the event boundary)',
+    afterOne === 1 && afterTwo === 2, `episodes: ${afterOne}, then ${afterTwo}`);
+
+  const pfcWeights = brain.getRegion('prefrontalCortex')!.getNetworkConfig().weights;
+  const before = pfcWeights.slice();
+  const stats = quiet(() => brain.sleep());
+  let change = 0;
+  for (let i = 0; i < pfcWeights.length; i++) change += Math.abs(pfcWeights[i] - before[i]);
+  check('sleep replays the stored episodes into the cortex',
+    stats.consolidatedLabels.length === 2 && stats.memoriesReplayed > 0 && change > 0,
+    `episodes=${stats.consolidatedLabels.length} replays=${stats.memoriesReplayed} PFC Σ|Δw|=${change.toFixed(1)}`);
+
+  for (let t = 0; t < 50; t++) brain.tick();
+  check('the brain wakes up at rest, with its episodes intact',
+    isSilent(brain) && brain.getState().memoriesCount === 2);
+}
+
+// ── 8. PERSISTENCE ──────────────────────────────────────────────────────────
+console.log('\n8. PERSISTENCE');
 const statePath = `/tmp/gbrain-whole-test-${process.pid}.bin`;
 const stateFiles = ['', '.bak', '.tmp', '.lexicon.json'].map((suffix) => statePath + suffix);
 const cleanup = (): void => { for (const f of stateFiles) if (existsSync(f)) rmSync(f); };
@@ -232,8 +308,8 @@ let savedEpisodes = -1;
   cleanup();
 }
 
-// ── 7. DETERMINISM ──────────────────────────────────────────────────────────
-console.log('\n7. DETERMINISM');
+// ── 9. DETERMINISM ──────────────────────────────────────────────────────────
+console.log('\n9. DETERMINISM');
 {
   const fingerprint = (): string => {
     const brain = newBrain(SEED + 2);
@@ -260,36 +336,21 @@ console.log('\nKNOWN GAPS (audit findings not fixed yet — reported, not enforc
   gap('G1 Wernicke response in the whole brain is content-specific', same >= 0.6 && diff <= 0.3,
     `J(A,A')=${same.toFixed(2)} J(A,B)=${diff.toFixed(2)}; target ≥0.60 / ≤0.30`);
 
-  // G2. The hippocampal novelty gate only compares with the last stored code,
-  // so one stimulus is stored as dozens of near-duplicate episodes.
-  const brain = newBrain();
-  perceive(brain, TEXT_A);
-  const episodes = brain.getState().memoriesCount;
-  gap('G2 one stimulus is stored as ~one episode', episodes <= 3, `episodes=${episodes}; target ≤3`);
-
-  // G3. Emotional words only exist in Spanish (EMOTIONAL_WORDS); the amygdala's
-  // own network does not evaluate content.
-  const positive = valenceAfter('i am happy with joy and love');
-  const negative = valenceAfter('i feel fear sadness and hate');
-  gap('G3 English text moves valence too', positive - negative >= 0.5,
-    `+${positive.toFixed(2)} vs ${negative.toFixed(2)}; target Δ≥0.50`);
-
-  // G4. Thalamus.processInput ignores the modulation effects on the live path.
-  const thalamicSpikes = (acetylcholine: number): number => {
-    const b = newBrain();
-    b.getModulators().release(ModulatorType.Acetylcholine, acetylcholine);
-    quiet(() => b.read(TEXT_A, { propagate: false }));
-    let spikes = 0;
-    for (let t = 0; t < 60; t++) {
-      b.tick();
-      spikes += b.getState().regions.thalamus.activeNeurons.length;
-    }
-    return spikes;
-  };
-  const base = thalamicSpikes(0);
-  const boosted = thalamicSpikes(0.6);
-  gap('G4 acetylcholine widens thalamic gating in the running brain', boosted > base,
-    `spikes ${base} → ${boosted}; target: increase`);
+  // G2. Episode codes inherit G1: the hippocampus is fed by cortical traffic
+  // that barely depends on content, so pattern separation cannot tell two
+  // stimuli apart much better than two presentations of the same one.
+  {
+    const brain = newBrain();
+    for (const text of [TEXT_A, TEXT_A, TEXT_B]) perceive(brain, text);
+    const hippocampus = brain.getRegion('hippocampus') as Hippocampus;
+    const [a1, a2, b1] = hippocampus.replay(3)
+      .sort((x, y) => x.context.timestamp - y.context.timestamp)
+      .map((episode) => episode.pattern);
+    const same = Hippocampus.overlapBinary(a1, a2);
+    const diff = Hippocampus.overlapBinary(a1, b1);
+    gap('G2 episode codes separate different stimuli', same - diff >= 0.3,
+      `overlap(A,A')=${same.toFixed(2)} overlap(A,B)=${diff.toFixed(2)}; target Δ≥0.30`);
+  }
 
   // G5. Only weights are persisted: the episodic index is lost on restart.
   gap('G5 hippocampal episodes survive save/load', savedEpisodes > 0 && restoredEpisodes === savedEpisodes,

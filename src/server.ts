@@ -38,6 +38,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { DigitalBrain, type PerceptionResult } from './brain.js';
+import { DEFAULT_BRAIN_CONFIG } from './brain.config.js';
 import { BACKUP_SUFFIX } from './core/persistence/binary-protocol.js';
 import { PerceptionScheduler, SchedulerBusyError } from './perception-scheduler.js';
 import {
@@ -69,6 +70,7 @@ const TICK_INTERVAL_MS = 100; // 10 Hz brain tick
 const BROADCAST_INTERVAL_MS = 500; // 2 Hz dashboard update (lighter)
 const THOUGHT_INTERVAL_MS = 1200; // ~0.8 Hz live "thought" stream
 const AUTOSAVE_INTERVAL_MS = 5 * 60_000; // Save the learning every 5 min
+const SLEEP_INTERVAL_MS = 5 * 60_000; // Consolidate ("sleep") every 5 min of real time
 const MAX_WS_CLIENTS = 100;
 const HTTP_LIMITER_IDLE_MS = 10 * 60_000; // Forget idle HTTP clients after 10 min
 
@@ -105,8 +107,16 @@ const MIME_TYPES: Record<string, string> = {
 
 console.log(`\n🌐 Starting Digital Brain server...\n`);
 
-// Create the brain
-const brain = new DigitalBrain();
+// Create the brain. Simulated time advances `dt` ms per tick and the server
+// ticks every TICK_INTERVAL_MS, so the consolidation interval (simulated ms)
+// is scaled to make the brain sleep every SLEEP_INTERVAL_MS of REAL time —
+// unscaled, the default "5 minutes" would come around every ~8 hours.
+const brain = new DigitalBrain({
+  memory: {
+    ...DEFAULT_BRAIN_CONFIG.memory,
+    consolidationIntervalMs: (SLEEP_INTERVAL_MS / TICK_INTERVAL_MS) * DEFAULT_BRAIN_CONFIG.snn.dt,
+  },
+});
 
 // Perceptions are propagated in slices so the event loop is never blocked.
 const scheduler = new PerceptionScheduler(() => brain.tick(), {
@@ -382,8 +392,13 @@ async function handleApiRoute(url: URL, req: http.IncomingMessage, res: http.Ser
   // POST /api/sleep — Manual consolidation
   if (url.pathname === '/api/sleep' && req.method === 'POST') {
     if (!sleepBucket.tryTake()) throw new HttpError(429, 'The brain slept a moment ago');
-    brain.sleep();
-    sendJSON({ ok: true, memoriesReplayed: 0 });
+    const stats = brain.sleep();
+    sendJSON({
+      ok: true,
+      memoriesReplayed: stats.memoriesReplayed,
+      episodesConsolidated: stats.consolidatedLabels.length,
+      synapsesStrengthened: stats.synapsesStrengthened,
+    });
     return;
   }
 

@@ -390,26 +390,51 @@ export abstract class BrainRegion {
    * @param effects - Modulation effects to apply
    */
   modulateBy(effects: ModulationEffects): void {
-    // Adjust firing threshold: serotonin and cortisol ↑ → threshold ↑
-    const modulatedThreshold = this.baseThreshold * effects.thresholdMultiplier;
-
-    // Adjust sparsity: more attention → more neurons can activate
+    // Excitability of the population = fraction of neurons the k-WTA lets fire.
+    //  - attention (NE, ACh) ↑ → more neurons can activate
+    //  - firing threshold (serotonin, cortisol) ↑ → fewer neurons reach it
+    // In a k-WTA population the winners are chosen by rank, so a threshold in
+    // mV would have no effect; raising the threshold is expressed as a
+    // proportionally smaller winning fraction.
     this.sparsity = Math.min(
       0.3,
-      Math.max(0.02, 0.1 * effects.attentionGain)
+      Math.max(0.02, (0.1 * effects.attentionGain) / Math.max(0.1, effects.thresholdMultiplier))
     );
 
-    // The modulated threshold is used internally in processInput
-    // (stored so subclasses can access it)
-    this._modulatedThreshold = modulatedThreshold;
     this._modulatedLearningRate =
       this.baseLearningRate * effects.learningRateMultiplier;
   }
 
-  /** Firing threshold after modulation */
-  protected _modulatedThreshold: number = -55;
   /** Learning rate after modulation */
   protected _modulatedLearningRate: number = 0.1;
+
+  /**
+   * Offline reactivation (sleep replay): processes a pattern directly, without
+   * going through the sensory buffer and without advancing the region's clock,
+   * so replay never desynchronizes the region from the rest of the brain.
+   * Plasticity applies as in wakefulness, with the given modulation.
+   *
+   * @param pattern - Pattern to reactivate (input space of the region)
+   * @param modulationEffects - Modulation in force during the replay
+   * @returns Number of neurons that fired
+   */
+  reactivate(pattern: Float32Array, modulationEffects: ModulationEffects): number {
+    this.modulateBy(modulationEffects);
+    const output = this.processInput(pattern, modulationEffects);
+    let active = 0;
+    for (let i = 0; i < output.length; i++) if (output[i] > 0) active++;
+    return active;
+  }
+
+  /**
+   * Clears the transient state left by offline reactivation (membrane
+   * potentials and spikes), so that waking up does not start with a burst of
+   * residual activity. Synaptic weights — what was learned — are untouched.
+   */
+  settle(): void {
+    this.potentials.fill(0);
+    this.spikes.fill(0);
+  }
 
   /**
    * Feeds the sensory buffer with a new input vector.

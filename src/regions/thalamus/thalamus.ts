@@ -292,9 +292,10 @@ export class Thalamus extends BrainRegion {
    */
   private static readonly NOISE_AMPLITUDE = 0.01;
 
-  processInput(spikes: Float32Array, _modulationEffects: ModulationEffects): Float32Array {
-    // 1. Apply attentional filter (without modulation for now)
-    const attentionResult = this.processAttention(spikes);
+  processInput(spikes: Float32Array, modulationEffects: ModulationEffects): Float32Array {
+    // 1. Apply the attentional filter, gated by the current neuromodulation
+    //    (ACh/NE widen the bottleneck and amplify the salient channels).
+    const attentionResult = this.processAttention(spikes, modulationEffects);
 
     // 2. Process through thalamic neurons (sparse computation)
     const localPotentials = new Float32Array(this.neuronCount);

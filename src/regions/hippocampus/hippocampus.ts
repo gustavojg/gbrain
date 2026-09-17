@@ -86,11 +86,19 @@ export interface HippocampusConfig {
   /** Minimum input energy to consider that there is a stimulus. */
   inputEnergyThreshold: number;
   /**
-   * Novelty threshold: if the input's DG code overlaps the last
-   * encoded one above this, it is NOT imprinted again (event-driven
-   * encoding, not per-tick → avoids saturating and flooding the index).
+   * Familiarity threshold: if an event's DG code overlaps a stored episode
+   * above this, the event is a re-experience of that episode (it is
+   * reinforced) instead of a new one.
    */
   noveltyOverlapThreshold: number;
+  /** Longest stretch of input bound into a single episode (ticks). */
+  maxEventTicks: number;
+  /**
+   * Silence that marks an event boundary (ticks). Longer than the longest
+   * axonal delay of the connectome, so the brief gaps between the volleys of
+   * one perception wave do not split it into several episodes.
+   */
+  eventGapTicks: number;
   /** Deterministic seed of the DG projection (fixed connectivity). */
   dgSeed: number;
 }
@@ -103,6 +111,8 @@ const DEFAULT_HIPPO_CONFIG: HippocampusConfig = {
   attractorIterations: 6,
   inputEnergyThreshold: 1.0,
   noveltyOverlapThreshold: 0.9,
+  maxEventTicks: 250,
+  eventGapTicks: 25,
   dgSeed: 0x1d0c_a3e5,
 };
 
@@ -141,8 +151,20 @@ export class Hippocampus extends BrainRegion {
   /** Deterministic DG projection: ±1 sign per connection (N×fanIn). */
   private readonly dgSign: Float32Array;
 
-  /** Last DG code imprinted (for novelty-driven encoding). */
+  /** Last DG code imprinted. */
   private lastStoredCode: Float32Array;
+
+  // --- Event segmentation (one episode per event, not per tick) ---
+  /** Input accumulated over the event in progress. */
+  private readonly eventInput: Float32Array;
+  /** Ticks with input in the event in progress (0 = no event). */
+  private eventTicks: number = 0;
+  /** Consecutive silent ticks since the last input of the event in progress. */
+  private silentTicks: number = 0;
+  /** Plasticity gain (neuromodulation) seen during the event in progress. */
+  private eventLearningGain: number = 1.0;
+  /** Affective context reported by the rest of the brain (valence, −1…+1). */
+  private affectiveValence: number = 0;
 
   // --- Reused buffers (avoid per-tick allocations) ---
   private readonly actBuf: Float32Array;
@@ -199,6 +221,7 @@ export class Hippocampus extends BrainRegion {
     this.nextBuf = new Float32Array(neuronCount);
     this.sortIdx = new Int32Array(neuronCount);
     this.lastStoredCode = new Float32Array(neuronCount);
+    this.eventInput = new Float32Array(inputCount);
     this.prevEngram = new Float32Array(neuronCount);
     this.lastEngram = new Float32Array(neuronCount);
   }
@@ -265,23 +288,34 @@ export class Hippocampus extends BrainRegion {
       emotionalValence: context.emotionalValence ?? 0,
       sourceRegion: context.sourceRegion ?? 'unknown',
     };
-    const memory: EpisodicMemory = { pattern: code, context: fullContext, strength: 1.0 };
+    this.insertEpisode({ pattern: code, context: fullContext, strength: 1.0 });
+    return dw;
+  }
 
+  /**
+   * Adds an episode to the index. At capacity it replaces the weakest trace
+   * (interference/forgetting by competition); among equally weak traces, the
+   * OLDEST one — otherwise ties always resolve to slot 0 and the index freezes.
+   */
+  private insertEpisode(memory: EpisodicMemory): void {
     if (this.episodicMemories.length >= this.maxCapacity) {
-      // Replace the weakest trace (interference/forgetting by competition).
-      let weakestIdx = 0;
+      let victim = 0;
       for (let i = 1; i < this.episodicMemories.length; i++) {
-        if (this.episodicMemories[i].strength < this.episodicMemories[weakestIdx].strength) {
-          weakestIdx = i;
+        const candidate = this.episodicMemories[i];
+        const current = this.episodicMemories[victim];
+        if (
+          candidate.strength < current.strength ||
+          (candidate.strength === current.strength &&
+            candidate.context.timestamp < current.context.timestamp)
+        ) {
+          victim = i;
         }
       }
-      this.episodicMemories[weakestIdx] = memory;
+      this.episodicMemories[victim] = memory;
     } else {
       this.episodicMemories.push(memory);
     }
-
-    this.lastStoredCode.set(code);
-    return dw;
+    this.lastStoredCode.set(memory.pattern);
   }
 
   /**
@@ -399,11 +433,7 @@ export class Hippocampus extends BrainRegion {
   replay(count: number = 10): EpisodicMemory[] {
     if (this.episodicMemories.length === 0) return [];
     const candidates = [...this.episodicMemories]
-      .sort((a, b) => {
-        const sa = a.context.timestamp * 0.0001 + a.strength;
-        const sb = b.context.timestamp * 0.0001 + b.strength;
-        return sb - sa;
-      })
+      .sort((a, b) => this.replayPriority(b) - this.replayPriority(a))
       .slice(0, count);
 
     for (const memory of candidates) {
@@ -414,6 +444,19 @@ export class Hippocampus extends BrainRegion {
   }
 
   /**
+   * Replay priority: trace strength plus a recency bonus that fades with the
+   * episode's age (a raw timestamp term would grow without bound and drown
+   * the strength after a few seconds of simulation).
+   */
+  private replayPriority(memory: EpisodicMemory): number {
+    const age = Math.max(0, this.currentTime - memory.context.timestamp);
+    return memory.strength + Math.exp(-age / Hippocampus.RECENCY_TAU_MS);
+  }
+
+  /** Time constant of the recency bonus in replay selection (simulated ms). */
+  private static readonly RECENCY_TAU_MS = 3000;
+
+  /**
    * Gradual forgetting of the episodic index. Emotional memories decay more
    * slowly (β-adrenergic modulation of consolidation, McGaugh 2004).
    * It does not erase recurrent weights: the attractor persists even if the index is lost.
@@ -421,8 +464,9 @@ export class Hippocampus extends BrainRegion {
   forget(decayFactor: number): void {
     for (let i = this.episodicMemories.length - 1; i >= 0; i--) {
       const memory = this.episodicMemories[i];
-      const emotionalProtection = 1.0 - Math.abs(memory.context.emotionalValence) * 0.3;
-      memory.strength *= decayFactor * emotionalProtection;
+      // Emotional episodes decay SLOWER: up to 30% of the decay is spared.
+      const protection = 1 - 0.3 * Math.abs(memory.context.emotionalValence);
+      memory.strength *= Math.pow(decayFactor, protection);
       if (memory.strength < 0.01) this.episodicMemories.splice(i, 1);
     }
   }
@@ -440,25 +484,24 @@ export class Hippocampus extends BrainRegion {
     for (let i = 0; i < spikes.length; i++) inputEnergy += spikes[i];
 
     if (inputEnergy < this.cfg.inputEnergyThreshold) {
+      // Sustained silence after input = event boundary → encode the episode.
+      if (this.eventTicks > 0 && ++this.silentTicks >= this.cfg.eventGapTicks) this.closeEvent();
       this.spikes.fill(0);
       return new Float32Array(this.neuronCount);
     }
 
     const input = this.adaptInput(spikes);
-    const code = this.patternSeparation(input);
 
-    // Novelty-driven encoding: only imprint events different from the
-    // last one (avoids imprinting the same pattern every tick and flooding the index).
-    const novelty = 1 - Hippocampus.overlapBinary(code, this.lastStoredCode);
+    // Accumulate the event in progress. The episode is encoded ONCE, at the
+    // event boundary, from everything that arrived during it — not tick by
+    // tick (the cortical traffic changes every ms, so per-tick encoding stored
+    // one stimulus as dozens of near-duplicate episodes).
+    for (let i = 0; i < input.length; i++) this.eventInput[i] += input[i];
+    this.eventTicks++;
+    this.silentTicks = 0;
+    this.eventLearningGain = modulationEffects.learningRateMultiplier ?? 1.0;
     let dw = 0;
-    if (novelty > 1 - this.cfg.noveltyOverlapThreshold) {
-      const lrMul = modulationEffects.learningRateMultiplier ?? 1.0;
-      dw = this.storeWithGain(code, lrMul, {
-        timestamp: this.currentTime,
-        emotionalValence: 0,
-        sourceRegion: 'sensory',
-      });
-    }
+    if (this.eventTicks >= this.cfg.maxEventTicks) dw = this.closeEvent();
 
     // Complete via attractor dynamics → reconstructed engram.
     const completed = this.patternCompletion(input);
@@ -475,27 +518,62 @@ export class Hippocampus extends BrainRegion {
     return out;
   }
 
-  /** Variant of store that scales the Hebbian rate by neuromodulation. */
-  private storeWithGain(
-    code: Float32Array,
-    lrMul: number,
-    context: EpisodicContext,
-  ): number {
-    const dw = this.imprint(code, this.cfg.learnRate * lrMul);
+  /**
+   * Reports the brain's current affective state, stamped on the episodes
+   * encoded from now on (emotional episodes are forgotten more slowly).
+   */
+  setAffectiveContext(valence: number): void {
+    if (Number.isFinite(valence)) this.affectiveValence = Math.max(-1, Math.min(1, valence));
+  }
 
-    const memory: EpisodicMemory = { pattern: code, context, strength: 1.0 };
-    if (this.episodicMemories.length >= this.maxCapacity) {
-      let weakestIdx = 0;
-      for (let i = 1; i < this.episodicMemories.length; i++) {
-        if (this.episodicMemories[i].strength < this.episodicMemories[weakestIdx].strength) {
-          weakestIdx = i;
-        }
+  /**
+   * Closes the event in progress and encodes it as ONE episode.
+   *
+   * Biological basis:
+   *   Hippocampal encoding is concentrated at event boundaries: activity
+   *   peaks when an event ends and binds what happened during it into one
+   *   episodic trace (Ben-Yakov & Henson, 2018). If the event matches a stored
+   *   episode it is a re-experience: the existing trace is strengthened
+   *   (reconsolidation) rather than duplicated.
+   *
+   * @returns Σ|Δw| applied
+   */
+  private closeEvent(): number {
+    const mean = new Float32Array(this.eventInput.length);
+    for (let i = 0; i < mean.length; i++) mean[i] = this.eventInput[i] / this.eventTicks;
+    this.eventInput.fill(0);
+    this.eventTicks = 0;
+    this.silentTicks = 0;
+
+    const code = this.patternSeparation(mean);
+
+    // Familiarity: best match in the episodic index.
+    let best: EpisodicMemory | null = null;
+    let bestOverlap = 0;
+    for (const memory of this.episodicMemories) {
+      const overlap = Hippocampus.overlapBinary(code, memory.pattern);
+      if (overlap > bestOverlap) {
+        bestOverlap = overlap;
+        best = memory;
       }
-      this.episodicMemories[weakestIdx] = memory;
-    } else {
-      this.episodicMemories.push(memory);
     }
-    this.lastStoredCode.set(code);
+
+    if (best && bestOverlap >= this.cfg.noveltyOverlapThreshold) {
+      best.strength = Math.min(1.0, best.strength + 0.1);
+      best.context.timestamp = this.currentTime;
+      return this.imprint(best.pattern, this.cfg.learnRate * this.eventLearningGain * 0.5);
+    }
+
+    const dw = this.imprint(code, this.cfg.learnRate * this.eventLearningGain);
+    this.insertEpisode({
+      pattern: code,
+      context: {
+        timestamp: this.currentTime,
+        emotionalValence: this.affectiveValence,
+        sourceRegion: 'sensory',
+      },
+      strength: 1.0,
+    });
     return dw;
   }
 

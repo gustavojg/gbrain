@@ -26,6 +26,7 @@ import { Connectome } from './core/bus/connectome.js';
 import { NeuromodulatorSystem, ModulatorType, type ModulationEffects } from './core/neuromodulators/modulator-system.js';
 import { type BrainRegion, type RegionActivity } from './core/brain-region.js';
 import type { Recognition } from './core/memory/prototype-memory.js';
+import { AssociationMemory, type ModalCode } from './core/memory/association-memory.js';
 import { ConsolidationEngine, type ConsolidationStats, type ShortTermEntry } from './core/memory/consolidation.js';
 import { BrainPersistence, BACKUP_SUFFIX, writeFileAtomic } from './core/persistence/binary-protocol.js';
 import { VisualEncoder } from './encoders/visual-encoder.js';
@@ -99,6 +100,11 @@ export interface BrainState {
     visualCategories: number;
     auditoryCategories: number;
   };
+  /**
+   * Cross-modal association: what the last percept brought back from memory,
+   * and how many multimodal events have been bound so far.
+   */
+  association?: { lastRecall: AssociationRecall | null; bindings: number };
   /** Visual cortex learning metrics (engram, stability, convergence). */
   learning?: {
     engram: number[];
@@ -136,6 +142,27 @@ export interface PerceptionResult {
   activeRegions: string[];
   /** Processing time (simulated ms) */
   processingTime: number;
+}
+
+/** Modalities whose percepts can be bound together by association. */
+export type AssociationModality = 'visual' | 'auditory' | 'lexical';
+
+/** What a percept brought back from memory (cross-modal recall). */
+export interface AssociationRecall {
+  /** The percept that acted as the cue. */
+  cue: { modality: AssociationModality; label: string };
+  /** How well learned the cue's association is (0–1); grows with each repetition of the pairing. */
+  confidence: number;
+  /** Whether the confidence is high enough for the brain to act on the recall. */
+  confident: boolean;
+  /** Words reinstated by the cue, best first. */
+  words: Array<{ word: string; similarity: number }>;
+  /** Visual category reinstated by the cue. */
+  visual: { label: string; overlap: number } | null;
+  /** Sound category reinstated by the cue. */
+  auditory: { label: string; overlap: number } | null;
+  /** Simulation time of the recall (ms). */
+  timestamp: number;
 }
 
 /** Sensory channels of the thalamic relay. */
@@ -180,6 +207,37 @@ export class DigitalBrain {
 
   // --- Brain regions ---
   private regions: Map<string, BrainRegion> = new Map();
+
+  // ── Cross-modal association (learning what goes with what) ──
+  private associations = new AssociationMemory();
+  /** Latest percept of each modality, kept available for binding (working-memory span). */
+  private recentPercepts: Map<
+    AssociationModality,
+    { code: ModalCode; label: string; tick: number; serial: number; boundWith: Set<number> }
+  > = new Map();
+  private perceptSerial = 0;
+  /** Percept counters of the sensory cortices already handled (see `collectPercepts`). */
+  private handledPercepts = { visual: 0, auditory: 0 };
+  private lastRecall: AssociationRecall | null = null;
+  /** Lexical pattern reinstated by the last confident recall (drives `think()` / `speak()`). */
+  private recalledLexicalPattern: Float32Array | null = null;
+  private ticksSinceRecall: number = Number.MAX_SAFE_INTEGER;
+  /**
+   * How long (ticks) a percept stays available to be bound with the next one. At the
+   * server's pace this spans the ~20–30 s it takes a person to show something
+   * and then name it.
+   */
+  associationWindowTicks = 300;
+  /**
+   * Confidence from which a recall is acted upon (thought, spoken). One pairing
+   * leaves an association at 25%; it takes a repetition to cross this — the
+   * brain does not answer on first contact.
+   */
+  private static readonly RECALL_CONFIDENCE = 0.4;
+  /** Below this match a cue evokes nothing at all. */
+  private static readonly MIN_RECALL_MATCH = 0.2;
+  /** Minimum similarity between a reinstated lexical pattern and a lexicon word to count as that word. */
+  private static readonly RECALLED_WORD_MATCH = 0.6;
 
   /** Stimuli currently held by sensory persistence, one per modality. */
   private presentations: Map<SensoryModality, { signal: Float32Array; ticksLeft: number }> = new Map();
@@ -613,6 +671,10 @@ export class DigitalBrain {
     this.lastLinguisticIntention = spikes;
     this.ticksSinceRead = 0;
 
+    // What was read is a percept too: it can recall, and be bound to, what is
+    // seen or heard around the same time.
+    this.onPercept('lexical', DigitalBrain.denseToCode(spikes, 0.1), text.trim().slice(0, 40));
+
     // Send to the thalamus (linguistic route)
     this.injectSensoryInput('linguistic', spikes);
 
@@ -719,6 +781,139 @@ export class DigitalBrain {
     }
   }
 
+  // ================================================================
+  // CROSS-MODAL ASSOCIATION
+  // ================================================================
+
+  /** Sparse code (channels above `floor`) of a dense pattern. */
+  private static denseToCode(pattern: Float32Array, floor: number): ModalCode {
+    const indices: number[] = [];
+    const values: number[] = [];
+    for (let i = 0; i < pattern.length; i++) {
+      if (pattern[i] > floor) {
+        indices.push(i);
+        values.push(Math.min(1, pattern[i]));
+      }
+    }
+    return { indices, values };
+  }
+
+  /** Picks up the presentations the sensory cortices completed since the last tick. */
+  private collectPercepts(): void {
+    const visual = this.regions.get('visualCortex') as VisualCortex | undefined;
+    if (visual && visual.percepts !== this.handledPercepts.visual) {
+      this.handledPercepts.visual = visual.percepts;
+      const units = Array.from(visual.getLastEngram());
+      this.onPercept('visual', { indices: units, values: units.map(() => 1) }, visual.getRecognition()?.label ?? 'visual');
+    }
+    const auditory = this.regions.get('auditoryCortex') as AuditoryCortex | undefined;
+    if (auditory && auditory.percepts !== this.handledPercepts.auditory) {
+      this.handledPercepts.auditory = auditory.percepts;
+      const units = Array.from(auditory.getLastEngram());
+      this.onPercept('auditory', { indices: units, values: units.map(() => 1) }, auditory.getRecognition()?.label ?? 'sound');
+    }
+  }
+
+  /**
+   * A percept has just been completed in some modality.
+   *
+   * 1. RECALL — it acts as a cue: whatever has been associated with it comes
+   *    back (the word for the thing seen, the thing for the word read).
+   * 2. BIND — if other modalities were perceived recently, they belong to the
+   *    same experience: their association is strengthened (Hebbian, gated by
+   *    dopamine/cortisol like any other plasticity here).
+   *
+   * Recall comes first so that it reflects what had been learned BEFORE this
+   * experience.
+   */
+  private onPercept(modality: AssociationModality, code: ModalCode, label: string): void {
+    if (code.indices.length === 0) return;
+
+    this.recallFrom(modality, code, label);
+
+    const serial = ++this.perceptSerial;
+    const percept = { code, label, tick: this.tickCount, serial, boundWith: new Set<number>() };
+    this.recentPercepts.set(modality, percept);
+
+    const event: Record<string, ModalCode> = { [modality]: code };
+    for (const [other, recent] of this.recentPercepts) {
+      if (other === modality) continue;
+      if (this.tickCount - recent.tick > this.associationWindowTicks) continue;
+      if (recent.boundWith.has(serial)) continue;
+      event[other] = recent.code;
+      recent.boundWith.add(serial);
+      percept.boundWith.add(recent.serial);
+    }
+    if (Object.keys(event).length >= 2) {
+      this.associations.bind(event, this.modulators.getEffects().learningRateMultiplier);
+      this.emitEvent({
+        type: 'memory',
+        timestamp: this.currentTime,
+        data: { kind: 'association', modalities: Object.keys(event), bindings: this.associations.bindings },
+      });
+    }
+  }
+
+  /** Cross-modal recall from a cue, decoded into words and perceptual categories. */
+  private recallFrom(modality: AssociationModality, code: ModalCode, label: string): void {
+    const result = this.associations.recall(modality, code);
+    // A faint match is a chance overlap between codes (words share letters),
+    // not a memory: a single real pairing already scores above this.
+    if (!result || result.match < DigitalBrain.MIN_RECALL_MATCH) return;
+
+    const confident = result.match >= DigitalBrain.RECALL_CONFIDENCE;
+    const recall: AssociationRecall = {
+      cue: { modality, label },
+      confidence: result.match,
+      confident,
+      words: [],
+      visual: null,
+      auditory: null,
+      timestamp: this.currentTime,
+    };
+
+    const lexical = result.recalled.lexical;
+    let lexicalPattern: Float32Array | null = null;
+    if (lexical) {
+      lexicalPattern = new Float32Array(this.lexicon.dimensions);
+      for (const [channel, value] of lexical.pattern) if (channel < lexicalPattern.length) lexicalPattern[channel] = value;
+      recall.words = this.lexicon
+        .findContained(lexicalPattern, 3)
+        // Only words the reinstated pattern really spells out. While a word is
+        // still unknown to the lexicon, its pattern merely resembles a few
+        // known words (~0.35): better to stay silent than to say those.
+        .filter((m) => m.similarity >= DigitalBrain.RECALLED_WORD_MATCH)
+        .map((m) => ({ word: m.word, similarity: m.similarity }));
+    }
+
+    const topUnits = (pattern: Map<number, number>, k: number): number[] =>
+      [...pattern].sort((a, b) => b[1] - a[1] || a[0] - b[0]).slice(0, k).map(([unit]) => unit);
+
+    const visual = this.regions.get('visualCortex') as VisualCortex | undefined;
+    if (result.recalled.visual && visual) {
+      const match = visual.matchCategory(topUnits(result.recalled.visual.pattern, 20));
+      if (match && match.overlap >= 0.3) recall.visual = { label: match.label, overlap: match.overlap };
+    }
+    const auditory = this.regions.get('auditoryCortex') as AuditoryCortex | undefined;
+    if (result.recalled.auditory && auditory) {
+      const match = auditory.matchCategory(topUnits(result.recalled.auditory.pattern, 3));
+      if (match && match.overlap >= 0.5) recall.auditory = { label: match.label, overlap: match.overlap };
+    }
+
+    // Recorded even when nothing could be NAMED yet (e.g. the word that comes
+    // back is not in the lexicon yet): something does come to mind.
+    this.lastRecall = recall;
+    if (confident && lexicalPattern && recall.words.length > 0) {
+      this.recalledLexicalPattern = lexicalPattern;
+      this.ticksSinceRecall = 0;
+    }
+  }
+
+  /** What the last percept brought back from memory (or `null`). */
+  getLastRecall(): AssociationRecall | null {
+    return this.lastRecall;
+  }
+
   /**
    * What the senses currently recognize (learning by exposure): the outcome of
    * the last completed presentation in each modality, and the number of
@@ -797,13 +992,20 @@ export class DigitalBrain {
     // intention in lexicon space. This makes it reproducible for the same
     // text and discriminative across different texts, without the loop's
     // recurrent noise overwriting it.
-    if (this.lastLinguisticIntention) {
+    // What to talk about: the last thing read — or, if something perceived
+    // since then has brought words back from memory, those words (naming what
+    // it sees or hears).
+    const recalledIsFresher =
+      this.recalledLexicalPattern !== null && this.ticksSinceRecall < this.ticksSinceRead;
+    const intentionSource = recalledIsFresher ? this.recalledLexicalPattern : this.lastLinguisticIntention;
+
+    if (intentionSource) {
       const wernicke = this.regions.get('wernicke') as WernickeArea | undefined;
       // Build the semantic intention from what Wernicke comprehends.
       const intention = new Float32Array(this.lexicon.dimensions);
       let understoodAny = false;
       if (wernicke) {
-        const understood = wernicke.comprehend(this.lastLinguisticIntention);
+        const understood = wernicke.comprehend(intentionSource);
         for (const m of understood) {
           const p = this.lexicon.lookup(m.word);
           if (p) {
@@ -813,7 +1015,7 @@ export class DigitalBrain {
         }
       }
       // If it understood nothing, use the clean encoding directly.
-      const semantic = understoodAny ? intention : this.lastLinguisticIntention;
+      const semantic = understoodAny ? intention : intentionSource;
       const response = brocaRegion.generateResponse(semantic, {
         valence: emotion.valence,
         arousal: emotion.arousal,
@@ -909,6 +1111,10 @@ export class DigitalBrain {
     // language areas (exponential decay over ~50 ticks ≈ 5 s at the 10 Hz server tick).
     const traceWeight = 6.0 * Math.exp(-this.ticksSinceRead / 50);
     if (traceWeight > 0.01) addInto(this.lastLinguisticIntention ?? undefined, traceWeight);
+    // …and of what a percept just brought back from memory: seeing the ball
+    // brings the word "ball" to mind.
+    const recallWeight = 6.0 * Math.exp(-this.ticksSinceRecall / 50);
+    if (recallWeight > 0.01) addInto(this.recalledLexicalPattern ?? undefined, recallWeight);
 
     // Decode the mental state into the words the brain is currently activating.
     const matches = this.lexicon.findClosest(mental, 6).filter((m) => m.similarity > 0.05);
@@ -1119,6 +1325,10 @@ export class DigitalBrain {
       }
     }
 
+    //    Percepts completed by the sensory cortices this tick → association.
+    this.collectPercepts();
+    if (this.ticksSinceRecall < Number.MAX_SAFE_INTEGER) this.ticksSinceRecall++;
+
     // 4. Dispatch bus packets (delivery deferred by axonal delays)
     this.bus.tick(this.currentTime);
 
@@ -1250,6 +1460,7 @@ export class DigitalBrain {
       vocabCount: this.lexicon?.size ?? 0,
       vocabulary: this.getVocabularyStateSlice(),
       recognition: this.getRecognition(),
+      association: { lastRecall: this.lastRecall, bindings: this.associations.bindings },
       learning,
       learningHippocampus,
     };
@@ -1273,6 +1484,7 @@ export class DigitalBrain {
         tickCount: this.tickCount,
         pendingVocab: Array.from(this.pendingVocab.entries()),
       },
+      association: this.associations.serialize(),
     };
     for (const [id, region] of this.regions) {
       const extra = region.serializeExtra();
@@ -1374,6 +1586,7 @@ export class DigitalBrain {
       this.modulators.deserialize(data.modulatorState);
     }
     this.restoreBrainExtras(data.extras.brain);
+    this.associations.deserialize(data.extras.association);
 
     // Restore the persisted lexicon (incl. learned words) if present and
     // dimensionally compatible; otherwise keep the freshly seeded vocabulary.

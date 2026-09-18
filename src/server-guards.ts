@@ -18,9 +18,9 @@ import { ModulatorType } from './core/neuromodulators/modulator-system.js';
 // ================================================================
 
 /** Max HTTP request body (a 128×128 JSON image is ~65 KB). */
-export const MAX_BODY_BYTES = 128 * 1024;
+export const MAX_BODY_BYTES = 256 * 1024;
 /** Max WebSocket message size. */
-export const MAX_WS_PAYLOAD_BYTES = 128 * 1024;
+export const MAX_WS_PAYLOAD_BYTES = 256 * 1024;
 /** Max characters of text per `read`. */
 export const MAX_TEXT_LENGTH = 500;
 /** Max image side (pixels). */
@@ -77,8 +77,8 @@ export function parseTextInput(data: unknown): string {
 }
 
 /** Validates `{ pixels, width, height }` and returns grayscale bytes. */
-export function parseImageInput(data: unknown): { pixels: Uint8Array; width: number; height: number } {
-  const { pixels, width, height } = asRecord(data);
+export function parseImageInput(data: unknown): { pixels: Uint8Array; width: number; height: number; rgb?: Uint8Array } {
+  const { pixels, width, height, rgb } = asRecord(data);
   if (
     typeof width !== 'number' || typeof height !== 'number' ||
     !Number.isInteger(width) || !Number.isInteger(height) ||
@@ -97,7 +97,18 @@ export function parseImageInput(data: unknown): { pixels: Uint8Array; width: num
     }
     out[i] = Math.max(0, Math.min(255, Math.round(v)));
   }
-  return { pixels: out, width, height };
+  if (rgb === undefined) return { pixels: out, width, height };
+  // Optional colour: interleaved r, g, b per pixel.
+  if (!Array.isArray(rgb) || rgb.length !== width * height * 3) {
+    throw new HttpError(400, 'rgb must be an array of length width × height × 3');
+  }
+  const color = new Uint8Array(rgb.length);
+  for (let i = 0; i < rgb.length; i++) {
+    const v = rgb[i];
+    if (typeof v !== 'number' || !Number.isFinite(v)) throw new HttpError(400, 'rgb must contain only finite numbers');
+    color[i] = Math.max(0, Math.min(255, Math.round(v)));
+  }
+  return { pixels: out, width, height, rgb: color };
 }
 
 /** Validates `{ spectrogram }` and returns magnitudes clamped to [0, 1]. */
@@ -150,7 +161,7 @@ export function parseFeedbackInput(data: unknown): boolean {
 
 /** A lesson: something to show together with its name and/or its sound, a few times. */
 export interface LessonInput {
-  image?: { pixels: Uint8Array; width: number; height: number };
+  image?: { pixels: Uint8Array; width: number; height: number; rgb?: Uint8Array };
   text?: string;
   vowel?: 'a' | 'e' | 'i' | 'o' | 'u';
   repetitions: number;

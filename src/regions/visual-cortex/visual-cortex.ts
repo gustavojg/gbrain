@@ -232,6 +232,7 @@ export class VisualCortex extends BrainRegion {
     this.sortIdx = new Int32Array(cfg.neuronCount);
     this.recentSpikeCounts = new Float32Array(cfg.neuronCount);
     this.tuned = new Int32Array(cfg.neuronCount);
+    this.seenInput = new Float32Array(cfg.inputCount);
     this.presentation = new PresentationTracker(cfg.neuronCount, cfg.kWinners);
     this.prototypes = new PrototypeMemory({
       labelPrefix: 'Visual',
@@ -488,8 +489,11 @@ export class VisualCortex extends BrainRegion {
       this.spikes.fill(0);
       this.lastWinners = new Int32Array(0);
       this.closePresentation(this.presentation.tick(false, this.lastWinners));
+      if (!this.presentation.active) this.resetSeen();
       return new Float32Array(this.neuronCount);
     }
+    for (let i = 0; i < spikes.length && i < this.seenInput.length; i++) this.seenInput[i] += spikes[i];
+    this.seenTicks++;
 
     const lrMul = modulationEffects.learningRateMultiplier ?? 1.0;
     const gain = modulationEffects.spikeGainMultiplier ?? 1.0;
@@ -527,6 +531,24 @@ export class VisualCortex extends BrainRegion {
       this.suppressPercept = false;
       return;
     }
+    // Commitment of freshly recruited neurons (adaptive resonance): a neuron
+    // that has just been tuned drops its random initial synapses off the
+    // image that recruited it. Left in place, that random background — as
+    // large as one exposure's worth of learning — pointed the neuron at every
+    // image alike (its cosine with an unrelated drawing was as high as with
+    // its own), and categories merged and drifted.
+    if (this.seenTicks > 0) {
+      const m = this.inputCount;
+      for (let k = 0; k < engram.length; k++) {
+        const nn = engram[k];
+        if (this.tuned[nn] === 1) continue;
+        const offset = nn * m;
+        for (let i = 0; i < m; i++) {
+          if (this.seenInput[i] / this.seenTicks < VisualCortex.COMMIT_FLOOR) this.weights[offset + i] *= VisualCortex.COMMIT_KEEP;
+        }
+      }
+    }
+    this.resetSeen();
     for (let i = 0; i < engram.length; i++) this.tuned[engram[i]] = 1;
     const recognition = this.prototypes.observe(engram, this.currentTime);
     if (recognition) {
@@ -534,6 +556,18 @@ export class VisualCortex extends BrainRegion {
       this.lastEngram = engram;
       this.perceptCount++;
     }
+  }
+
+  /** Mean input over the presentation in progress (what a recruited neuron commits to). */
+  private seenInput: Float32Array;
+  private seenTicks = 0;
+  /** Input level below which a recruited neuron's synapse is pruned, and what is left of it. */
+  private static readonly COMMIT_FLOOR = 0.1;
+  private static readonly COMMIT_KEEP = 0.1;
+
+  private resetSeen(): void {
+    this.seenInput.fill(0);
+    this.seenTicks = 0;
   }
 
   /** Squared weight norm per neuron, cached (see `dynamicsTick`). */

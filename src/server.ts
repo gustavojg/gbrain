@@ -391,8 +391,8 @@ async function runLesson(lesson: LessonInput): Promise<void> {
   try {
     for (let rep = 1; rep <= lesson.repetitions; rep++) {
       if (lesson.image) {
-        const { pixels, width, height } = lesson.image;
-        await run(() => brain.see(pixels, width, height, { propagate: false }), LESSON_STEP_TICKS);
+        const { pixels, width, height, rgb } = lesson.image;
+        await run(() => brain.see(pixels, width, height, { propagate: false, rgb }), LESSON_STEP_TICKS);
       }
       if (lesson.vowel) {
         const [f1, f2] = LESSON_VOWELS[lesson.vowel];
@@ -496,8 +496,8 @@ async function handleApiRoute(url: URL, req: http.IncomingMessage, res: http.Ser
   // POST /api/input/image — See image
   if (url.pathname === '/api/input/image' && req.method === 'POST') {
     enforceHttpLimit(req, 'image');
-    const { pixels, width, height } = parseImageInput(await parseJsonBody(req));
-    sendJSON(await perceive('visual', () => brain.see(pixels, width, height, { propagate: false })));
+    const { pixels, width, height, rgb } = parseImageInput(await parseJsonBody(req));
+    sendJSON(await perceive('visual', () => brain.see(pixels, width, height, { propagate: false, rgb })));
     return;
   }
 
@@ -732,8 +732,8 @@ wss.on('connection', (ws: WebSocket) => {
           break;
         }
         case 'input:image': {
-          const { pixels, width, height } = parseImageInput(msg.data);
-          submit('image', 'visual', () => brain.see(pixels, width, height, { propagate: false }), true);
+          const { pixels, width, height, rgb } = parseImageInput(msg.data);
+          submit('image', 'visual', () => brain.see(pixels, width, height, { propagate: false, rgb }), true);
           break;
         }
         case 'input:audio': {

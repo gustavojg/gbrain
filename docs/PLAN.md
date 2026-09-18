@@ -69,11 +69,11 @@ retiran, y el lenguaje se reconstruye desde el sonido.
 
 | Mecanismo | Base | Hoy | Test |
 |---|---|---|---|
-| **Codificación predictiva**: la corteza predice su entrada y aprende del error; la sorpresa es ese error | Rao & Ballard 1999; Friston | La novedad se mide a posteriori como cambio de patrón | La sorpresa cae con la repetición y sube con lo inesperado |
-| **Retina con color** (canales oponentes) y **rasgos separados**: forma, color, tamaño, posición en poblaciones distintas | V4 color, corteza temporal forma | Retina en gris, categorías por imagen completa | "azul" dicho sobre tres objetos azules se aplica a un cuarto |
-| **Composición** | Aprendizaje cross-situacional (Smith & Yu 2008) | Lectura contrastiva de un solo ganador | coche, verde, azul, coche verde → el coche azul evoca "coche" y "azul" |
-| **Dos niveles** con agrupamiento: invariancia a posición y tamaño | V1→V2→IT | Una capa | Reconoce el mismo objeto desplazado y a otro tamaño |
-| **Preguntas** como señal asociada a una dimensión, con atención por rasgo desde la prefrontal | Atención basada en rasgos (Treue) | Ninguno | "¿de qué color es?" → "azul"; "¿qué es?" → "coche" |
+| **Codificación predictiva**: la corteza predice su entrada y aprende del error; la sorpresa es ese error | Rao & Ballard 1999; Friston | Pendiente (siguiente): la novedad se mide a posteriori como cambio de patrón; la expectativa de secuencia ya descuenta la novedad de lo anunciado | La sorpresa cae con la repetición y sube con lo inesperado |
+| **Retina con color** (canales oponentes) y **rasgos separados**: forma, color, tamaño, posición en poblaciones distintas | V4 color, corteza temporal forma | Hecho para el color: la retina emite además un código de color invariante a forma y posición (histograma tono × saturación) que va a una **corteza del color (V4)** propia con categorías por exposición y su modalidad en la asociación; la forma va por contraste centro-periferia (células ganglionares: un rectángulo relleno y un coche ya no son lo mismo). Pendiente: tamaño y posición como rasgos | "azul" dicho sobre tres objetos azules se aplica a un cuarto |
+| **Composición** | Aprendizaje cross-situacional (Smith & Yu 2008) | Hecho: cada percepto (forma, color) recuerda por su lado; enseñado coche, verde, azul y coche verde, el coche azul nunca visto escribe "coche azul" (`composition.test.ts`) | coche, verde, azul, coche verde → el coche azul evoca "coche" y "azul" |
+| **Dos niveles** con agrupamiento: invariancia a posición y tamaño | V1→V2→IT | Pendiente (siguiente). Una capa sobre una retina que ahora emite contraste centro-periferia (con mediana antirruido y ganancia de receptor); los reclutados se comprometen con la imagen que los reclutó (resonancia adaptativa). Hueco conocido: media figura recentrada por la foveación no se reconoce como la figura | Reconoce el mismo objeto desplazado y a otro tamaño |
+| **Preguntas** como señal asociada a una dimensión, con atención por rasgo desde la prefrontal | Atención basada en rasgos (Treue) | Pendiente (siguiente) | "¿de qué color es?" → "azul"; "¿qué es?" → "coche" |
 
 ## Bloque 4 — Sentidos activos
 

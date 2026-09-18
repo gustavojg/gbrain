@@ -575,6 +575,39 @@ body::after {
   gap: var(--gap-xs);
 }
 
+/* Ink palette: the colour of what it sees goes its own way (V4). */
+.ink-palette {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  max-width: 88px;
+}
+
+.ink-swatch {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  padding: 0;
+  opacity: 0.8;
+}
+
+.ink-swatch.is-selected {
+  border-color: var(--text-primary);
+  opacity: 1;
+}
+
+@media (pointer: coarse) {
+  .ink-swatch {
+    width: 28px;
+    height: 28px;
+  }
+  .ink-palette {
+    max-width: none;
+  }
+}
+
 .small-btn {
   padding: 0.35rem 0.75rem;
   background: var(--bg-card);

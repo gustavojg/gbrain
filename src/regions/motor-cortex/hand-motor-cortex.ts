@@ -50,7 +50,7 @@ const DEFAULT_HAND_CONFIG: HandMotorConfig = {
   drawThreshold: 0.2,
   inkFraction: 0.7,
   planGapTicks: 10,
-  inputFloor: 0.4,
+  inputFloor: 0.25,
 };
 
 /** A drawing issued by the hand motor cortex, with why it was issued. */

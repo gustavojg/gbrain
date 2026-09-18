@@ -46,6 +46,7 @@ import { Amygdala } from './regions/amygdala/amygdala.js';
 import { appraiseProsody, type ProsodyAppraisal, type VoiceContour } from './regions/amygdala/prosody.js';
 import { Motivation, type ActivityKind, type Drives, type RewardEvent } from './core/motivation/motivation.js';
 import { SequenceMemory, type Prediction } from './core/memory/sequence-memory.js';
+import { ColorCortex } from './regions/color-cortex/color-cortex.js';
 import { PrefrontalCortex } from './regions/prefrontal-cortex/prefrontal-cortex.js';
 import { BrocaArea, type LanguageResponse } from './regions/broca-wernicke/broca.js';
 import { WernickeArea } from './regions/broca-wernicke/wernicke.js';
@@ -110,8 +111,10 @@ export interface BrainState {
   recognition?: {
     visual: Recognition | null;
     auditory: Recognition | null;
+    colour: Recognition | null;
     visualCategories: number;
     auditoryCategories: number;
+    colourCategories: number;
   };
   /**
    * Cross-modal association: what the last percept brought back from memory,
@@ -162,7 +165,7 @@ export interface PerceptionResult {
 }
 
 /** Modalities whose percepts can be bound together by association. */
-export type AssociationModality = 'visual' | 'auditory' | 'lexical';
+export type AssociationModality = 'visual' | 'colour' | 'auditory' | 'lexical';
 
 /** What a percept brought back from memory (cross-modal recall). */
 export interface AssociationRecall {
@@ -176,6 +179,8 @@ export interface AssociationRecall {
   words: Array<{ word: string; similarity: number }>;
   /** Visual category reinstated by the cue. */
   visual: { label: string; overlap: number } | null;
+  /** Colour category reinstated by the cue. */
+  colour: { label: string; overlap: number } | null;
   /** Sound category reinstated by the cue. */
   auditory: { label: string; overlap: number } | null;
   /** Simulation time of the recall (ms). */
@@ -256,7 +261,7 @@ export interface MotivationState {
 }
 
 /** Sensory channels of the thalamic relay. */
-type SensoryModality = 'visual' | 'auditory' | 'linguistic';
+type SensoryModality = 'visual' | 'colour' | 'auditory' | 'linguistic';
 
 /** Options shared by the perception entry points (`see`, `hear`, `read`). */
 export interface PerceptionOptions {
@@ -267,6 +272,8 @@ export interface PerceptionOptions {
    * then build the result with `describePerception()`.
    */
   propagate?: boolean;
+  /** Colour of the image, interleaved r, g, b per pixel (`see` only). Without it, the thing has no colour. */
+  rgb?: Uint8Array | number[];
 }
 
 /** Event emitted by the brain */
@@ -348,7 +355,7 @@ export class DigitalBrain {
   > = new Map();
   private perceptSerial = 0;
   /** Percept counters of the sensory cortices already handled (see `collectPercepts`). */
-  private handledPercepts = { visual: 0, auditory: 0 };
+  private handledPercepts = { visual: 0, auditory: 0, colour: 0 };
   private lastRecall: AssociationRecall | null = null;
   /** Tick of the last recall (any confidence): a voice soon after it is a verdict on it. */
   private lastRecallTick = Number.MIN_SAFE_INTEGER;
@@ -496,6 +503,8 @@ export class DigitalBrain {
   private static readonly THALAMIC_RELAY: Record<SensoryModality, readonly string[]> = {
     // Ventral stream (what it is) and dorsal stream (how to act on it).
     visual: ['visualCortex', 'handMotorCortex'],
+    // Colour parts ways with shape in the ventral stream (V4).
+    colour: ['colorCortex'],
     auditory: ['auditoryCortex'],
     linguistic: ['brocaWernicke'],
   };
@@ -756,6 +765,8 @@ export class DigitalBrain {
     }));
     this.addRegion(new BrocaArea(this.lexicon, 1000, 1000));
     this.addRegion(new WernickeArea(this.lexicon, 1000, 1000));
+    // Last, and with deterministic synapses: the others' seeded trajectories stay as they were.
+    this.addRegion(new ColorCortex());
 
     // Connect Broca/Wernicke to the bus as an alias of 'brocaWernicke'
     // to receive packets from the existing connectome
@@ -843,13 +854,21 @@ export class DigitalBrain {
     // window and the visual cortex samples fresh spikes from it every tick.
     const rates = this.visualEncoder.encodeRates(pixels, width, height);
 
-    // Innate visual detectors on the retinal image (before any cortex): a face
-    // draws attention and comfort; something growing fast on the retina alarms.
-    this.detectFace(rates);
-    this.detectLooming(rates);
+    // Innate visual detectors on the retinal image itself (before any cortex):
+    // a face draws attention and comfort; something growing fast alarms.
+    const retina = this.visualEncoder.encodeIntensity(pixels, width, height);
+    this.detectFace(retina);
+    this.detectLooming(retina);
 
     // Send to the thalamus
     this.injectSensoryInput('visual', rates);
+    // …and, if the image has colour, its colour goes its own way (V4).
+    if (options.rgb && options.rgb.length >= width * height * 3) {
+      const colour = VisualEncoder.encodeColor(options.rgb, width, height);
+      let any = 0;
+      for (let i = 0; i < colour.length; i++) any += colour[i];
+      if (any > 0) this.injectSensoryInput('colour', colour);
+    }
 
     // Process several ticks to propagate through the brain
     return this.processPerception('visual', options);
@@ -1253,6 +1272,12 @@ export class DigitalBrain {
       const units = Array.from(auditory.getLastEngram());
       this.onPercept('auditory', { indices: units, values: units.map(() => 1) }, auditory.getRecognition()?.label ?? 'sound');
     }
+    const colour = this.regions.get('colorCortex') as ColorCortex | undefined;
+    if (colour && colour.percepts !== this.handledPercepts.colour) {
+      this.handledPercepts.colour = colour.percepts;
+      const units = Array.from(colour.getLastEngram());
+      this.onPercept('colour', { indices: units, values: units.map(() => 1) }, colour.getRecognition()?.label ?? 'colour');
+    }
   }
 
   /**
@@ -1280,8 +1305,8 @@ export class DigitalBrain {
     if (step.prediction) {
       this.emitEvent({ type: 'affect', timestamp: this.currentTime, data: { kind: 'expectation', after: key, ...step.prediction } });
     }
-    if (modality === 'visual' || modality === 'auditory') {
-      this.appraiseCue(modality, code.indices, label);
+    if (modality === 'visual' || modality === 'auditory' || modality === 'colour') {
+      if (modality !== 'colour') this.appraiseCue(modality, code.indices, label);
       const novelty = this.motivation.perceive(key, this.tickCount, expectedness);
       this.reward(novelty);
       this.gateIntoWorkingMemory(label, novelty.error);
@@ -1326,6 +1351,7 @@ export class DigitalBrain {
       confident,
       words: [],
       visual: null,
+      colour: null,
       auditory: null,
       timestamp: this.currentTime,
     };
@@ -1335,12 +1361,17 @@ export class DigitalBrain {
     if (lexical) {
       lexicalPattern = new Float32Array(this.lexicon.dimensions);
       for (const [channel, value] of lexical.pattern) if (channel < lexicalPattern.length) lexicalPattern[channel] = value;
-      recall.words = this.lexicon
-        .findContained(lexicalPattern, 3)
+      const contained = this.lexicon
+        .findContained(lexicalPattern, 6)
         // Only words the reinstated pattern really spells out. While a word is
         // still unknown to the lexicon, its pattern merely resembles a few
         // known words (~0.35): better to stay silent than to say those.
-        .filter((m) => m.similarity >= DigitalBrain.RECALLED_WORD_MATCH)
+        .filter((m) => m.similarity >= DigitalBrain.RECALLED_WORD_MATCH);
+      // A word that is a piece of a better-matching word ("ver" in "verde",
+      // "o" in "coche") is that word's shadow in the pattern, not a word recalled.
+      recall.words = contained
+        .filter((m, i) => !contained.some((other, j) => j !== i && other.word !== m.word && other.word.includes(m.word)))
+        .slice(0, 3)
         .map((m) => ({ word: m.word, similarity: m.similarity }));
     }
 
@@ -1358,6 +1389,12 @@ export class DigitalBrain {
         // it reads or hears.)
         if (confident && modality !== 'visual') this.drawImaginedImage(visual.imagine(units));
       }
+    }
+    const colourCortex = this.regions.get('colorCortex') as ColorCortex | undefined;
+    if (result.recalled.colour && colourCortex) {
+      const units = topUnits(result.recalled.colour.pattern, 6);
+      const match = colourCortex.matchCategory(units);
+      if (match && match.overlap >= 0.3) recall.colour = { label: match.label, overlap: match.overlap };
     }
     const auditory = this.regions.get('auditoryCortex') as AuditoryCortex | undefined;
     if (result.recalled.auditory && auditory) {
@@ -1430,11 +1467,14 @@ export class DigitalBrain {
   getRecognition(): NonNullable<BrainState['recognition']> {
     const visual = this.regions.get('visualCortex') as VisualCortex | undefined;
     const auditory = this.regions.get('auditoryCortex') as AuditoryCortex | undefined;
+    const colour = this.regions.get('colorCortex') as ColorCortex | undefined;
     return {
       visual: visual?.getRecognition() ?? null,
       auditory: auditory?.getRecognition() ?? null,
+      colour: colour?.getRecognition() ?? null,
       visualCategories: visual?.categoryCount ?? 0,
       auditoryCategories: auditory?.categoryCount ?? 0,
+      colourCategories: colour?.categoryCount ?? 0,
     };
   }
 
@@ -2031,6 +2071,11 @@ export class DigitalBrain {
     this.faceMatch = 0;
     if (maxR - minR < 3 || maxC - minC < 3) return;
     const h = maxR - minR + 1, w = maxC - minC + 1;
+    // A face is blobs on a ground, not a filled patch: a solid shape correlates
+    // with any template through its soft edges and is not a face.
+    let inked = 0;
+    for (let r = minR; r <= maxR; r++) for (let c = minC; c <= maxC; c++) if (rates[r * side + c] >= 0.5) inked++;
+    if (inked > 0.5 * h * w) return;
     const blob = (r: number, c: number, r0: number, c0: number, sr: number, sc: number): number =>
       Math.exp(-(((r - r0) / sr) ** 2 + ((c - c0) / sc) ** 2) / 2);
     let sx = 0, st = 0, sxx = 0, stt = 0, sxt = 0;

@@ -15,7 +15,11 @@
  *   4. NO ECHO       — it repeats a sound once; hearing ITS OWN repetition
  *                      does not make it repeat again.
  *   5. SELECTIVE     — it only answers sounds: text and drawings leave it silent.
- *   6. MEMORY        — the skill survives a restart, without babbling again.
+ *   6. NAMING ALOUD  — stages 1 + 2 together: taught that a drawing goes with
+ *                      a sound, it SAYS that sound when it sees the drawing —
+ *                      the right one for each drawing, nothing for a drawing it
+ *                      was never taught, nothing with the voice off.
+ *   7. MEMORY        — the skill survives a restart, without babbling again.
  */
 
 import { existsSync, rmSync } from 'fs';
@@ -66,12 +70,14 @@ function error(v: Vocalization, f1: number, f2: number): number {
   return (Math.abs(v.command.f1 - f1) / span1 + Math.abs(v.command.f2 - f2) / span2) / 2;
 }
 
-function examine(brain: DigitalBrain): { repeated: number; meanError: number; detail: string } {
+function examine(brain: DigitalBrain): { repeated: number; meanError: number; detail: string; known: string[] } {
   const errors: number[] = [];
   const detail: string[] = [];
+  const known: string[] = [];
   for (const [name, [f1, f2]] of Object.entries(VOWELS)) {
     const answer = sayTo(brain, f1, f2);
     if (answer) {
+      known.push(name);
       errors.push(error(answer, f1, f2));
       detail.push(`${name}→${answer.command.f1.toFixed(0)}/${answer.command.f2.toFixed(0)}`);
     } else {
@@ -79,7 +85,7 @@ function examine(brain: DigitalBrain): { repeated: number; meanError: number; de
     }
   }
   const meanError = errors.length > 0 ? errors.reduce((s, e) => s + e, 0) / errors.length : NaN;
-  return { repeated: errors.length, meanError, detail: detail.join(' ') };
+  return { repeated: errors.length, meanError, detail: detail.join(' '), known };
 }
 
 function babble(brain: DigitalBrain, times: number): void {
@@ -153,8 +159,74 @@ console.log('\n5. SELECTIVE');
   check('text and drawings leave the voice silent', brain.getLastVocalization()!.serial === before);
 }
 
-// ── 6. MEMORY ───────────────────────────────────────────────────────────────
-console.log('\n6. MEMORY');
+// ── 6. NAMING ALOUD ─────────────────────────────────────────────────────────
+console.log('\n6. NAMING ALOUD');
+{
+  const SIDE = 64;
+  const drawing = (draw: (plot: (x: number, y: number) => void) => void): number[] => {
+    const pixels = new Array<number>(SIDE * SIDE).fill(27);
+    draw((x, y) => {
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          const px = x + dx;
+          const py = y + dy;
+          if (px >= 0 && px < SIDE && py >= 0 && py < SIDE) pixels[py * SIDE + px] = 255;
+        }
+      }
+    });
+    return pixels;
+  };
+  const CROSS = drawing((plot) => { for (let i = 8; i < 56; i++) { plot(i, 32); plot(32, i); } });
+  const SQUARE = drawing((plot) => { for (let i = 12; i < 52; i++) { plot(i, 12); plot(i, 51); plot(12, i); plot(51, i); } });
+  const DIAGONAL = drawing((plot) => { for (let i = 6; i < 58; i++) plot(i, i); });
+
+  // Two vowels it already knows how to make, as far apart as possible.
+  const [nameP, nameQ] = [later.known[0], later.known[later.known.length - 1]];
+  const vowelP = VOWELS[nameP];
+  const vowelQ = VOWELS[nameQ];
+
+  brain.associationWindowTicks = 120;
+  const show = (image: number[]): void => { quiet(() => brain.see(image, SIDE, SIDE, { propagate: false })); };
+  const teach = (image: number[], [f1, f2]: [number, number]): void => {
+    show(image);
+    wait(brain, 50);
+    quiet(() => brain.hearFrame(synthesizeSpectrum({ f1, f2, amplitude: 0.9 }), 48000, { propagate: false }));
+    wait(brain, 200);
+  };
+  /** Shows a drawing on its own; returns what the brain SAID on seeing it, if anything. */
+  const showAlone = (image: number[]): Vocalization | null => {
+    const before = brain.getLastVocalization()?.serial ?? 0;
+    show(image);
+    wait(brain, 200);
+    const after = brain.getLastVocalization();
+    return after && after.serial !== before ? after : null;
+  };
+
+  for (let i = 0; i < 4; i++) {
+    teach(CROSS, vowelP);
+    teach(SQUARE, vowelQ);
+  }
+
+  const saidForCross = showAlone(CROSS);
+  const saidForSquare = showAlone(SQUARE);
+  const right = (said: Vocalization | null, own: [number, number], other: [number, number]): boolean =>
+    said !== null && said.source === 'naming' && error(said, ...own) <= 0.12 && error(said, ...own) < error(said, ...other);
+  check('seeing a drawing, it says the sound that goes with it — the right one for each',
+    right(saidForCross, vowelP, vowelQ) && right(saidForSquare, vowelQ, vowelP),
+    `cross ("${nameP}" ${vowelP.join('/')}) → ${saidForCross ? `${saidForCross.command.f1.toFixed(0)}/${saidForCross.command.f2.toFixed(0)}` : 'silent'} · ` +
+    `square ("${nameQ}" ${vowelQ.join('/')}) → ${saidForSquare ? `${saidForSquare.command.f1.toFixed(0)}/${saidForSquare.command.f2.toFixed(0)}` : 'silent'}`);
+
+  check('a drawing it was never taught a sound for leaves it silent', showAlone(DIAGONAL) === null);
+
+  brain.setVoice({ imitate: false });
+  const saidWithVoiceOff = showAlone(CROSS);
+  brain.setVoice({ imitate: true });
+  check('with the voice off it recalls the sound but does not say it',
+    saidWithVoiceOff === null && brain.getLastRecall()?.auditory != null);
+}
+
+// ── 7. MEMORY ───────────────────────────────────────────────────────────────
+console.log('\n7. MEMORY');
 {
   const statePath = `/tmp/gbrain-vocal-test-${process.pid}.bin`;
   const files = ['', '.bak', '.tmp', '.lexicon.json'].map((suffix) => statePath + suffix);

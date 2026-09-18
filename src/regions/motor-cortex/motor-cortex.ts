@@ -63,8 +63,8 @@ const DEFAULT_MOTOR_CONFIG: MotorCortexConfig = {
 /** A command issued by the motor cortex, with why it was issued. */
 export interface MotorOutput {
   command: VocalCommand;
-  source: 'babble' | 'imitation';
-  /** For an imitation: how strongly the sound drove the map (0–1). */
+  source: 'babble' | 'imitation' | 'naming';
+  /** For an imitation or a naming: how strongly the sound drove the map (0–1). */
   confidence: number;
 }
 
@@ -164,6 +164,33 @@ export class MotorCortex extends BrainRegion {
     this.heldTicks = this.cfg.holdTicks;
     this.resetPlan();
     return { command: this.decode(pattern)!, source, confidence };
+  }
+
+  /**
+   * Says a sound that is only IMAGINED — an auditory engram reinstated from
+   * memory (the sound that goes with what is being seen), not one arriving
+   * through the ear. It drives the map exactly as a heard sound would.
+   *
+   * @param auditoryUnits - Neurons of the auditory cortex that stand for the sound
+   * @returns The command being executed, or `null` if the voice is off, busy,
+   *   or the map does not know how to make that sound yet
+   */
+  sayImagined(auditoryUnits: ArrayLike<number>): MotorOutput | null {
+    if (!this.imitate || this.held || auditoryUnits.length === 0) return null;
+
+    const drive = new Float32Array(this.neuronCount);
+    let peak = 0;
+    for (let m = 0; m < this.neuronCount; m++) {
+      const offset = m * this.inputCount;
+      let sum = 0;
+      for (let h = 0; h < auditoryUnits.length; h++) sum += this.weights[offset + auditoryUnits[h]];
+      drive[m] = sum / auditoryUnits.length;
+      if (drive[m] > peak) peak = drive[m];
+    }
+    if (peak < this.cfg.imitationThreshold) return null;
+
+    for (let m = 0; m < this.neuronCount; m++) if (drive[m] < peak * 0.5) drive[m] = 0;
+    return this.execute(this.normalized(drive), 'naming', Math.min(1, peak));
   }
 
   /** Takes the imitation that became ready on this tick, if any, and starts executing it. */

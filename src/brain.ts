@@ -172,8 +172,11 @@ export interface AssociationRecall {
 /** A sound the brain produced with its own voice. */
 export interface Vocalization {
   command: VocalCommand;
-  /** Spontaneous exploration, or an attempt to repeat a sound it heard. */
-  source: 'babble' | 'imitation';
+  /**
+   * Spontaneous exploration, an attempt to repeat a sound it heard, or saying
+   * the sound that what it perceives brings to mind.
+   */
+  source: 'babble' | 'imitation' | 'naming';
   /** For an imitation: how well the heard sound was known to the motor map (0–1). */
   confidence: number;
   /** How long the sound lasts when rendered (ms of real time). */
@@ -842,6 +845,13 @@ export class DigitalBrain {
     return this.lastVocalization;
   }
 
+  /** Names aloud: executes the motor command for a sound reinstated from memory. */
+  private sayImaginedSound(auditoryUnits: number[]): void {
+    const motor = this.regions.get('motorCortex') as MotorCortex | undefined;
+    const output = motor?.sayImagined(auditoryUnits);
+    if (output) this.vocalize(output);
+  }
+
   private driveVoice(): void {
     const motor = this.regions.get('motorCortex') as MotorCortex | undefined;
     if (!motor) return;
@@ -1003,8 +1013,15 @@ export class DigitalBrain {
     }
     const auditory = this.regions.get('auditoryCortex') as AuditoryCortex | undefined;
     if (result.recalled.auditory && auditory) {
-      const match = auditory.matchCategory(topUnits(result.recalled.auditory.pattern, 3));
-      if (match && match.overlap >= 0.5) recall.auditory = { label: match.label, overlap: match.overlap };
+      const units = topUnits(result.recalled.auditory.pattern, 3);
+      const match = auditory.matchCategory(units);
+      if (match && match.overlap >= 0.5) {
+        recall.auditory = { label: match.label, overlap: match.overlap };
+        // The sound that comes to mind is said aloud — if the voice is on and
+        // the motor map knows how to make it. (A heard sound is already
+        // handled by imitation; this is for what it SEES or READS.)
+        if (confident && modality !== 'auditory') this.sayImaginedSound(units);
+      }
     }
 
     // Recorded even when nothing could be NAMED yet (e.g. the word that comes

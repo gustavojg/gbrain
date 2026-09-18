@@ -128,6 +128,27 @@ export class PrototypeMemory {
     return this.describe(founded, 0, true);
   }
 
+  /**
+   * Best-matching category for an engram WITHOUT learning from it — used to
+   * name a code that was reinstated from memory rather than perceived.
+   *
+   * @returns The category and its overlap with the engram, or `null` if nothing overlaps
+   */
+  match(engram: ArrayLike<number>): { id: number; label: string; overlap: number; exposures: number } | null {
+    let best: Prototype | null = null;
+    let bestOverlap = 0;
+    for (const prototype of this.prototypes) {
+      const overlap = PrototypeMemory.overlap(engram, prototype.units);
+      if (overlap > bestOverlap) {
+        bestOverlap = overlap;
+        best = prototype;
+      }
+    }
+    return best
+      ? { id: best.id, label: `${this.options.labelPrefix}-${best.id}`, overlap: bestOverlap, exposures: best.exposures }
+      : null;
+  }
+
   private describe(prototype: Prototype, familiarity: number, isNew: boolean): Recognition {
     return {
       id: prototype.id,

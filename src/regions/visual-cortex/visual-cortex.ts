@@ -177,6 +177,8 @@ export class VisualCortex extends BrainRegion {
   private prototypes!: PrototypeMemory;
   /** Outcome of the last completed presentation. */
   private lastRecognition: Recognition | null = null;
+  private lastEngram: Int32Array = new Int32Array(0);
+  private perceptCount = 0;
 
   private memories: VisualMemory[] = [];
 
@@ -487,7 +489,26 @@ export class VisualCortex extends BrainRegion {
   private closePresentation(engram: Int32Array | null): void {
     if (!engram) return;
     const recognition = this.prototypes.observe(engram, this.currentTime);
-    if (recognition) this.lastRecognition = recognition;
+    if (recognition) {
+      this.lastRecognition = recognition;
+      this.lastEngram = engram;
+      this.perceptCount++;
+    }
+  }
+
+  /** Engram of the last completed presentation (what `getRecognition()` refers to). */
+  getLastEngram(): Int32Array {
+    return this.lastEngram;
+  }
+
+  /** Completed presentations so far — changes exactly when a new percept is available. */
+  get percepts(): number {
+    return this.perceptCount;
+  }
+
+  /** Names a code reinstated from memory: the learned category it overlaps most. */
+  matchCategory(units: ArrayLike<number>): { id: number; label: string; overlap: number; exposures: number } | null {
+    return this.prototypes.match(units);
   }
 
   /** Outcome of the last completed presentation, or `null` if none yet. */

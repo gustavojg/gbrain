@@ -233,6 +233,8 @@ export class AuditoryCortex extends BrainRegion {
   private prototypes: PrototypeMemory;
   /** Outcome of the last completed sound. */
   private lastRecognition: Recognition | null = null;
+  private lastEngram: Int32Array = new Int32Array(0);
+  private perceptCount = 0;
 
   /** Stored auditory memories */
   private memories: AuditoryMemory[] = [];
@@ -507,7 +509,11 @@ export class AuditoryCortex extends BrainRegion {
     this.adapt(mean, engram, 1.0);
 
     const recognition = this.prototypes.observe(engram, this.currentTime);
-    if (recognition) this.lastRecognition = recognition;
+    if (recognition) {
+      this.lastRecognition = recognition;
+      this.lastEngram = engram;
+      this.perceptCount++;
+    }
   }
 
   private resetPresentation(): void {
@@ -524,6 +530,21 @@ export class AuditoryCortex extends BrainRegion {
     } finally {
       this.liveLearning = live;
     }
+  }
+
+  /** Engram of the last completed presentation (what `getRecognition()` refers to). */
+  getLastEngram(): Int32Array {
+    return this.lastEngram;
+  }
+
+  /** Completed presentations so far — changes exactly when a new percept is available. */
+  get percepts(): number {
+    return this.perceptCount;
+  }
+
+  /** Names a code reinstated from memory: the learned category it overlaps most. */
+  matchCategory(units: ArrayLike<number>): { id: number; label: string; overlap: number; exposures: number } | null {
+    return this.prototypes.match(units);
   }
 
   /** Outcome of the last completed sound, or `null` if none yet. */

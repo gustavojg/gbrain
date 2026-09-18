@@ -212,6 +212,37 @@ export class Lexicon {
     return matches.slice(0, topK);
   }
 
+  /**
+   * Finds the words CONTAINED in a pattern that may superimpose several words
+   * (a sentence, or a pattern reinstated from memory).
+   *
+   * Unlike `findClosest`, which compares the whole pattern with each word
+   * (so every additional word in the mixture lowers all the scores), this
+   * measures how much of each word's own pattern is present: the projection
+   * of the pattern onto the word, `p·w / |w|²` — ~1 for a word that is fully
+   * there, whatever else is there too.
+   *
+   * @param pattern - Pattern to decode (any non-negative scale)
+   * @param topK - Maximum number of words to return
+   * @returns Words with the fraction of each that is present (0–1), best first
+   */
+  findContained(pattern: Float32Array, topK: number = 5): LexiconMatch[] {
+    let peak = 0;
+    for (let i = 0; i < pattern.length; i++) if (pattern[i] > peak) peak = pattern[i];
+    if (peak === 0) return [];
+
+    const matches: LexiconMatch[] = [];
+    for (const [word, entry] of this.entries) {
+      const norm = this.getCachedNorm(word, entry.pattern);
+      if (norm === 0) continue;
+      // Scale-free: the most strongly present channel counts as fully present.
+      const presence = this.dotProduct(pattern, entry.pattern) / (peak * norm * norm);
+      matches.push({ word, similarity: Math.min(1, presence) });
+    }
+    matches.sort((a, b) => b.similarity - a.similarity);
+    return matches.slice(0, topK);
+  }
+
   // ----------------------------------------------------------------
   // Math utilities
   // ----------------------------------------------------------------

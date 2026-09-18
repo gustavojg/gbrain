@@ -185,6 +185,7 @@ function updateDashboard(state) {
   // Vocabulary acquisition panel
   updateVocabularyPanel(state.vocabulary, state.vocabCount);
   updatePerceptionPanel(state.recognition);
+  updateRecallRow(state.association);
 
   // Learning curve (growth of vocabulary + episodic memories over time)
   updateLearningCurve(state);
@@ -210,6 +211,34 @@ function updatePerceptionPanel(recognition) {
   if (!recognition) return;
   renderPercept('perceptVisual', 'visual', recognition.visual, recognition.visualCategories, 'seen');
   renderPercept('perceptAuditory', 'auditory', recognition.auditory, recognition.auditoryCategories, 'heard');
+}
+
+let lastRecallLogged = null;
+
+/** What the last percept brought back from memory: "Visual-1 → “cruz” · 82%". */
+function updateRecallRow(association) {
+  const what = document.querySelector('#perceptRecall .percept-what');
+  const r = association && association.lastRecall;
+  if (!what || !r) return;
+
+  const parts = [];
+  if (r.words && r.words.length > 0) parts.push(`“${r.words.map((w) => escapeHtml(w.word)).join(' ')}”`);
+  if (r.visual) parts.push(escapeHtml(r.visual.label));
+  if (r.auditory) parts.push(escapeHtml(r.auditory.label));
+  const recalled = parts.length > 0 ? parts.join(' + ') : 'something it cannot name yet';
+  const pct = Math.round(Number(r.confidence) * 100);
+
+  what.classList.remove('percept-empty');
+  what.innerHTML =
+    `<span class="percept-label">${escapeHtml(r.cue.label)}</span> → ${recalled}` +
+    `<span class="percept-badge ${r.confident ? 'is-known' : 'is-new'}">${pct}%${r.confident ? '' : ' · unsure'}</span>` +
+    `<span class="percept-total">${Number(association.bindings)} shared experience${association.bindings === 1 ? '' : 's'}</span>`;
+
+  const key = `${r.timestamp}:${r.cue.label}`;
+  if (lastRecallLogged !== key && r.confident && parts.length > 0) {
+    lastRecallLogged = key;
+    addLog('info', `🔗 ${r.cue.label} reminds it of ${parts.join(' + ').replace(/<[^>]*>/g, '')} (${pct}%)`);
+  }
 }
 
 function renderPercept(rowId, sense, r, categories, verb) {

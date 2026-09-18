@@ -23,6 +23,18 @@
  *   - `PrototypeMemory` matches engrams against the learned prototypes.
  */
 
+/**
+ * Perceptual narrowing (critical periods): how much a fully entrenched
+ * category relaxes its vigilance (`gain`), and the exposures at which a
+ * category is ~63% entrenched (`tau`). Early on every contrast founds its own
+ * category; once a category is well worn, nearby inputs are assimilated to it
+ * and a contrast never met before is harder to learn (Werker & Tees 1984).
+ */
+export const PERCEPTUAL_NARROWING = { gain: 0.35, tau: 10 } as const;
+
+/** What is left of a released neuron's synapses (pruning frees it for recruitment). */
+export const RELEASE_KEEP = 0.2;
+
 /** Outcome of showing one stimulus to a `PrototypeMemory`. */
 export interface Recognition {
   /** Stable identifier of the matched (or newly founded) category. */
@@ -49,6 +61,17 @@ export interface Recognition {
 interface Prototype {
   id: number;
   units: number[];
+  exposures: number;
+  lastSeen: number;
+  /** Sleeps since it was last seen (pruning). */
+  unseenSleeps: number;
+}
+
+/** A learned category, read-only. */
+export interface CategoryView {
+  id: number;
+  label: string;
+  units: readonly number[];
   exposures: number;
   lastSeen: number;
 }
@@ -120,6 +143,7 @@ export class PrototypeMemory {
       best.units = Array.from(engram);
       best.exposures++;
       best.lastSeen = timestamp;
+      best.unseenSleeps = 0;
       return this.describe(best, bestOverlap, false);
     }
 
@@ -130,7 +154,7 @@ export class PrototypeMemory {
       }
       this.prototypes.splice(oldest, 1);
     }
-    const founded: Prototype = { id: this.nextId++, units: Array.from(engram), exposures: 1, lastSeen: timestamp };
+    const founded: Prototype = { id: this.nextId++, units: Array.from(engram), exposures: 1, lastSeen: timestamp, unseenSleeps: 0 };
     this.prototypes.push(founded);
     return this.describe(founded, 0, true);
   }
@@ -154,6 +178,58 @@ export class PrototypeMemory {
     return best
       ? { id: best.id, label: `${this.options.labelPrefix}-${best.id}`, overlap: bestOverlap, exposures: best.exposures }
       : null;
+  }
+
+  /** The categories learned so far. */
+  list(): CategoryView[] {
+    return this.prototypes.map((p) => ({ id: p.id, label: `${this.options.labelPrefix}-${p.id}`, units: p.units, exposures: p.exposures, lastSeen: p.lastSeen }));
+  }
+
+  /**
+   * How entrenched each unit is (0..1) by the exposures of the categories it
+   * belongs to — the perceptual-narrowing term (Werker & Tees 1984): a
+   * category met many times becomes a perceptual magnet (Kuhl 1991) that
+   * captures nearby inputs instead of letting them found a category of their own.
+   *
+   * @param unitCount - Neurons of the cortex
+   * @param tau - Exposures at which entrenchment is ~63%
+   */
+  entrenchment(unitCount: number, tau: number): Float32Array {
+    const out = new Float32Array(unitCount);
+    for (const p of this.prototypes) {
+      const e = 1 - Math.exp(-p.exposures / tau);
+      for (const u of p.units) if (u < unitCount && e > out[u]) out[u] = e;
+    }
+    return out;
+  }
+
+  /** A sleep has passed: every category is one sleep older since it was last seen. */
+  age(): void {
+    for (const p of this.prototypes) p.unseenSleeps++;
+  }
+
+  /**
+   * Postnatal pruning: a category met fewer than `minExposures` times and not
+   * seen for `maxUnseenSleeps` sleeps is dropped. What is never repeated is
+   * not worth keeping neurons for.
+   *
+   * @returns The pruned categories (their units can be released by the cortex)
+   */
+  prune(minExposures: number, maxUnseenSleeps: number): CategoryView[] {
+    const pruned: CategoryView[] = [];
+    this.prototypes = this.prototypes.filter((p) => {
+      const drop = p.exposures < minExposures && p.unseenSleeps >= maxUnseenSleeps;
+      if (drop) pruned.push({ id: p.id, label: `${this.options.labelPrefix}-${p.id}`, units: p.units, exposures: p.exposures, lastSeen: p.lastSeen });
+      return !drop;
+    });
+    return pruned;
+  }
+
+  /** Units that belong to some surviving category. */
+  unitsInUse(): Set<number> {
+    const used = new Set<number>();
+    for (const p of this.prototypes) for (const u of p.units) used.add(u);
+    return used;
   }
 
   private describe(prototype: Prototype, familiarity: number, isNew: boolean): Recognition {
@@ -186,6 +262,7 @@ export class PrototypeMemory {
         units: [...p.units],
         exposures: Number.isInteger(p.exposures) && (p.exposures as number) > 0 ? (p.exposures as number) : 1,
         lastSeen: typeof p.lastSeen === 'number' && Number.isFinite(p.lastSeen) ? p.lastSeen : 0,
+        unseenSleeps: Number.isInteger(p.unseenSleeps) && (p.unseenSleeps as number) >= 0 ? (p.unseenSleeps as number) : 0,
       });
     }
     this.prototypes = restored;

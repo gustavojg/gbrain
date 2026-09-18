@@ -313,6 +313,13 @@ export class MotorCortex extends BrainRegion {
     if (heard.length > 0) this.heldTicksLearned++;
   }
 
+  /** Whether some map unit knows this heard (auditory) unit: the map runs on it. */
+  knowsHeard(heard: number): boolean {
+    if (heard < 0 || heard >= this.inputCount) return false;
+    for (let m = 0; m < this.neuronCount; m++) if (this.weights[m * this.inputCount + heard] >= MotorCortex.KNOWN_WEIGHT) return true;
+    return false;
+  }
+
   /** Fraction of map units that know what they sound like (some weight to some heard unit). */
   private measureKnowledge(): number {
     let known = 0;

@@ -21,8 +21,9 @@
  */
 import { BrainRegion } from '../../core/brain-region.js';
 import type { ModulationEffects } from '../../core/neuromodulators/modulator-system.js';
-import { PresentationTracker, PrototypeMemory, type Recognition } from '../../core/memory/prototype-memory.js';
+import { PERCEPTUAL_NARROWING, PresentationTracker, PrototypeMemory, RELEASE_KEEP, type CategoryView, type Recognition } from '../../core/memory/prototype-memory.js';
 import { packArray, unpackFloat32, unpackInt32 } from '../../core/persistence/binary-protocol.js';
+import { mulberry32 } from '../../core/random.js';
 
 /** Channels of the retina's colour code (see VisualEncoder.encodeColor). */
 export const COLOR_CHANNELS = 26;
@@ -49,23 +50,13 @@ const DEFAULT_CONFIG: ColorCortexConfig = {
   learningRate: 0.3,
 };
 
-/** mulberry32 with a fixed seed: deterministic, never touches Math.random. */
-function seeded(seed: number): () => number {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = a;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
 export class ColorCortex extends BrainRegion {
   private readonly cfg: ColorCortexConfig;
   /** 1 once a neuron has been tuned to some colour (vigilance applies to it). */
   private tuned: Int32Array;
   private winCounts: Float32Array;
+  /** Entrenchment (0..1) of each neuron's categories: relaxes its vigilance (see `refreshEntrenchment`). */
+  private entrenched: Float32Array;
   private readonly presentation: PresentationTracker;
   private presentationInput: Float32Array;
   private presentationTicks = 0;
@@ -81,6 +72,7 @@ export class ColorCortex extends BrainRegion {
     this.cfg = cfg;
     this.tuned = new Int32Array(cfg.neuronCount);
     this.winCounts = new Float32Array(cfg.neuronCount);
+    this.entrenched = new Float32Array(cfg.neuronCount);
     this.presentation = new PresentationTracker(cfg.neuronCount, cfg.kWinners, cfg.gapTicks);
     this.presentationInput = new Float32Array(COLOR_CHANNELS);
     this.prototypes = new PrototypeMemory({ labelPrefix: 'Colour', matchThreshold: cfg.categoryMatch, unitCount: cfg.neuronCount });
@@ -88,7 +80,7 @@ export class ColorCortex extends BrainRegion {
 
   /** Small random-looking synapses from a fixed seed: the global random source is not consumed. */
   protected override initializeWeights(): void {
-    const random = seeded(0xc0104);
+    const random = mulberry32(0xc0104);
     for (let n = 0; n < this.neuronCount; n++) {
       const offset = n * this.inputCount;
       for (let i = 0; i < this.inputCount; i++) this.weights[offset + i] = random() * 0.05;
@@ -117,7 +109,7 @@ export class ColorCortex extends BrainRegion {
       if (this.tuned[n] === 1) {
         // Vigilance: a neuron tuned to a colour only competes for that colour.
         const match = sum / (Math.sqrt(norm2) * inputNorm + 1e-9);
-        if (match < this.cfg.vigilance) continue;
+        if (match < this.cfg.vigilance * (1 - PERCEPTUAL_NARROWING.gain * this.entrenched[n])) continue;
       }
       potentials[n] = Math.max(0, sum - this.winCounts[n] * 0.01);
     }
@@ -174,6 +166,7 @@ export class ColorCortex extends BrainRegion {
       this.lastRecognition = recognition;
       this.lastEngram = engram;
       this.perceptCount++;
+      this.refreshEntrenchment();
     }
   }
 
@@ -204,6 +197,48 @@ export class ColorCortex extends BrainRegion {
     return this.prototypes.size;
   }
 
+
+  /** The perceptual categories learned so far. */
+  categories(): CategoryView[] {
+    return this.prototypes.list();
+  }
+
+  /** Vigilance of a neuron: relaxed by how entrenched its categories are (perceptual narrowing). */
+  private refreshEntrenchment(): void {
+    this.entrenched = this.prototypes.entrenchment(this.neuronCount, PERCEPTUAL_NARROWING.tau);
+  }
+
+  /**
+   * A sleep passed: categories age, and those met fewer than `minExposures`
+   * times and unseen for `afterSleeps` sleeps are pruned; their neurons, if no
+   * surviving category — nor anything else (`inUse`) — runs on them, are
+   * released for recruitment.
+   *
+   * @returns Labels of the pruned categories
+   */
+  pruneCategories(minExposures: number, afterSleeps: number, inUse: (unit: number) => boolean = () => false): string[] {
+    this.prototypes.age();
+    const pruned = this.prototypes.prune(minExposures, afterSleeps);
+    if (pruned.length === 0) return [];
+    const used = this.prototypes.unitsInUse();
+    // A neuron is released only if nothing else runs on it: no surviving
+    // category, no association, no motor map (synapses that carry something
+    // are not the ones pruned).
+    for (const c of pruned) for (const u of c.units) if (!used.has(u) && !inUse(u)) this.release(u);
+    this.refreshEntrenchment();
+    return pruned.map((c) => c.label);
+  }
+
+  private release(n: number): void {
+    this.tuned[n] = 0;
+    this.winCounts[n] = 0;
+    const offset = n * this.inputCount;
+    for (let i = 0; i < this.inputCount; i++) this.weights[offset + i] *= RELEASE_KEEP;
+    this.onReleased();
+  }
+
+  private onReleased(): void {}
+
   /** Names a code reinstated from memory: the learned colour it overlaps most. */
   matchCategory(units: ArrayLike<number>): { id: number; label: string; overlap: number; exposures: number } | null {
     return this.prototypes.match(units);
@@ -221,5 +256,6 @@ export class ColorCortex extends BrainRegion {
     const tuned = unpackInt32(d.tuned, this.neuronCount);
     if (tuned) this.tuned.set(tuned);
     this.prototypes.deserialize(d.categories);
+    this.refreshEntrenchment();
   }
 }

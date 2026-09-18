@@ -21,10 +21,13 @@
  * Everything here counts in ticks; the brain converts its real-time windows.
  */
 
-export type ActivityKind = 'babble' | 'scribble';
+export type ActivityKind = 'babble' | 'scribble' | 'daydream';
+
+/** Every activity, for iteration. */
+export const ACTIVITY_KINDS: readonly ActivityKind[] = ['babble', 'scribble', 'daydream'];
 
 export interface RewardEvent {
-  kind: 'novelty' | 'progress' | 'external' | 'omission';
+  kind: 'novelty' | 'progress' | 'external' | 'omission' | 'imagination';
   /** The cue in context (`visual:Visual-1`), or `null` when none. */
   key: string | null;
   /** What arrived (novelty bonus, learning progress, praise…), −1..1. */
@@ -85,9 +88,9 @@ export class Motivation {
   /** What the world tends to bring, whatever the cue. */
   private globalValue = 0;
   /** Value of each activity: the learning progress it tends to bring. */
-  readonly activityValues: Record<ActivityKind, number> = { babble: ACTIVITY_INITIAL, scribble: ACTIVITY_INITIAL };
+  readonly activityValues: Record<ActivityKind, number> = { babble: ACTIVITY_INITIAL, scribble: ACTIVITY_INITIAL, daydream: ACTIVITY_INITIAL };
   /** What each activity's map knew after its last experience. */
-  private mapKnowledge: Record<ActivityKind, number | null> = { babble: null, scribble: null };
+  private mapKnowledge: Record<ActivityKind, number | null> = { babble: null, scribble: null, daydream: null };
   /** A cue was perceived: an external reward within the window is credited to it. */
   private pending: { key: string; expected: number; untilTick: number } | null = null;
   /** Born now: boredom and the need for contact grow from zero. */
@@ -180,6 +183,19 @@ export class Motivation {
     return this.record({ kind: 'progress', key: `activity:${kind}`, reward: progress, expected: 0, error: progress, tick });
   }
 
+  /**
+   * An activity brought a reward of its own — an imagining that was new, or
+   * one that later turned out to be true. The activity's value tracks it, as
+   * for the motor maps; the event is the prediction error the reward makes.
+   * A reward of 0 still teaches the activity that it brought nothing.
+   */
+  activityRewarded(kind: ActivityKind, reward: number, tick: number, key: string | null = null): RewardEvent | null {
+    const r = Math.max(0, Math.min(1, reward));
+    this.activityValues[kind] = Math.max(0, Math.min(1, this.activityValues[kind] + ACTIVITY_ALPHA * (r - this.activityValues[kind])));
+    if (r <= 0) return null;
+    return this.record({ kind: 'imagination', key: key ?? `activity:${kind}`, reward: r, expected: 0, error: r, tick });
+  }
+
   /** The reward window of the cue in context closed with nothing: disappointment. */
   resolveOmission(tick: number): RewardEvent | null {
     if (!this.pending || tick <= this.pending.untilTick) return null;
@@ -224,7 +240,7 @@ export class Motivation {
   drives(tick: number): Drives {
     const since = (last: number, tau: number): number => 1 - Math.exp(-Math.max(0, tick - last) / tau);
     return {
-      curiosity: Math.max(0, Math.min(1, Math.max(this.activityValues.babble, this.activityValues.scribble))),
+      curiosity: Math.max(0, Math.min(1, Math.max(...ACTIVITY_KINDS.map((k) => this.activityValues[k])))),
       boredom: since(this.lastRewardTick, this.cfg.boredomTicks),
       contact: since(this.lastVoiceTick, this.cfg.contactTicks),
     };
@@ -273,7 +289,7 @@ export class Motivation {
     this.familiarity = new Map(entries(d.familiarity, 0, 1e6));
     this.globalValue = finite(d.globalValue, -1, 1) ?? 0;
     if (typeof d.activityValues === 'object' && d.activityValues !== null) {
-      for (const kind of ['babble', 'scribble'] as const) {
+      for (const kind of ACTIVITY_KINDS) {
         const v = finite((d.activityValues as Record<string, unknown>)[kind], 0, 1);
         if (v !== null) this.activityValues[kind] = v;
       }

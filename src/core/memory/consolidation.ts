@@ -54,6 +54,12 @@ export interface ConsolidationStats {
   consolidatedLabels: string[];
   /** Memories that were discarded due to weakness */
   prunedLabels: string[];
+  /** REM: chimeras of two episodes completed in CA3 and replayed (generative replay). */
+  dreams?: number;
+  /** REM: what the dreams brought to mind (words, categories), newest last. */
+  dreamed?: string[];
+  /** Perceptual categories pruned this sleep (seen once, never again). */
+  prunedCategories?: string[];
 }
 
 /**

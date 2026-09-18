@@ -28,6 +28,8 @@ export interface PerceptionJob<R> {
   inject: () => void;
   /** Builds the result once propagation has finished. */
   finish: () => R;
+  /** Ticks to run for this job instead of the scheduler's default. */
+  ticks?: number;
 }
 
 export interface SchedulerOptions {
@@ -114,7 +116,7 @@ export class PerceptionScheduler {
     if (!next) return;
     this.running = true;
 
-    let remaining = this.ticksPerJob;
+    let remaining = next.job.ticks ?? this.ticksPerJob;
     const done = (settle: () => void): void => {
       this.running = false;
       settle();

@@ -16,6 +16,8 @@
  * - POST /api/voice         → Switch babbling / vocal imitation ({ babble?, imitate? })
  * - POST /api/hand          → Switch scribbling / drawing ({ scribble?, copy? })
  * - POST /api/feedback      → Teacher's verdict on the last recall ({ positive })
+ * - POST /api/lesson        → Teach: show something with its name / sound, N times
+ * - POST /api/practice      → Let it babble / scribble N times (learns its motor maps)
  * - WS   /ws                → Real-time stream
  *
  * The WebSocket streams state updates at 2 Hz.
@@ -44,6 +46,7 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import { DigitalBrain, type BrainState, type PerceptionResult } from './brain.js';
 import { DEFAULT_BRAIN_CONFIG } from './brain.config.js';
 import { BACKUP_SUFFIX } from './core/persistence/binary-protocol.js';
+import { synthesizeSpectrum } from './core/voice/vocal-tract.js';
 import { PerceptionScheduler, SchedulerBusyError } from './perception-scheduler.js';
 import {
   ClientLimiter,
@@ -57,6 +60,9 @@ import {
   parseImageInput,
   parseFeedbackInput,
   parseHandInput,
+  parseLessonInput,
+  parsePracticeInput,
+  type LessonInput,
   parseModulatorInput,
   parseSampleRate,
   parseSpectrogramInput,
@@ -325,6 +331,105 @@ function perceive(
   });
 }
 
+/** Sends a message to every connected dashboard. */
+function broadcast(type: string, data: unknown): void {
+  if (clients.size === 0) return;
+  const msg = JSON.stringify({ type, data }, replacer);
+  for (const client of clients) {
+    if (client.readyState === 1) client.send(msg);
+  }
+}
+
+// ----------------------------------------------------------------
+// Teaching: lessons and practice
+// ----------------------------------------------------------------
+// A lesson shows something together with its name and/or its sound, a few
+// times, exactly as one would teach an infant — and reports, after every
+// repetition, how much the brain already brought back from memory before that
+// repetition: the learning curve. Practice lets the brain babble or scribble
+// many times in a row; both run through the perception scheduler, so they are
+// fast (ticks in slices) and never block the event loop.
+
+/** Formants of the vowels a lesson can pair with (same vocal tract as the brain's). */
+const LESSON_VOWELS: Record<NonNullable<LessonInput['vowel']>, [number, number]> = {
+  a: [700, 1200], e: [500, 1900], i: [300, 2300], o: [500, 900], u: [350, 800],
+};
+/** Ticks between the parts of one repetition (the first part is complete, and still in mind). */
+const LESSON_STEP_TICKS = 50;
+/** Ticks after a repetition, for the wave to end. */
+const LESSON_REST_TICKS = 200;
+/** Ticks per babble / scribble during practice (the utterance and its way back). */
+const PRACTICE_ROUND_TICKS = 60;
+
+let teaching: string | null = null;
+
+/** Runs `inject`, then `ticks` ticks, through the scheduler. */
+const run = (inject: () => void, ticks: number): Promise<unknown> =>
+  scheduler.submit({ inject, ticks, finish: () => null });
+
+async function runLesson(lesson: LessonInput): Promise<void> {
+  const label = [lesson.image ? 'drawing' : null, lesson.text ? `"${lesson.text}"` : null, lesson.vowel ? `/${lesson.vowel}/` : null]
+    .filter(Boolean).join(' + ');
+  teaching = `lesson: ${label}`;
+  console.log(`🎓 Lesson started: ${label} × ${lesson.repetitions}`);
+  try {
+    for (let rep = 1; rep <= lesson.repetitions; rep++) {
+      if (lesson.image) {
+        const { pixels, width, height } = lesson.image;
+        await run(() => brain.see(pixels, width, height, { propagate: false }), LESSON_STEP_TICKS);
+      }
+      if (lesson.vowel) {
+        const [f1, f2] = LESSON_VOWELS[lesson.vowel];
+        await run(() => brain.hearFrame(synthesizeSpectrum({ f1, f2, amplitude: 0.9 }), 48000, { propagate: false }), LESSON_STEP_TICKS);
+      }
+      if (lesson.text) {
+        const text = lesson.text;
+        await run(() => brain.read(text, { propagate: false }), LESSON_STEP_TICKS);
+      }
+      // What the LAST part brought back from memory — learned from the
+      // repetitions before this one.
+      const recall = brain.getLastRecall();
+      broadcast('lesson', {
+        label,
+        repetition: rep,
+        of: lesson.repetitions,
+        confidence: recall?.confidence ?? 0,
+        confident: recall?.confident ?? false,
+        recalled: recall
+          ? { words: recall.words.map((w) => w.word), visual: recall.visual?.label ?? null, auditory: recall.auditory?.label ?? null }
+          : null,
+        bindings: brain.getState().association?.bindings ?? 0,
+      });
+      await run(() => {}, LESSON_REST_TICKS);
+    }
+  } finally {
+    teaching = null;
+    broadcast('lesson', { label, done: true, bindings: brain.getState().association?.bindings ?? 0 });
+    console.log(`🎓 Lesson finished: ${label}`);
+  }
+}
+
+async function runPractice(rounds: { voice: number; hand: number }): Promise<void> {
+  teaching = 'practice';
+  try {
+    for (const [kind, total] of [['voice', rounds.voice], ['hand', rounds.hand]] as const) {
+      for (let i = 1; i <= total; i++) {
+        await run(() => { if (kind === 'voice') brain.babbleOnce(); else brain.scribbleOnce(); }, PRACTICE_ROUND_TICKS);
+        if (i % 10 === 0 || i === total) broadcast('practice', { kind, done: i, of: total });
+      }
+    }
+  } finally {
+    teaching = null;
+    broadcast('practice', { done: true, voice: brain.getState().voice?.babbles ?? 0, hand: brain.getState().hand?.scribbles ?? 0 });
+  }
+}
+
+/** Starts a lesson or a practice session, one at a time. */
+function startTeaching(job: () => Promise<void>): void {
+  if (teaching) throw new HttpError(409, `Busy: ${teaching}`);
+  job().catch((err) => console.error('❌ Teaching failed:', err));
+}
+
 /**
  * Handles API routes.
  */
@@ -421,6 +526,24 @@ async function handleApiRoute(url: URL, req: http.IncomingMessage, res: http.Ser
     enforceHttpLimit(req, 'modulator');
     const applied = brain.giveFeedback(parseFeedbackInput(await parseJsonBody(req)));
     sendJSON({ ok: true, applied, emotion: brain.feel() });
+    return;
+  }
+
+  // POST /api/lesson — Teach: show something with its name / sound, N times
+  if (url.pathname === '/api/lesson' && req.method === 'POST') {
+    enforceHttpLimit(req, 'text');
+    const lesson = parseLessonInput(await parseJsonBody(req));
+    startTeaching(() => runLesson(lesson));
+    sendJSON({ ok: true, started: 'lesson', repetitions: lesson.repetitions }, 202);
+    return;
+  }
+
+  // POST /api/practice — Let it babble / scribble N times
+  if (url.pathname === '/api/practice' && req.method === 'POST') {
+    enforceHttpLimit(req, 'text');
+    const rounds = parsePracticeInput(await parseJsonBody(req));
+    startTeaching(() => runPractice(rounds));
+    sendJSON({ ok: true, started: 'practice', ...rounds }, 202);
     return;
   }
 
@@ -617,6 +740,18 @@ wss.on('connection', (ws: WebSocket) => {
           else notify('Too much feedback — slow down');
           break;
         }
+        case 'lesson': {
+          const lesson = parseLessonInput(msg.data);
+          if (!limiter.allow('text')) { notify('Too many lessons — slow down'); break; }
+          try { startTeaching(() => runLesson(lesson)); } catch (err) { notify((err as Error).message); }
+          break;
+        }
+        case 'practice': {
+          const rounds = parsePracticeInput(msg.data);
+          if (!limiter.allow('text')) { notify('Too many requests — slow down'); break; }
+          try { startTeaching(() => runPractice(rounds)); } catch (err) { notify((err as Error).message); }
+          break;
+        }
         case 'tick':
           if (limiter.allow('tick')) brain.tick();
           break;
@@ -651,11 +786,8 @@ wss.on('connection', (ws: WebSocket) => {
 const RESPONSE_KINDS = new Set(['vocalization', 'drawing', 'writing']);
 brain.on('response', (event) => {
   const kind = event.data.kind;
-  if (typeof kind !== 'string' || !RESPONSE_KINDS.has(kind) || clients.size === 0) return;
-  const msg = JSON.stringify({ type: kind, data: event.data });
-  for (const client of clients) {
-    if (client.readyState === 1) client.send(msg);
-  }
+  if (typeof kind !== 'string' || !RESPONSE_KINDS.has(kind)) return;
+  broadcast(kind, event.data);
 });
 
 let tickTimer: ReturnType<typeof setInterval>;
@@ -673,13 +805,7 @@ function startBrainLoop(): void {
   // Separate broadcast — less frequent to avoid saturation
   broadcastTimer = setInterval(() => {
     if (clients.size > 0) {
-      const msg = JSON.stringify({ type: 'state', data: dashboardState() }, replacer);
-      
-      for (const client of clients) {
-        if (client.readyState === 1) {
-          client.send(msg);
-        }
-      }
+      broadcast('state', dashboardState());
     }
   }, BROADCAST_INTERVAL_MS);
 
@@ -687,13 +813,7 @@ function startBrainLoop(): void {
   // (Wernicke + Broca + decaying input trace) into a short emotion-framed phrase.
   thoughtTimer = setInterval(() => {
     if (clients.size > 0) {
-      const thought = brain.think();
-      const msg = JSON.stringify({ type: 'thought', data: thought }, replacer);
-      for (const client of clients) {
-        if (client.readyState === 1) {
-          client.send(msg);
-        }
-      }
+      broadcast('thought', brain.think());
     }
   }, THOUGHT_INTERVAL_MS);
 

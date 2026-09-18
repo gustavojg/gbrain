@@ -148,6 +148,56 @@ export function parseFeedbackInput(data: unknown): boolean {
   return positive;
 }
 
+/** A lesson: something to show together with its name and/or its sound, a few times. */
+export interface LessonInput {
+  image?: { pixels: Uint8Array; width: number; height: number };
+  text?: string;
+  vowel?: 'a' | 'e' | 'i' | 'o' | 'u';
+  repetitions: number;
+}
+
+export const MAX_LESSON_REPETITIONS = 10;
+const VOWELS = new Set(['a', 'e', 'i', 'o', 'u']);
+
+/** Validates `{ image?, text?, vowel?, repetitions? }`: at least two things to pair. */
+export function parseLessonInput(data: unknown): LessonInput {
+  const record = asRecord(data);
+  const lesson: LessonInput = { repetitions: 4 };
+  if (record.image !== undefined) lesson.image = parseImageInput(record.image);
+  if (record.text !== undefined) lesson.text = parseTextInput({ text: record.text });
+  if (record.vowel !== undefined) {
+    if (typeof record.vowel !== 'string' || !VOWELS.has(record.vowel)) throw new HttpError(400, 'vowel must be one of a, e, i, o, u');
+    lesson.vowel = record.vowel as LessonInput['vowel'];
+  }
+  if (record.repetitions !== undefined) {
+    const n = record.repetitions;
+    if (typeof n !== 'number' || !Number.isInteger(n) || n < 1 || n > MAX_LESSON_REPETITIONS) {
+      throw new HttpError(400, `repetitions must be an integer between 1 and ${MAX_LESSON_REPETITIONS}`);
+    }
+    lesson.repetitions = n;
+  }
+  const parts = [lesson.image, lesson.text, lesson.vowel].filter((p) => p !== undefined).length;
+  if (parts < 2) throw new HttpError(400, 'A lesson pairs at least two of: image, text, vowel');
+  return lesson;
+}
+
+export const MAX_PRACTICE_ROUNDS = 300;
+
+/** Validates `{ voice?, hand? }`: how many babbles / scribbles to practise. */
+export function parsePracticeInput(data: unknown): { voice: number; hand: number } {
+  const { voice, hand } = asRecord(data);
+  const count = (value: unknown, name: string): number => {
+    if (value === undefined) return 0;
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > MAX_PRACTICE_ROUNDS) {
+      throw new HttpError(400, `${name} must be an integer between 0 and ${MAX_PRACTICE_ROUNDS}`);
+    }
+    return value;
+  };
+  const rounds = { voice: count(voice, 'voice'), hand: count(hand, 'hand') };
+  if (rounds.voice + rounds.hand === 0) throw new HttpError(400, 'Nothing to practise');
+  return rounds;
+}
+
 /** Validates the optional `sampleRate` of an audio frame (Hz); `undefined` if absent. */
 export function parseSampleRate(data: unknown): number | undefined {
   const { sampleRate } = asRecord(data);

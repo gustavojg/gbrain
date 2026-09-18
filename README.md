@@ -90,6 +90,18 @@ Luego abre **http://localhost:3000** para el dashboard. El servidor expone tambi
 npx tsx tests/language-loop.test.ts
 ```
 
+### Enseñarle (modo enseñanza)
+
+En el dashboard, el panel **🎓 Teach** hace de maestro:
+
+1. Dibuja algo en la pizarra y escribe su nombre (y/o elige un sonido /a/…/u/).
+2. Pulsa **Teach**: el cerebro ve y lee (u oye) las dos cosas juntas las veces indicadas, y el panel muestra la **curva de aprendizaje**: cuánto recordaba antes de cada repetición (0 % la primera vez, y creciendo).
+3. Pulsa **Test it**: se le muestra el dibujo solo. En *Perception → Recalls* aparece lo que le trae a la mente; si la voz y la mano están activadas, **dice** el sonido asociado y **escribe** la palabra.
+4. **👍 / 👎** refuerzan o debilitan lo que acaba de recordar.
+5. **Practice** le deja balbucear o garabatear ×100 en unos segundos: así aprende sus mapas motores (necesarios para imitar sonidos y copiar dibujos).
+
+Todo ello va por `POST /api/lesson`, `/api/practice`, `/api/feedback`, `/api/voice` y `/api/hand` (o sus mensajes WebSocket), validados y con límite de frecuencia.
+
 ### Stack tecnológico
 
 TypeScript · Node.js (ESM) · Express-less HTTP nativo + WebSocket (`ws`) · Canvas 2D + WebAudio (dashboard) · Railway (despliegue).
@@ -173,6 +185,18 @@ Then open **http://localhost:3000** for the dashboard. The server also exposes `
 # Run a learning test (example)
 npx tsx tests/language-loop.test.ts
 ```
+
+### Teaching it (teaching mode)
+
+In the dashboard, the **🎓 Teach** panel is the teacher:
+
+1. Draw something on the whiteboard and type its name (and/or pick a sound /a/…/u/).
+2. Press **Teach**: the brain sees and reads (or hears) both together as many times as requested, and the panel shows the **learning curve**: how much it recalled before each repetition (0 % the first time, then growing).
+3. Press **Test it**: it is shown the drawing alone. *Perception → Recalls* shows what comes to its mind; with the voice and the hand on, it **says** the associated sound and **writes** the word.
+4. **👍 / 👎** strengthen or weaken what it has just recalled.
+5. **Practice** lets it babble or scribble ×100 in a few seconds: that is how it learns its motor maps (needed to imitate sounds and copy drawings).
+
+All of it goes through `POST /api/lesson`, `/api/practice`, `/api/feedback`, `/api/voice` and `/api/hand` (or their WebSocket messages), validated and rate-limited.
 
 ### Tech stack
 

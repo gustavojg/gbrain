@@ -32,9 +32,9 @@ const BASE = `http://127.0.0.1:${PORT}`;
 const log = console.log;
 
 const results: Array<[string, boolean]> = [];
-const check = (name: string, ok: boolean): void => {
+const check = (name: string, ok: boolean, detail = ''): void => {
   results.push([name, ok]);
-  log(`   ${ok ? '✅' : '❌'} ${name}`);
+  log(`   ${ok ? '✅' : '❌'} ${name}${detail ? `  (${detail})` : ''}`);
 };
 
 function cleanup(): void {
@@ -145,6 +145,44 @@ log('\n3. LIMITS');
     Array.from({ length: 30 }, () => post('/api/modulator', { type: 'oxytocin', amount: 0.01 })),
   );
   check('flood is rate-limited (429)', flood.some((r) => r.status === 429) && flood.some((r) => r.status === 200));
+}
+
+// ── 3b. TEACHING ────────────────────────────────────────────────────────────
+log('\n3b. TEACHING');
+{
+  // A lesson: the whiteboard cross + the word "cruz", three times; the server
+  // reports the learning curve to every dashboard.
+  const cross = new Array<number>(64 * 64).fill(27);
+  for (let i = 8; i < 56; i++) for (let d = -1; d <= 1; d++) { cross[(32 + d) * 64 + i] = 255; cross[i * 64 + 32 + d] = 255; }
+  const ws = await openSocket();
+  const progress: Array<{ repetition?: number; confidence?: number; done?: boolean }> = [];
+  const practice: Array<{ done?: boolean | number; voice?: number }> = [];
+  ws?.on('message', (raw) => {
+    const msg = JSON.parse(raw.toString()) as { type: string; data: Record<string, unknown> };
+    if (msg.type === 'lesson') progress.push(msg.data as never);
+    if (msg.type === 'practice') practice.push(msg.data as never);
+  });
+
+  const invalid = await post('/api/lesson', { text: 'cruz' });
+  check('a lesson needs at least two things to pair (400)', invalid.status === 400);
+
+  const started = await post('/api/lesson', { image: { pixels: cross, width: 64, height: 64 }, text: 'cruz', repetitions: 3 });
+  const busy = await post('/api/practice', { voice: 5 });
+  check('lesson accepted (202); a second teaching job is refused while it runs (409)', started.status === 202 && busy.status === 409);
+
+  const until = Date.now() + 60_000;
+  while (!progress.some((p) => p.done) && Date.now() < until) await new Promise((r) => setTimeout(r, 200));
+  const curve = progress.filter((p) => p.repetition !== undefined).map((p) => Number(p.confidence));
+  check('the learning curve rises over the repetitions', curve.length === 3 && curve[0] === 0 && curve[2] > curve[1] && curve[1] > 0,
+    `recall before each repetition: ${curve.map((c) => c.toFixed(2)).join(' → ')}`);
+
+  const practised = await post('/api/practice', { voice: 5 });
+  const untilPractice = Date.now() + 60_000;
+  while (!practice.some((p) => p.done === true) && Date.now() < untilPractice) await new Promise((r) => setTimeout(r, 200));
+  const state = (await (await fetch(`${BASE}/api/state`)).json()) as { voice: { babbles: number } };
+  check('practice makes it babble the requested number of times', practised.status === 202 && state.voice.babbles === 5,
+    `babbles=${state.voice.babbles}`);
+  ws?.close();
 }
 
 // ── 4. LIVENESS ─────────────────────────────────────────────────────────────

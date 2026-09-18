@@ -70,6 +70,7 @@ import {
   parseTextInput,
   parseVoiceInput,
   type LimitedKind,
+  parseVoiceContour,
 } from './server-guards.js';
 
 // ================================================================
@@ -507,6 +508,15 @@ async function handleApiRoute(url: URL, req: http.IncomingMessage, res: http.Ser
     return;
   }
 
+  // POST /api/input/voice — Hear the TONE of a voice (envelope + pitch track of one utterance)
+  if (url.pathname === '/api/input/voice' && req.method === 'POST') {
+    enforceHttpLimit(req, 'audio');
+    const contour = parseVoiceContour(await parseJsonBody(req));
+    const appraisal = brain.hearVoice(contour);
+    sendJSON({ ok: true, heard: appraisal !== null, voice: brain.getInnate().lastVoice, emotion: brain.feel() });
+    return;
+  }
+
   // POST /api/modulator — Inject a neuromodulator
   if (url.pathname === '/api/modulator' && req.method === 'POST') {
     enforceHttpLimit(req, 'modulator');
@@ -727,6 +737,12 @@ wss.on('connection', (ws: WebSocket) => {
           submit('audio', 'auditory', () => brain.hearFrame(frame, sampleRate, { propagate: false }), true);
           break;
         }
+        case 'input:voice': {
+          const contour = parseVoiceContour(msg.data);
+          if (limiter.allow('audio')) brain.hearVoice(contour);
+          else notify('Too many voice frames — slow down');
+          break;
+        }
         case 'modulator': {
           const { type, amount } = parseModulatorInput(msg.data);
           if (limiter.allow('modulator')) brain.getModulators().release(type, amount);
@@ -800,6 +816,8 @@ brain.on('response', (event) => {
   if (typeof kind !== 'string' || !RESPONSE_KINDS.has(kind)) return;
   broadcast(kind, event.data);
 });
+// …and what its innate layer reacts to: a tone of voice, a startle, a face, something looming.
+brain.on('affect', (event) => broadcast('affect', event.data));
 
 let tickTimer: ReturnType<typeof setInterval>;
 let broadcastTimer: ReturnType<typeof setInterval>;

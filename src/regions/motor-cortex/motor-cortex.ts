@@ -63,7 +63,7 @@ const DEFAULT_MOTOR_CONFIG: MotorCortexConfig = {
 /** A command issued by the motor cortex, with why it was issued. */
 export interface MotorOutput {
   command: VocalCommand;
-  source: 'babble' | 'imitation' | 'naming';
+  source: 'babble' | 'imitation' | 'naming' | 'call';
   /** For an imitation or a naming: how strongly the sound drove the map (0–1). */
   confidence: number;
 }
@@ -86,6 +86,17 @@ export class MotorCortex extends BrainRegion {
 
   /** Babbles produced so far (for monitoring). */
   babbleCount = 0;
+  /**
+   * Commands learned from, and what the map knows after the last one: the
+   * fraction of its units that have produced a sound and learned what it
+   * sounds like (0..1). Its growth per command is learning progress; it
+   * saturates as the postures repeat — mastery.
+   */
+  learnings = 0;
+  knowledge = 0;
+  private heldTicksLearned = 0;
+  /** Weight from which a (unit, heard unit) pair counts as known. */
+  private static readonly KNOWN_WEIGHT = 0.1;
 
   /** Whether a heard sound that the map knows is repeated aloud. */
   imitate = false;
@@ -213,7 +224,15 @@ export class MotorCortex extends BrainRegion {
       if (heard.length > 0) this.learn(this.held, heard, modulationEffects.learningRateMultiplier ?? 1);
       const output = new Float32Array(this.held.length);
       for (let i = 0; i < output.length; i++) output[i] = this.held[i] > 0.5 ? 1 : 0;
-      if (--this.heldTicks <= 0) this.held = null;
+      if (--this.heldTicks <= 0) {
+        // The command is over: one report of how much the map moved for it.
+        this.held = null;
+        if (this.heldTicksLearned > 0) {
+          this.learnings++;
+          this.knowledge = this.measureKnowledge();
+        }
+        this.heldTicksLearned = 0;
+      }
       this.spikes.set(output);
       return output;
     }
@@ -291,5 +310,18 @@ export class MotorCortex extends BrainRegion {
         else if (w > 0) this.weights[idx] = w * (1 - ltd);
       }
     }
+    if (heard.length > 0) this.heldTicksLearned++;
+  }
+
+  /** Fraction of map units that know what they sound like (some weight to some heard unit). */
+  private measureKnowledge(): number {
+    let known = 0;
+    for (let m = 0; m < this.neuronCount; m++) {
+      const offset = m * this.inputCount;
+      for (let h = 0; h < this.inputCount; h++) {
+        if (this.weights[offset + h] >= MotorCortex.KNOWN_WEIGHT) { known++; break; }
+      }
+    }
+    return known / this.neuronCount;
   }
 }

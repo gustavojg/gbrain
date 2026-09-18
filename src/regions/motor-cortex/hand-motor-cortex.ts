@@ -92,6 +92,13 @@ export class HandMotorCortex extends BrainRegion {
 
   /** Scribbles produced so far (for monitoring). */
   scribbleCount = 0;
+  /**
+   * Drawings learned from, and what the map knows after the last one: the
+   * fraction of retinal channels it has seen lit by its own marks (0..1). Its
+   * growth per drawing is learning progress; it saturates — mastery.
+   */
+  learnings = 0;
+  knowledge = 0;
 
   /** Whether an image it sees (and knows how to make) is copied on the whiteboard. */
   copy = false;
@@ -318,5 +325,9 @@ export class HandMotorCortex extends BrainRegion {
         this.weights[idx] += step * ((pattern[m] > 0 ? 1 : 0) - this.weights[idx]);
       }
     }
+    this.learnings++;
+    let known = 0;
+    for (let i = 0; i < this.inputCount; i++) if (this.channelCount[i] > 0) known++;
+    this.knowledge = known / this.inputCount;
   }
 }

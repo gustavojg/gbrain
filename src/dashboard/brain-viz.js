@@ -519,13 +519,21 @@ const brainCanvas = document.getElementById('brainCanvas');
 const brainCtx = brainCanvas.getContext('2d');
 
 function resizeBrainCanvas() {
-  const rect = brainCanvas.parentElement.getBoundingClientRect();
+  const panel = brainCanvas.parentElement;
   const dpr = window.devicePixelRatio || 1;
-  brainCanvas.width = rect.width * dpr;
-  brainCanvas.height = (rect.height - 80) * dpr;
-  brainCanvas.style.width = `${rect.width}px`;
-  brainCanvas.style.height = `${rect.height - 80}px`;
-  brainCtx.scale(dpr, dpr);
+  const styles = getComputedStyle(panel);
+  const width = panel.clientWidth - parseFloat(styles.paddingLeft) - parseFloat(styles.paddingRight);
+  const legend = document.getElementById('brainLegend');
+  const header = panel.querySelector('.panel-header');
+  const used = (header?.offsetHeight || 0) + (legend?.offsetHeight || 0)
+    + parseFloat(styles.paddingTop) + parseFloat(styles.paddingBottom) + 24;
+  const height = Math.max(160, panel.clientHeight - used);
+  if (width <= 0) return;
+  brainCanvas.width = Math.round(width * dpr);
+  brainCanvas.height = Math.round(height * dpr);
+  brainCanvas.style.width = `${width}px`;
+  brainCanvas.style.height = `${height}px`;
+  brainCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 
 function project3D(x, y, z, cx, cy, scale) {
@@ -798,9 +806,12 @@ function drawEmotionSpace(emotion) {
 
   // Current emotion point
   if (emotion) {
-    // Map valence (-1..1) to x, arousal (0..1) to y (inverted)
-    const ex = cx + emotion.valence * r;
-    const ey = cy - emotion.arousal * r * 0.8 + r * 0.1;
+    // Map valence (-1..1) to x and arousal (0..1, amygdala) to the whole
+    // vertical axis: 0 at the bottom (low arousal), 1 at the top.
+    const valence = Math.max(-1, Math.min(1, Number(emotion.valence) || 0));
+    const arousal = Math.max(0, Math.min(1, Number(emotion.arousal) || 0));
+    const ex = cx + valence * r * 0.9;
+    const ey = cy + (1 - 2 * arousal) * r * 0.9;
 
     // Glow
     const glow = ctx.createRadialGradient(ex, ey, 0, ex, ey, 20);
@@ -912,12 +923,21 @@ function buildLegend() {
 const drawCanvas = document.getElementById('drawCanvas');
 const drawCtx = drawCanvas.getContext('2d');
 let isDrawing = false;
+let lastInk = null;
 
 drawCtx.fillStyle = '#111827';
 drawCtx.fillRect(0, 0, 64, 64);
 
+// Mouse, pen or finger: one code path. `touch-action: none` (styles.css) keeps the
+// page from scrolling under the finger; pointer capture keeps the stroke alive
+// when it leaves the canvas; a fast swipe is interpolated so the 64×64 grid gets a
+// continuous line rather than dots.
 drawCanvas.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0 && e.pointerType === 'mouse') return;
+  e.preventDefault();
   isDrawing = true;
+  lastInk = null;
+  try { drawCanvas.setPointerCapture(e.pointerId); } catch { /* not supported */ }
   drawPixel(e);
 });
 
@@ -925,18 +945,26 @@ drawCanvas.addEventListener('pointermove', (e) => {
   if (isDrawing) drawPixel(e);
 });
 
-drawCanvas.addEventListener('pointerup', () => { isDrawing = false; });
-drawCanvas.addEventListener('pointerleave', () => { isDrawing = false; });
+const endStroke = () => { isDrawing = false; lastInk = null; };
+drawCanvas.addEventListener('pointerup', endStroke);
+drawCanvas.addEventListener('pointercancel', endStroke);
+drawCanvas.addEventListener('lostpointercapture', endStroke);
 
 function drawPixel(e) {
   const rect = drawCanvas.getBoundingClientRect();
-  const scaleX = 64 / rect.width;
-  const scaleY = 64 / rect.height;
-  const x = Math.floor((e.clientX - rect.left) * scaleX);
-  const y = Math.floor((e.clientY - rect.top) * scaleY);
-
+  const x = Math.floor((e.clientX - rect.left) * (64 / rect.width));
+  const y = Math.floor((e.clientY - rect.top) * (64 / rect.height));
   drawCtx.fillStyle = '#f1f5f9';
-  drawCtx.fillRect(x - 1, y - 1, 3, 3);
+  if (lastInk) {
+    const steps = Math.max(Math.abs(x - lastInk.x), Math.abs(y - lastInk.y));
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps;
+      drawCtx.fillRect(Math.round(lastInk.x + (x - lastInk.x) * t) - 1, Math.round(lastInk.y + (y - lastInk.y) * t) - 1, 3, 3);
+    }
+  } else {
+    drawCtx.fillRect(x - 1, y - 1, 3, 3);
+  }
+  lastInk = { x, y };
 }
 
 // ================================================================
@@ -1029,12 +1057,14 @@ document.querySelectorAll('.inject-btn').forEach(btn => {
 
 // Brain canvas rotation
 brainCanvas.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
   isDragging = true;
   dragStart = { x: e.clientX, y: e.clientY };
   autoRotate = false;
+  try { brainCanvas.setPointerCapture(e.pointerId); } catch { /* not supported */ }
 });
 
-window.addEventListener('pointermove', (e) => {
+brainCanvas.addEventListener('pointermove', (e) => {
   if (!isDragging) return;
   const dx = e.clientX - dragStart.x;
   const dy = e.clientY - dragStart.y;
@@ -1043,7 +1073,10 @@ window.addEventListener('pointermove', (e) => {
   dragStart = { x: e.clientX, y: e.clientY };
 });
 
-window.addEventListener('pointerup', () => { isDragging = false; });
+const endDrag = () => { isDragging = false; };
+brainCanvas.addEventListener('pointerup', endDrag);
+brainCanvas.addEventListener('pointercancel', endDrag);
+brainCanvas.addEventListener('lostpointercapture', endDrag);
 
 document.getElementById('toggleRotation')?.addEventListener('click', () => {
   autoRotate = !autoRotate;
@@ -1147,12 +1180,14 @@ function addThought(thought) {
 
 let webcamStream = null;
 let webcamInterval = null;
+let webcamOpening = false;
 
 document.getElementById('toggleWebcam')?.addEventListener('click', async () => {
   const btn = document.getElementById('toggleWebcam');
   const status = document.getElementById('webcamStatus');
   const video = document.getElementById('webcamVideo');
 
+  if (webcamOpening) return;
   if (webcamStream) {
     // Stop
     webcamStream.getTracks().forEach(t => t.stop());
@@ -1165,7 +1200,14 @@ document.getElementById('toggleWebcam')?.addEventListener('click', async () => {
     addLog('info', '📷 Webcam disabled');
     return;
   }
+  if (!navigator.mediaDevices?.getUserMedia) {
+    status.textContent = 'Not available (needs https or localhost)';
+    return;
+  }
 
+  webcamOpening = true;
+  btn.disabled = true;
+  status.textContent = 'Asking for the camera…';
   try {
     webcamStream = await navigator.mediaDevices.getUserMedia({ video: { width: 64, height: 64, facingMode: 'user' } });
     video.srcObject = webcamStream;
@@ -1190,6 +1232,9 @@ document.getElementById('toggleWebcam')?.addEventListener('click', async () => {
   } catch (err) {
     status.textContent = 'Error: ' + err.message;
     addLog('error', '📷 Webcam error: ' + err.message);
+  } finally {
+    webcamOpening = false;
+    btn.disabled = false;
   }
 });
 
@@ -1200,26 +1245,41 @@ document.getElementById('toggleWebcam')?.addEventListener('click', async () => {
 let micStream = null;
 let micAnalyser = null;
 let micInterval = null;
+let micAudioCtx = null;
+let micOpening = false;
 
 document.getElementById('toggleMic')?.addEventListener('click', async () => {
   const btn = document.getElementById('toggleMic');
   const status = document.getElementById('micStatus');
 
+  if (micOpening) return;
   if (micStream) {
     micStream.getTracks().forEach(t => t.stop());
     micStream = null;
     micAnalyser = null;
     clearInterval(micInterval);
     micInterval = null;
+    micAudioCtx?.close().catch(() => {});
+    micAudioCtx = null;
     btn.textContent = '▶ Enable';
     status.textContent = 'Inactive';
     addLog('info', '🎤 Microphone disabled');
     return;
   }
+  if (!navigator.mediaDevices?.getUserMedia) {
+    status.textContent = 'Not available (needs https or localhost)';
+    return;
+  }
 
+  micOpening = true;
+  btn.disabled = true;
+  status.textContent = 'Asking for the microphone…';
   try {
     micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const audioCtx = new AudioContext();
+    const AudioCtor = window.AudioContext || window.webkitAudioContext;
+    const audioCtx = new AudioCtor();
+    micAudioCtx = audioCtx;
+    await audioCtx.resume(); // iOS creates it suspended
     const source = audioCtx.createMediaStreamSource(micStream);
     micAnalyser = audioCtx.createAnalyser();
     micAnalyser.fftSize = 1024; // ~47 Hz per bin at 48 kHz: enough to tell vowels apart
@@ -1271,6 +1331,13 @@ document.getElementById('toggleMic')?.addEventListener('click', async () => {
   } catch (err) {
     status.textContent = 'Error: ' + err.message;
     addLog('error', '🎤 Mic error: ' + err.message);
+    micStream?.getTracks().forEach(t => t.stop());
+    micStream = null;
+    micAudioCtx?.close().catch(() => {});
+    micAudioCtx = null;
+  } finally {
+    micOpening = false;
+    btn.disabled = false;
   }
 });
 
@@ -1576,8 +1643,13 @@ document.getElementById('sleepBtn')?.addEventListener('click', () => {
 // ================================================================
 
 window.addEventListener('resize', resizeBrainCanvas);
+window.addEventListener('orientationchange', () => setTimeout(resizeBrainCanvas, 150));
+if (typeof ResizeObserver !== 'undefined') {
+  new ResizeObserver(() => resizeBrainCanvas()).observe(brainCanvas.parentElement);
+}
 
-// Start
+// Start (the legend goes in first: the canvas takes the height it leaves)
+buildLegend();
 resizeBrainCanvas();
 drawBrain();
 connectWebSocket();

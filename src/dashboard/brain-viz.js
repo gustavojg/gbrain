@@ -294,7 +294,7 @@ function updateMotivationRow(m) {
   what.classList.remove('percept-empty');
   what.innerHTML =
     `curious ${pct(m.drives.curiosity)} · bored ${pct(m.drives.boredom)} · lonely ${pct(m.drives.contact)}` +
-    `<span class="percept-total">babble ${Number(m.activityValues.babble).toFixed(2)} · scribble ${Number(m.activityValues.scribble).toFixed(2)} · daydream ${Number(m.activityValues.daydream ?? 0).toFixed(2)} (worth of each activity)${escapeHtml(last)}</span>`;
+    `<span class="percept-total">babble ${Number(m.activityValues.babble).toFixed(2)} · scribble ${Number(m.activityValues.scribble).toFixed(2)} · daydream ${Number(m.activityValues.daydream ?? 0).toFixed(2)} (worth of each activity) · ${Number(brainState?.habits?.count ?? 0)} habits${escapeHtml(last)}</span>`;
 }
 
 function updateWorkingMemory(slots) {
@@ -1888,7 +1888,9 @@ function showBrainWriting(w) {
   const cue = String(w.cue);
   addLog('info', cue.startsWith('answer:')
     ? `❓ Answers “${w.text.slice(0, 40)}” (the ${cue.slice(7)} of what is in front)`
-    : `✍️ Writes “${w.text.slice(0, 40)}” on seeing ${cue.slice(0, 40)}`);
+    : w.habit === true
+      ? `🔁 Out of habit, writes “${w.text.slice(0, 40)}” on seeing ${cue.slice(0, 40)}`
+      : `✍️ Writes “${w.text.slice(0, 40)}” on seeing ${cue.slice(0, 40)}`);
 }
 
 // ================================================================

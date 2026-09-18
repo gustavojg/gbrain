@@ -77,8 +77,43 @@ export function parseTextInput(data: unknown): string {
 }
 
 /** Validates `{ pixels, width, height }` and returns grayscale bytes. */
-export function parseImageInput(data: unknown): { pixels: Uint8Array; width: number; height: number; rgb?: Uint8Array } {
-  const { pixels, width, height, rgb } = asRecord(data);
+/** A stroke as the dashboard sends it: the points the pen went through, in image pixels, and how long it took. */
+export interface StrokeInput {
+  points: Array<[number, number]>;
+  durationMs?: number;
+}
+const MAX_STROKES = 32;
+const MAX_STROKE_POINTS = 512;
+
+/** Validates optional `strokes: [{ points: [[x, y]…], durationMs? }…]` (image pixel coordinates). */
+function parseStrokes(data: unknown, width: number, height: number): StrokeInput[] | undefined {
+  if (data === undefined) return undefined;
+  if (!Array.isArray(data) || data.length > MAX_STROKES) throw new HttpError(400, `strokes must be an array of at most ${MAX_STROKES}`);
+  const strokes: StrokeInput[] = [];
+  for (const raw of data) {
+    const { points, durationMs } = asRecord(raw);
+    if (!Array.isArray(points) || points.length === 0 || points.length > MAX_STROKE_POINTS) {
+      throw new HttpError(400, `each stroke needs 1–${MAX_STROKE_POINTS} points`);
+    }
+    const out: Array<[number, number]> = [];
+    for (const p of points) {
+      if (!Array.isArray(p) || p.length !== 2 || typeof p[0] !== 'number' || typeof p[1] !== 'number' || !Number.isFinite(p[0]) || !Number.isFinite(p[1])) {
+        throw new HttpError(400, 'stroke points must be [x, y] numbers');
+      }
+      out.push([Math.max(0, Math.min(width - 1, p[0])), Math.max(0, Math.min(height - 1, p[1]))]);
+    }
+    const stroke: StrokeInput = { points: out };
+    if (durationMs !== undefined) {
+      if (typeof durationMs !== 'number' || !Number.isFinite(durationMs) || durationMs < 0) throw new HttpError(400, 'durationMs must be a non-negative number');
+      stroke.durationMs = Math.min(60_000, durationMs);
+    }
+    strokes.push(stroke);
+  }
+  return strokes;
+}
+
+export function parseImageInput(data: unknown): { pixels: Uint8Array; width: number; height: number; rgb?: Uint8Array; strokes?: StrokeInput[] } {
+  const { pixels, width, height, rgb, strokes: rawStrokes } = asRecord(data);
   if (
     typeof width !== 'number' || typeof height !== 'number' ||
     !Number.isInteger(width) || !Number.isInteger(height) ||
@@ -97,7 +132,8 @@ export function parseImageInput(data: unknown): { pixels: Uint8Array; width: num
     }
     out[i] = Math.max(0, Math.min(255, Math.round(v)));
   }
-  if (rgb === undefined) return { pixels: out, width, height };
+  const strokes = parseStrokes(rawStrokes, width, height);
+  if (rgb === undefined) return strokes ? { pixels: out, width, height, strokes } : { pixels: out, width, height };
   // Optional colour: interleaved r, g, b per pixel.
   if (!Array.isArray(rgb) || rgb.length !== width * height * 3) {
     throw new HttpError(400, 'rgb must be an array of length width × height × 3');
@@ -108,7 +144,7 @@ export function parseImageInput(data: unknown): { pixels: Uint8Array; width: num
     if (typeof v !== 'number' || !Number.isFinite(v)) throw new HttpError(400, 'rgb must contain only finite numbers');
     color[i] = Math.max(0, Math.min(255, Math.round(v)));
   }
-  return { pixels: out, width, height, rgb: color };
+  return strokes ? { pixels: out, width, height, rgb: color, strokes } : { pixels: out, width, height, rgb: color };
 }
 
 /** Validates `{ spectrogram }` and returns magnitudes clamped to [0, 1]. */
@@ -161,7 +197,7 @@ export function parseFeedbackInput(data: unknown): boolean {
 
 /** A lesson: something to show together with its name and/or its sound, a few times. */
 export interface LessonInput {
-  image?: { pixels: Uint8Array; width: number; height: number; rgb?: Uint8Array };
+  image?: { pixels: Uint8Array; width: number; height: number; rgb?: Uint8Array; strokes?: StrokeInput[] };
   text?: string;
   vowel?: 'a' | 'e' | 'i' | 'o' | 'u';
   repetitions: number;

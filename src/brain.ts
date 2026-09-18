@@ -56,9 +56,10 @@ import { BrocaArea, type LanguageResponse } from './regions/broca-wernicke/broca
 import { WernickeArea } from './regions/broca-wernicke/wernicke.js';
 import { Lexicon } from './regions/broca-wernicke/lexicon.js';
 import { MotorCortex, type MotorOutput } from './regions/motor-cortex/motor-cortex.js';
-import { synthesizeSpectrum, type VocalCommand } from './core/voice/vocal-tract.js';
+import { synthesizeFrames, UTTERANCE_FRAME_MS, type VocalCommand } from './core/voice/vocal-tract.js';
 import { HandMotorCortex, type HandOutput } from './regions/motor-cortex/hand-motor-cortex.js';
-import { BOARD_SIDE, GRID_SIDE, renderDrawing, type Drawing } from './core/hand/whiteboard.js';
+import { BOARD_SIDE, GRID_SIDE, inkedCells, renderDrawing, type Drawing } from './core/hand/whiteboard.js';
+import type { StrokePath } from './core/hand/strokes.js';
 import { seedSpanishLexicon, encodeSentenceToLexiconSpace, wordToPattern } from './regions/broca-wernicke/spanish-lexicon.js';
 import { seedEnglishLexicon } from './regions/broca-wernicke/english-lexicon.js';
 import * as fs from 'fs';
@@ -219,6 +220,8 @@ export interface HandDrawing {
   gridSide: number;
   /** A scribble (exploration), a copy of what it has just seen, a drawing of what came to mind, or of what it imagined. */
   source: 'scribble' | 'copy' | 'from-memory' | 'imagined';
+  /** The strokes it lays the cells down in, when it knows a gesture for the drawing. */
+  strokes?: StrokePath[];
   confidence: number;
   timestamp: number;
   serial: number;
@@ -320,6 +323,12 @@ export interface PerceptionOptions {
   propagate?: boolean;
   /** Colour of the image, interleaved r, g, b per pixel (`see` only). Without it, the thing has no colour. */
   rgb?: Uint8Array | number[];
+  /**
+   * How the image was drawn, if someone drew it in front of the brain: the
+   * strokes in order, each the points the pen went through (image pixels)
+   * and how long it took. The hand learns the gesture (`see` only).
+   */
+  strokes?: Array<{ points: Array<[number, number]>; durationMs?: number }>;
 }
 
 /** Event emitted by the brain */
@@ -356,6 +365,9 @@ export class DigitalBrain {
   private babbling = false;
   private lastVocalization: Vocalization | null = null;
   private vocalizationSerial = 0;
+  /** Frames of the utterance in progress still to be heard, one per UTTERANCE_FRAME_MS. */
+  private voiceFrames: Float32Array[] = [];
+  private ticksSinceVoiceFrame = 0;
   /** Vocalizations counted as calls for contact. */
   private calls = 0;
   private lastCallTick = Number.MIN_SAFE_INTEGER;
@@ -535,6 +547,23 @@ export class DigitalBrain {
    * SpikeBus).
    */
   private static readonly PRESENTATION_MS = 3000;
+
+  // ── The moving eye ──
+  /**
+   * A scene with several objects is not seen at once: the eye fixates one,
+   * the cortex sees it alone, and a saccade takes the eye to the next
+   * (superior colliculus for where, inhibition of return so that each is
+   * visited once). The pause between fixations lets the cortex close one
+   * presentation before the next begins.
+   */
+  private static readonly SACCADE_GAP_MS = 1200;
+  private static readonly MAX_FIXATIONS = 4;
+  private readonly saccadeGapTicks: number;
+  private fixations: Array<{ rates: Float32Array; colour: Float32Array | null; box: { x: number; y: number; w: number; h: number } }> = [];
+  private fixationIndex = 0;
+  private fixationCount = 0;
+  private ticksSinceGaze = 0;
+  private saccades = 0;
   /** The presentation window in ticks. */
   readonly presentationTicks: number;
 
@@ -714,6 +743,7 @@ export class DigitalBrain {
     }
     this.msPerTick = 1000 / this.config.tickRate;
     this.presentationTicks = this.ticksFor(DigitalBrain.PRESENTATION_MS);
+    this.saccadeGapTicks = this.ticksFor(DigitalBrain.SACCADE_GAP_MS);
     this.perceptionTicks = this.ticksFor(DigitalBrain.PERCEPTION_MS);
     this.associationWindowTicks = this.ticksFor(DigitalBrain.ASSOCIATION_WINDOW_MS);
     this.explorationIntervalTicks = this.ticksFor(DigitalBrain.EXPLORATION_INTERVAL_MS);
@@ -860,6 +890,8 @@ export class DigitalBrain {
       inputCount: DigitalBrain.AUDITORY_NEURONS,
       holdTicks: this.ticksFor(DigitalBrain.VOCAL_HOLD_MS),
       planGapTicks: this.ticksFor(DigitalBrain.PLAN_GAP_MS),
+      // The onset frame of an utterance: what the lips learn from and read.
+      onsetTicks: this.ticksFor(UTTERANCE_FRAME_MS),
     }));
     this.addRegion(new HandMotorCortex({
       inputCount: DigitalBrain.VISUAL_CORTEX_INPUTS,
@@ -963,18 +995,111 @@ export class DigitalBrain {
     this.detectFace(retina);
     this.detectLooming(retina);
 
-    // Send to the thalamus
-    this.injectSensoryInput('visual', rates);
-    // …and, if the image has colour, its colour goes its own way (V4).
-    if (options.rgb && options.rgb.length >= width * height * 3) {
-      const colour = VisualEncoder.encodeColor(options.rgb, width, height);
+    const rgb = options.rgb && options.rgb.length >= width * height * 3 ? options.rgb : null;
+    const colourOf = (px: ArrayLike<number>, w: number, h: number): Float32Array | null => {
+      const colour = VisualEncoder.encodeColor(px, w, h);
       let any = 0;
       for (let i = 0; i < colour.length; i++) any += colour[i];
-      if (any > 0) this.injectSensoryInput('colour', colour);
+      return any > 0 ? colour : null;
+    };
+
+    // Several objects: the eye fixates them one at a time (saccades). The
+    // first now; the rest follow, each once the cortex has closed the last.
+    const objects = this.visualEncoder.segment(pixels, width, height).slice(0, DigitalBrain.MAX_FIXATIONS);
+    this.fixations = [];
+    if (objects.length >= 2) {
+      const fixations = objects.map((box) => {
+        const view = VisualEncoder.fixate(pixels, width, height, box);
+        const viewRgb = rgb ? VisualEncoder.fixate(rgb, width, height, box, 3) : null;
+        return {
+          rates: this.visualEncoder.encodeRates(view.pixels, view.width, view.height),
+          colour: viewRgb ? colourOf(viewRgb.pixels, viewRgb.width, viewRgb.height) : null,
+          box,
+        };
+      });
+      this.fixationCount = fixations.length;
+      this.fixationIndex = 0;
+      this.fixations = fixations.slice(1);
+      this.gaze(fixations[0]);
+      return this.processPerception('visual', options);
+    }
+
+    // Send to the thalamus
+    this.injectSensoryInput('visual', rates);
+    // The hand notes what is in view (a copy is a copy of it) and, if someone
+    // drew it in front of the brain, watches how (the gesture).
+    (this.regions.get('handMotorCortex') as HandMotorCortex | undefined)?.lookingAt(inkedCells(pixels, width, height));
+    if (options.strokes && options.strokes.length > 0) this.watchStrokes(options.strokes, width, height);
+    // …and, if the image has colour, its colour goes its own way (V4).
+    if (rgb) {
+      const colour = colourOf(rgb, width, height);
+      if (colour) this.injectSensoryInput('colour', colour);
     }
 
     // Process several ticks to propagate through the brain
     return this.processPerception('visual', options);
+  }
+
+  /** The strokes of a drawing made in view, as paths of whiteboard cells, for the hand to learn the gesture. */
+  private watchStrokes(strokes: NonNullable<PerceptionOptions['strokes']>, width: number, height: number): void {
+    const hand = this.regions.get('handMotorCortex') as HandMotorCortex | undefined;
+    if (!hand) return;
+    const paths: StrokePath[] = [];
+    for (const stroke of strokes) {
+      const cells: number[] = [];
+      const visit = (x: number, y: number): void => {
+        const col = Math.max(0, Math.min(GRID_SIDE - 1, Math.floor((x * GRID_SIDE) / width)));
+        const row = Math.max(0, Math.min(GRID_SIDE - 1, Math.floor((y * GRID_SIDE) / height)));
+        const cell = row * GRID_SIDE + col;
+        if (cells[cells.length - 1] !== cell) cells.push(cell);
+      };
+      // The pen moves continuously between the points reported: walk the line.
+      let last: [number, number] | null = null;
+      for (const [x, y] of stroke.points) {
+        if (last) {
+          const steps = Math.max(1, Math.ceil(Math.max(Math.abs(x - last[0]), Math.abs(y - last[1]))));
+          for (let i = 1; i <= steps; i++) visit(last[0] + ((x - last[0]) * i) / steps, last[1] + ((y - last[1]) * i) / steps);
+        } else visit(x, y);
+        last = [x, y];
+      }
+      if (cells.length > 0) paths.push({ cells, durationMs: stroke.durationMs ?? 0 });
+    }
+    if (paths.length > 0) hand.observeStrokes(paths);
+  }
+
+  /** The eye lands on an object: the cortex sees it (and its colour) alone. */
+  private gaze(fixation: { rates: Float32Array; colour: Float32Array | null; box: { x: number; y: number; w: number; h: number } }): void {
+    this.fixationIndex++;
+    this.saccades++;
+    this.ticksSinceGaze = 0;
+    this.injectSensoryInput('visual', fixation.rates);
+    if (fixation.colour) this.injectSensoryInput('colour', fixation.colour);
+    this.emitEvent({
+      type: 'affect',
+      timestamp: this.currentTime,
+      data: { kind: 'saccade', index: this.fixationIndex, count: this.fixationCount, box: fixation.box, remaining: this.fixations.length },
+    });
+  }
+
+  /** The rest of an utterance reaches the ear frame by frame, as the mouth moves. */
+  private speakOn(): void {
+    if (this.voiceFrames.length === 0) return;
+    if (++this.ticksSinceVoiceFrame < this.ticksFor(UTTERANCE_FRAME_MS)) return;
+    this.ticksSinceVoiceFrame = 0;
+    const frame = this.voiceFrames.shift() as Float32Array;
+    this.injectSensoryInput('auditory', this.audioEncoder.encodeMagnitudeFrame(frame, 48000, true));
+  }
+
+  /** Saccades pending: after the cortex has closed the current fixation, the eye moves on. */
+  private moveEye(): void {
+    if (this.fixations.length === 0) return;
+    if (this.presentations.has('visual')) {
+      this.ticksSinceGaze = 0;
+      return;
+    }
+    if (++this.ticksSinceGaze < this.saccadeGapTicks) return;
+    const next = this.fixations.shift();
+    if (next) this.gaze(next);
   }
 
   /**
@@ -1466,9 +1591,12 @@ export class DigitalBrain {
     // drawing taught with a vowel got bound to the vowel AND to the brain's
     // own slightly-off repetition of it, and the association split in two.)
     (this.regions.get('auditoryCortex') as AuditoryCortex | undefined)?.suppressNextPercept();
-    const spectrum = synthesizeSpectrum(output.command);
-    const spectrogram = this.audioEncoder.encodeMagnitudeFrame(spectrum, 48000, false);
-    this.injectSensoryInput('auditory', spectrogram);
+    // An utterance unfolds in time: the onset (a murmur, a burst) now, the
+    // vowel a frame later, into the same window of the ear.
+    const frames = synthesizeFrames(output.command);
+    this.injectSensoryInput('auditory', this.audioEncoder.encodeMagnitudeFrame(frames[0], 48000, false));
+    this.voiceFrames = frames.slice(1);
+    this.ticksSinceVoiceFrame = 0;
 
     this.emitEvent({ type: 'response', timestamp: this.currentTime, data: { kind: 'vocalization', ...vocalization } });
     return vocalization;
@@ -1531,6 +1659,7 @@ export class DigitalBrain {
       timestamp: this.currentTime,
       serial: ++this.drawingSerial,
     };
+    if (output.strokes) drawing.strokes = output.strokes;
     this.lastDrawing = drawing;
 
     // Its own drawing is not an object of the world (see `vocalize`): the hand
@@ -2165,6 +2294,8 @@ export class DigitalBrain {
 
     //    Stimuli being presented keep arriving through the thalamus.
     this.relayPresentations(effects);
+    this.moveEye();
+    this.speakOn();
 
     //    The hippocampus stamps the episodes it encodes with the current affect
     //    (emotional episodes are forgotten more slowly).

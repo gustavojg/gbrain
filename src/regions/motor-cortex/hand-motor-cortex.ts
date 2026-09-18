@@ -28,6 +28,7 @@
 import { BrainRegion } from '../../core/brain-region.js';
 import type { ModulationEffects } from '../../core/neuromodulators/modulator-system.js';
 import { GRID_SIDE, centred, type Drawing } from '../../core/hand/whiteboard.js';
+import { StrokeMemory, type StrokePath } from '../../core/hand/strokes.js';
 
 export interface HandMotorConfig {
   /** Retinal channels (dimension of the input). */
@@ -59,6 +60,8 @@ export interface HandOutput {
   source: 'scribble' | 'copy' | 'from-memory' | 'imagined';
   /** For a copy or a drawing from memory: how strongly the image drove the map (0–1). */
   confidence: number;
+  /** How the cells are laid down, when the hand knows a gesture for this drawing: strokes in order, each timed. */
+  strokes?: StrokePath[];
 }
 
 export class HandMotorCortex extends BrainRegion {
@@ -102,6 +105,10 @@ export class HandMotorCortex extends BrainRegion {
 
   /** Whether an image it sees (and knows how to make) is copied on the whiteboard. */
   copy = false;
+  /** Gestures learned by watching someone draw (the cerebellum's part: order and timing). */
+  private readonly gestures = new StrokeMemory();
+  /** The drawing in view (its cells), for a copy to be made the way that drawing was made. */
+  private seenCells: Drawing | null = null;
 
   constructor(config: Partial<HandMotorConfig> = {}) {
     const cfg = { ...DEFAULT_HAND_CONFIG, ...config };
@@ -158,7 +165,40 @@ export class HandMotorCortex extends BrainRegion {
     this.held = pattern;
     this.heldTicks = this.cfg.holdTicks;
     this.resetPlan();
-    return { cells, source, confidence };
+    const output: HandOutput = { cells, source, confidence };
+    // A drawing it has watched being made is made the same way: its cells
+    // laid along the gesture, stroke by stroke. A scribble has no gesture.
+    if (source !== 'scribble') {
+      // A copy follows the gesture of the drawing it is copying (the model
+      // in view); a drawing from memory, the gesture of what it resembles.
+      const plan = this.gestures.planFor(source === 'copy' && this.seenCells ? this.seenCells : cells);
+      if (plan) output.strokes = StrokeMemory.follow(cells, plan);
+    }
+    return output;
+  }
+
+  /** The drawing now in view, as cells: what a copy would be a copy of. */
+  lookingAt(cells: Drawing): void {
+    this.seenCells = cells.length > 0 ? cells : null;
+  }
+
+  /** Someone drew what is in view, stroke by stroke: the gesture is learned (order and timing). */
+  observeStrokes(strokes: readonly StrokePath[]): void {
+    this.gestures.observe(strokes);
+  }
+
+  /** Drawings it knows a gesture for. */
+  get gesturesKnown(): number {
+    return this.gestures.size;
+  }
+
+  override serializeExtra(): unknown {
+    return { gestures: this.gestures.serialize() };
+  }
+
+  override deserializeExtra(data: unknown): void {
+    if (typeof data !== 'object' || data === null) return;
+    this.gestures.deserialize((data as Record<string, unknown>).gestures);
   }
 
   /**

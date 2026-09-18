@@ -293,22 +293,26 @@ const valenceAfter = (text: string): number => {
 // ── 6. NEUROMODULATION (in the running brain) ───────────────────────────────
 console.log('\n6. NEUROMODULATION');
 {
-  // A long sentence: it activates more lexical channels than the thalamic
-  // bottleneck lets through, so widening the gate is observable downstream.
-  const longText =
-    'el perro corre por el parque mientras la musica suena en la noche y los amigos ' +
-    'caminan hacia la casa grande para comer juntos cerca del rio con mucha calma';
+  // A drawing with many lit retinal channels (cells + edges): more than the
+  // thalamic bottleneck lets through, so widening the gate is observable in
+  // how much of it reaches the visual cortex.
+  const square = new Array<number>(64 * 64).fill(27);
+  for (let i = 12; i < 52; i++) {
+    for (const [x, y] of [[i, 12], [i, 51], [12, i], [51, i]]) {
+      for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) square[(y + dy) * 64 + x + dx] = 255;
+    }
+  }
 
   const see = (modulator: ModulatorType | null, amount = 0): { relayedDrive: number; pfcRecruited: number } => {
     const brain = newBrain();
     if (modulator) brain.getModulators().release(modulator, amount);
-    quiet(() => brain.read(longText, { propagate: false }));
+    quiet(() => brain.see(square, 64, 64, { propagate: false }));
     let relayedDrive = 0;
     let pfcRecruited = 0;
     for (let t = 0; t < 120; t++) {
       brain.tick();
       const { regions } = brain.getState();
-      relayedDrive = Math.max(relayedDrive, regions.wernicke.drive);
+      relayedDrive = Math.max(relayedDrive, regions.visualCortex.drive);
       pfcRecruited = Math.max(pfcRecruited, regions.prefrontalCortex.activeNeurons.length);
     }
     return { relayedDrive, pfcRecruited };
@@ -321,7 +325,7 @@ console.log('\n6. NEUROMODULATION');
 
   check('acetylcholine widens the thalamic gate (more signal reaches the cortex)',
     acetylcholine.relayedDrive > baseline.relayedDrive * 1.05,
-    `Wernicke drive ${baseline.relayedDrive.toFixed(3)} → ${acetylcholine.relayedDrive.toFixed(3)}`);
+    `visual drive ${baseline.relayedDrive.toFixed(3)} → ${acetylcholine.relayedDrive.toFixed(3)}`);
   check('serotonin raises the firing threshold (fewer PFC neurons recruited)',
     serotonin.pfcRecruited < baseline.pfcRecruited * 0.95, `${baseline.pfcRecruited} → ${serotonin.pfcRecruited}`);
   check('cortisol raises the firing threshold (fewer PFC neurons recruited)',

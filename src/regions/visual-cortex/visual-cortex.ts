@@ -311,18 +311,20 @@ export class VisualCortex extends BrainRegion {
     // the neuron's weights "point" to the current stimulus, not their raw magnitude.
     // Without this normalization, a few shared synapses saturated to maxW
     // would make A's engram leak into B (false match).
+    // Sparse: only the active channels contribute to the excitation, and each
+    // neuron's weight norm is cached (kept up to date by the STDP below) instead
+    // of being recomputed over every synapse on every tick.
     const score = this.currentBuf;
+    const norm2 = this.weightNorm2();
     for (let nn = 0; nn < n; nn++) {
       const offset = nn * m;
       let exc = 0;
-      let norm2 = 0;
-      for (let i = 0; i < m; i++) {
-        const w = this.weights[offset + i];
-        norm2 += w * w;
-        if (rates[i] > 0) exc += w * rates[i];
+      for (let a = 0; a < activeInputs.length; a++) {
+        const i = activeInputs[a];
+        exc += this.weights[offset + i] * rates[i];
       }
       this.excBuf[nn] = exc;
-      score[nn] = exc / (Math.sqrt(norm2) + 1e-6);
+      score[nn] = exc / (Math.sqrt(norm2[nn]) + 1e-6);
 
       // Vigilance: a neuron already TUNED to some image competes at a
       // disadvantage for an image that does not match what it is tuned to.
@@ -407,8 +409,10 @@ export class VisualCortex extends BrainRegion {
         for (let i = 0; i < m; i++) {
           const pre = this.preTrace[i];
           if (pre > 1e-4) {
-            const dw = lr * cfg.aPlus * pre * (maxW - this.weights[offset + i]);
-            this.weights[offset + i] += dw;
+            const w0 = this.weights[offset + i];
+            const dw = lr * cfg.aPlus * pre * (maxW - w0);
+            this.weights[offset + i] = w0 + dw;
+            norm2[nn] += (2 * w0 + dw) * dw;
             weightChange += Math.abs(dw);
           }
         }
@@ -430,8 +434,10 @@ export class VisualCortex extends BrainRegion {
             const offset = nn * m;
             // Symmetric soft bound: Δw ∝ (w − minW) → depression slows
             // near the floor, avoiding oscillations and giving a stable fixed point.
-            const dw = lr * cfg.aMinus * post * (this.weights[offset + i] - minW);
-            this.weights[offset + i] -= dw;
+            const w0 = this.weights[offset + i];
+            const dw = lr * cfg.aMinus * post * (w0 - minW);
+            this.weights[offset + i] = w0 - dw;
+            norm2[nn] += (dw - 2 * w0) * dw;
             weightChange += Math.abs(dw);
           }
         }
@@ -513,6 +519,8 @@ export class VisualCortex extends BrainRegion {
    */
   private closePresentation(engram: Int32Array | null): void {
     if (!engram) return;
+    // The incremental norm updates drift a little: resynchronize once per presentation.
+    this.norm2Cache = null;
     // Self-generated exploration (a babble, a scribble) is not an object of
     // the world: it founds no category and is not offered for association.
     if (this.suppressPercept) {
@@ -526,6 +534,29 @@ export class VisualCortex extends BrainRegion {
       this.lastEngram = engram;
       this.perceptCount++;
     }
+  }
+
+  /** Squared weight norm per neuron, cached (see `dynamicsTick`). */
+  private norm2Cache: Float32Array | null = null;
+
+  private weightNorm2(): Float32Array {
+    if (!this.norm2Cache) {
+      const m = this.inputCount;
+      const norms = new Float32Array(this.neuronCount);
+      for (let nn = 0; nn < this.neuronCount; nn++) {
+        const offset = nn * m;
+        let sum = 0;
+        for (let i = 0; i < m; i++) sum += this.weights[offset + i] * this.weights[offset + i];
+        norms[nn] = sum;
+      }
+      this.norm2Cache = norms;
+    }
+    return this.norm2Cache;
+  }
+
+  override loadWeights(weights: Float32Array): void {
+    super.loadWeights(weights);
+    this.norm2Cache = null;
   }
 
   /**

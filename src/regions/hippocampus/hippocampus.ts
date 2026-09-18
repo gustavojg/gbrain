@@ -107,6 +107,8 @@ export interface HippocampusConfig {
    * chance overlaps between codes (1–2 units) never reach it.
    */
   joinSupportFraction: number;
+  /** Minimum overlap between an event's own DG code and the episode CA3 completes it to, for it to count as a re-experience. */
+  reexperienceOverlap: number;
   /** Longest stretch of input bound into a single episode (ticks). */
   maxEventTicks: number;
   /**
@@ -129,6 +131,7 @@ const DEFAULT_HIPPO_CONFIG: HippocampusConfig = {
   noveltyOverlapThreshold: 0.9,
   cueDriveFraction: 0.0625,
   joinSupportFraction: 0.15,
+  reexperienceOverlap: 0.3,
   maxEventTicks: 250,
   eventGapTicks: 25,
   dgSeed: 0x1d0c_a3e5,
@@ -693,7 +696,14 @@ export class Hippocampus extends BrainRegion {
       }
     }
 
-    if (best && bestOverlap >= this.cfg.noveltyOverlapThreshold) {
+    // …and the event's own code must resemble that episode too: a novel code
+    // that merely falls into a well-rehearsed basin is a new experience, not a
+    // re-experience.
+    if (
+      best &&
+      bestOverlap >= this.cfg.noveltyOverlapThreshold &&
+      Hippocampus.overlapBinary(code, best.pattern) >= this.cfg.reexperienceOverlap
+    ) {
       best.strength = Math.min(1.0, best.strength + 0.1);
       best.context.timestamp = this.currentTime;
       return this.imprint(best.pattern, this.cfg.learnRate * this.eventLearningGain * 0.5);

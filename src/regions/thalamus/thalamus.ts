@@ -304,6 +304,12 @@ export class Thalamus extends BrainRegion {
     //    (ACh/NE widen the bottleneck and amplify the salient channels).
     const attentionResult = this.processAttention(spikes, modulationEffects);
 
+    // Nothing salient → nothing relayed (and nothing to sort).
+    if (attentionResult.salientIndices.length === 0) {
+      for (let i = 0; i < this.localNeurons.length; i++) this.localNeurons[i].fired = false;
+      return new Float32Array(this.neuronCount);
+    }
+
     // 2. Process through thalamic neurons (sparse computation)
     const localPotentials = new Float32Array(this.neuronCount);
 

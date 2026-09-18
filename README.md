@@ -83,7 +83,7 @@ npm run build
 npm start
 ```
 
-Luego abre **http://localhost:3000** para el dashboard 3D. El servidor expone también `GET /api/state` (estado del cerebro) y un WebSocket para streaming en vivo.
+Luego abre **http://localhost:3000** para el dashboard. El servidor expone también `GET /api/state` (estado del cerebro) y un WebSocket para streaming en vivo. El cerebro avanza 10 ticks por segundo; `BRAIN_SPEED=10` lo hace vivir 10× más deprisa (útil para sesiones de balbuceo/garabateo, no para enseñarle en vivo).
 
 ```bash
 # Ejecutar un test de aprendizaje (ejemplo)
@@ -167,7 +167,7 @@ npm run build
 npm start
 ```
 
-Then open **http://localhost:3000** for the 3D dashboard. The server also exposes `GET /api/state` (brain state) and a WebSocket for live streaming.
+Then open **http://localhost:3000** for the dashboard. The server also exposes `GET /api/state` (brain state) and a WebSocket for live streaming. The brain advances 10 ticks per second; `BRAIN_SPEED=10` makes it live 10× faster (useful for babbling/scribbling sessions, not for interactive teaching).
 
 ```bash
 # Run a learning test (example)

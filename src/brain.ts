@@ -548,10 +548,12 @@ export class DigitalBrain {
     // Total: ~10K neurons (vs 50K before) → smooth performance
     // The attentional bottleneck must be NARROWER than a typical stimulus, or
     // attention never selects anything: a sentence activates ~90 lexical
-    // channels and an image ~50 retinal ones, so a gate of 100 let everything
-    // through and ACh/NE had nothing to widen. At 40 the gate passes the ~55
-    // most salient channels at baseline modulation and ~67 under high ACh.
-    this.addRegion(new Thalamus({ neuronCount: 500, totalInputSize: 500, bottleneckSize: 40 }));
+    // channels and a simple drawing ~90 retinal ones (cells + edges), so a gate
+    // of 100 let everything through and ACh/NE had nothing to widen. At 60 the
+    // gate passes the ~83 most salient channels at baseline modulation and
+    // ~100 under high ACh — narrower than a stimulus, wide enough for a
+    // drawing to be seen roughly whole.
+    this.addRegion(new Thalamus({ neuronCount: 500, totalInputSize: 500, bottleneckSize: 60 }));
     this.addRegion(new VisualCortex({ neuronCount: 2000, inputCount: DigitalBrain.VISUAL_CORTEX_INPUTS }));
     this.addRegion(new AuditoryCortex({
       neuronCount: DigitalBrain.AUDITORY_NEURONS,
@@ -918,10 +920,12 @@ export class DigitalBrain {
     this.lastVocalization = vocalization;
     this.ticksSinceVocalization = 0;
 
-    // A babble is exploration, not a sound of the world (see `draw`).
-    if (output.source === 'babble') {
-      (this.regions.get('auditoryCortex') as AuditoryCortex | undefined)?.suppressNextPercept();
-    }
+    // Its own voice is not a sound of the world: the auditory cortex learns
+    // from it (that is how the motor map is built) but it founds no category
+    // and is bound to nothing. (When an imitation counted as a percept, a
+    // drawing taught with a vowel got bound to the vowel AND to the brain's
+    // own slightly-off repetition of it, and the association split in two.)
+    (this.regions.get('auditoryCortex') as AuditoryCortex | undefined)?.suppressNextPercept();
     const spectrum = synthesizeSpectrum(output.command);
     const spectrogram = this.audioEncoder.encodeMagnitudeFrame(spectrum, 48000, false);
     this.injectSensoryInput('auditory', spectrogram);
@@ -1003,11 +1007,9 @@ export class DigitalBrain {
     this.lastDrawing = drawing;
     this.ticksSinceDrawing = 0;
 
-    // A scribble is exploration, not an object of the world: the visual cortex
-    // learns from it but it founds no category and is not bound to anything.
-    if (output.source === 'scribble') {
-      (this.regions.get('visualCortex') as VisualCortex | undefined)?.suppressNextPercept();
-    }
+    // Its own drawing is not an object of the world (see `vocalize`): the hand
+    // learns from it, but it founds no category and is not bound to anything.
+    (this.regions.get('visualCortex') as VisualCortex | undefined)?.suppressNextPercept();
     const rates = this.visualEncoder.encodeRates(renderDrawing(output.cells), BOARD_SIDE, BOARD_SIDE);
     this.injectSensoryInput('visual', rates);
 
@@ -1137,15 +1139,17 @@ export class DigitalBrain {
     }
     const auditory = this.regions.get('auditoryCortex') as AuditoryCortex | undefined;
     if (result.recalled.auditory && auditory) {
+      // Sound engrams are tiny (3 neurons) and drift a little between
+      // hearings, so the reinstated units are matched leniently to name the
+      // category; saying the sound does not depend on the name at all — the
+      // motor map is driven by the units themselves.
       const units = topUnits(result.recalled.auditory.pattern, 3);
       const match = auditory.matchCategory(units);
-      if (match && match.overlap >= 0.5) {
-        recall.auditory = { label: match.label, overlap: match.overlap };
-        // The sound that comes to mind is said aloud — if the voice is on and
-        // the motor map knows how to make it. (A heard sound is already
-        // handled by imitation; this is for what it SEES or READS.)
-        if (confident && modality !== 'auditory') this.sayImaginedSound(units);
-      }
+      if (match && match.overlap >= 0.2) recall.auditory = { label: match.label, overlap: match.overlap };
+      // The sound that comes to mind is said aloud — if the voice is on and
+      // the motor map knows how to make it. (A heard sound is already
+      // handled by imitation; this is for what it SEES or READS.)
+      if (confident && modality !== 'auditory') this.sayImaginedSound(units);
     }
 
     this.lastRecallUnits = result.units;

@@ -28,6 +28,7 @@
  * Environment:
  * - PORT                 HTTP port (default 3000)
  * - BRAIN_STATE_PATH     Where the learning is persisted
+ * - BRAIN_SPEED          Simulation speed, ticks per 100 ms (default 1; see below)
  * - BRAIN_ADMIN_TOKEN    Bearer token for /api/save and /api/tick. Without it
  *                        those endpoints only accept loopback connections.
  * - ALLOWED_ORIGINS      Comma-separated extra origins allowed to drive the
@@ -40,7 +41,7 @@ import { readFileSync, existsSync, statSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { DigitalBrain, type PerceptionResult } from './brain.js';
+import { DigitalBrain, type BrainState, type PerceptionResult } from './brain.js';
 import { DEFAULT_BRAIN_CONFIG } from './brain.config.js';
 import { BACKUP_SUFFIX } from './core/persistence/binary-protocol.js';
 import { PerceptionScheduler, SchedulerBusyError } from './perception-scheduler.js';
@@ -74,6 +75,14 @@ const PORT = parseInt(process.env.PORT || '3000', 10);
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DASHBOARD_DIR = path.resolve(SERVER_DIR, 'dashboard');
 const TICK_INTERVAL_MS = 100; // 10 Hz brain tick
+/**
+ * Simulation speed: brain ticks per tick interval (BRAIN_SPEED, 1–20). Above 1
+ * the brain lives faster than the clock on the wall — babbling and scribbling
+ * sessions finish in minutes instead of hours — but everything measured in
+ * ticks (how long a percept stays in mind to be bound with the next one, ~30 s
+ * at speed 1) shrinks accordingly, so keep 1 for interactive teaching.
+ */
+const BRAIN_SPEED = Math.max(1, Math.min(20, Math.round(Number(process.env.BRAIN_SPEED) || 1)));
 const BROADCAST_INTERVAL_MS = 500; // 2 Hz dashboard update (lighter)
 const THOUGHT_INTERVAL_MS = 1200; // ~0.8 Hz live "thought" stream
 const AUTOSAVE_INTERVAL_MS = 5 * 60_000; // Save the learning every 5 min
@@ -121,7 +130,7 @@ console.log(`\n🌐 Starting Digital Brain server...\n`);
 const brain = new DigitalBrain({
   memory: {
     ...DEFAULT_BRAIN_CONFIG.memory,
-    consolidationIntervalMs: (SLEEP_INTERVAL_MS / TICK_INTERVAL_MS) * DEFAULT_BRAIN_CONFIG.snn.dt,
+    consolidationIntervalMs: (SLEEP_INTERVAL_MS / TICK_INTERVAL_MS) * BRAIN_SPEED * DEFAULT_BRAIN_CONFIG.snn.dt,
   },
 });
 
@@ -473,6 +482,23 @@ function parseBody(req: http.IncomingMessage): Promise<string> {
 }
 
 /**
+ * The brain state as the dashboard needs it: without the per-neuron spike
+ * vectors of every region (10 regions × up to 3,000 floats, 2 × per second),
+ * which no panel reads — they stay in `/api/state` for programmatic use.
+ */
+function dashboardState(): Omit<BrainState, 'regions'> & {
+  regions: Record<string, Omit<BrainState['regions'][string], 'outputSpikes' | 'activeNeurons'> & { activeCount: number }>;
+} {
+  const state = brain.getState();
+  const regions: Record<string, Omit<BrainState['regions'][string], 'outputSpikes' | 'activeNeurons'> & { activeCount: number }> = {};
+  for (const [id, activity] of Object.entries(state.regions)) {
+    const { outputSpikes: _spikes, activeNeurons, ...rest } = activity;
+    regions[id] = { ...rest, activeCount: activeNeurons.length };
+  }
+  return { ...state, regions };
+}
+
+/**
  * JSON replacer for Float32Array.
  */
 function replacer(_key: string, value: unknown): unknown {
@@ -543,10 +569,7 @@ wss.on('connection', (ws: WebSocket) => {
   };
 
   // Send initial state
-  ws.send(JSON.stringify({
-    type: 'init',
-    data: brain.getState(),
-  }, replacer));
+  ws.send(JSON.stringify({ type: 'init', data: dashboardState() }, replacer));
 
   // Handle messages from the client
   ws.on('message', (message: Buffer) => {
@@ -644,14 +667,13 @@ let limiterSweepTimer: ReturnType<typeof setInterval>;
 function startBrainLoop(): void {
   // Brain tick — processes neurons (fast, no I/O)
   tickTimer = setInterval(() => {
-    brain.tick();
+    for (let i = 0; i < BRAIN_SPEED; i++) brain.tick();
   }, TICK_INTERVAL_MS);
 
   // Separate broadcast — less frequent to avoid saturation
   broadcastTimer = setInterval(() => {
     if (clients.size > 0) {
-      const state = brain.getState();
-      const msg = JSON.stringify({ type: 'state', data: state }, replacer);
+      const msg = JSON.stringify({ type: 'state', data: dashboardState() }, replacer);
       
       for (const client of clients) {
         if (client.readyState === 1) {

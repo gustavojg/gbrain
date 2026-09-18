@@ -252,11 +252,18 @@ export class WernickeArea extends BrainRegion {
     const activations = new Float32Array(this.neuronCount);
     const inputLen = Math.min(spikes.length, this.inputCount);
 
+    // Sparse integration: only the channels that carry a spike contribute
+    // (at rest none does, and a sentence lights ~10% of them), so the cost is
+    // neurons × active inputs instead of neurons × all inputs.
+    const active: number[] = [];
+    for (let j = 0; j < inputLen; j++) if (spikes[j] !== 0) active.push(j);
+
     for (let n = 0; n < this.neuronCount; n++) {
       const baseOffset = n * this.inputCount;
       let sum = 0;
 
-      for (let j = 0; j < inputLen; j++) {
+      for (let a = 0; a < active.length; a++) {
+        const j = active[a];
         sum += this.weights[baseOffset + j] * spikes[j];
       }
 

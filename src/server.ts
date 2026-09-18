@@ -30,7 +30,8 @@
  * Environment:
  * - PORT                 HTTP port (default 3000)
  * - BRAIN_STATE_PATH     Where the learning is persisted
- * - BRAIN_SPEED          Simulation speed, ticks per 100 ms (default 1; see below)
+ * - BRAIN_TICK_HZ        Ticks per second the brain is driven at (default 10, up to 100)
+ * - BRAIN_SPEED          Simulation speed, ticks per timer interval (default 1; see below)
  * - BRAIN_ADMIN_TOKEN    Bearer token for /api/save and /api/tick. Without it
  *                        those endpoints only accept loopback connections.
  * - ALLOWED_ORIGINS      Comma-separated extra origins allowed to drive the
@@ -80,9 +81,18 @@ const PORT = parseInt(process.env.PORT || '3000', 10);
 // also makes it robust on Node 16/18 (otherwise DASHBOARD_DIR falls back to cwd and 404s).
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DASHBOARD_DIR = path.resolve(SERVER_DIR, 'dashboard');
-const TICK_INTERVAL_MS = 100; // 10 Hz brain tick
 /**
- * Simulation speed: brain ticks per tick interval (BRAIN_SPEED, 1–20). Above 1
+ * Tick rate (BRAIN_TICK_HZ, 1–100; default 10). Everything on a human timescale
+ * (how long a stimulus stays in view, how long a percept waits to be bound with
+ * the next, the pause between babbles) is defined in real milliseconds inside
+ * the brain and converted to ticks with this rate, so raising it does not
+ * change what the brain does per second of wall clock — only how much neural
+ * time (dt per tick) it lives through in that second.
+ */
+const BRAIN_TICK_HZ = Math.max(1, Math.min(100, Math.round(Number(process.env.BRAIN_TICK_HZ) || 10)));
+const TICK_INTERVAL_MS = Math.max(10, Math.round(1000 / BRAIN_TICK_HZ));
+/**
+ * Simulation speed: brain ticks per timer interval (BRAIN_SPEED, 1–20). Above 1
  * the brain lives faster than the clock on the wall — babbling and scribbling
  * sessions finish in minutes instead of hours — but everything measured in
  * ticks (how long a percept stays in mind to be bound with the next one, ~30 s
@@ -127,13 +137,14 @@ const MIME_TYPES: Record<string, string> = {
 // INITIALIZATION
 // ================================================================
 
-console.log(`\n🌐 Starting Digital Brain server...\n`);
+console.log(`\n🌐 Starting Digital Brain server (${(1000 / TICK_INTERVAL_MS).toFixed(0)} Hz × speed ${BRAIN_SPEED})...\n`);
 
 // Create the brain. Simulated time advances `dt` ms per tick and the server
 // ticks every TICK_INTERVAL_MS, so the consolidation interval (simulated ms)
 // is scaled to make the brain sleep every SLEEP_INTERVAL_MS of REAL time —
 // unscaled, the default "5 minutes" would come around every ~8 hours.
 const brain = new DigitalBrain({
+  tickRate: 1000 / TICK_INTERVAL_MS,
   memory: {
     ...DEFAULT_BRAIN_CONFIG.memory,
     consolidationIntervalMs: (SLEEP_INTERVAL_MS / TICK_INTERVAL_MS) * BRAIN_SPEED * DEFAULT_BRAIN_CONFIG.snn.dt,
@@ -142,7 +153,7 @@ const brain = new DigitalBrain({
 
 // Perceptions are propagated in slices so the event loop is never blocked.
 const scheduler = new PerceptionScheduler(() => brain.tick(), {
-  ticksPerJob: DigitalBrain.PERCEPTION_TICKS,
+  ticksPerJob: brain.perceptionTicks,
 });
 
 // Restore previous learning if it exists (or its backup, if a save was interrupted)
@@ -354,12 +365,12 @@ function broadcast(type: string, data: unknown): void {
 const LESSON_VOWELS: Record<NonNullable<LessonInput['vowel']>, [number, number]> = {
   a: [700, 1200], e: [500, 1900], i: [300, 2300], o: [500, 900], u: [350, 800],
 };
-/** Ticks between the parts of one repetition (the first part is complete, and still in mind). */
-const LESSON_STEP_TICKS = 50;
-/** Ticks after a repetition, for the wave to end. */
-const LESSON_REST_TICKS = 200;
-/** Ticks per babble / scribble during practice (the utterance and its way back). */
-const PRACTICE_ROUND_TICKS = 60;
+/** Between the parts of one repetition (the first part is complete, and still in mind). */
+const LESSON_STEP_TICKS = brain.ticksFor(5000);
+/** After a repetition, for the wave to end. */
+const LESSON_REST_TICKS = brain.ticksFor(20_000);
+/** Per babble / scribble during practice (the utterance and its way back). */
+const PRACTICE_ROUND_TICKS = brain.ticksFor(6000);
 
 let teaching: string | null = null;
 

@@ -251,8 +251,9 @@ export class DigitalBrain {
   private lastVocalization: Vocalization | null = null;
   private vocalizationSerial = 0;
   private ticksSinceVocalization = 0;
-  /** Pause between spontaneous babbles (ticks): the utterance, its echo in the brain, a breath. */
-  private static readonly BABBLE_INTERVAL_TICKS = 70;
+  /** Pause between spontaneous babbles (real ms): the utterance, its echo in the brain, a breath. */
+  private static readonly BABBLE_INTERVAL_MS = 7000;
+  private readonly babbleIntervalTicks: number;
   /** Rendered length of a vocalization (ms of real time). */
   private static readonly VOCALIZATION_MS = 350;
 
@@ -261,8 +262,9 @@ export class DigitalBrain {
   private lastDrawing: HandDrawing | null = null;
   private drawingSerial = 0;
   private ticksSinceDrawing = 0;
-  /** Pause between spontaneous scribbles (ticks). */
-  private static readonly SCRIBBLE_INTERVAL_TICKS = 75;
+  /** Pause between spontaneous scribbles (real ms). */
+  private static readonly SCRIBBLE_INTERVAL_MS = 7500;
+  private readonly scribbleIntervalTicks: number;
 
   // ── Cross-modal association (learning what goes with what) ──
   private associations = new AssociationMemory();
@@ -281,11 +283,12 @@ export class DigitalBrain {
   private recalledLexicalPattern: Float32Array | null = null;
   private ticksSinceRecall: number = Number.MAX_SAFE_INTEGER;
   /**
-   * How long (ticks) a percept stays available to be bound with the next one. At the
-   * server's pace this spans the ~20–30 s it takes a person to show something
-   * and then name it.
+   * How long (real ms) a percept stays available to be bound with the next one:
+   * the ~20–30 s it takes a person to show something and then name it.
    */
-  associationWindowTicks = 300;
+  private static readonly ASSOCIATION_WINDOW_MS = 30_000;
+  /** The association window in ticks (settable: tests shorten it). */
+  associationWindowTicks: number;
   /**
    * Confidence from which a recall is acted upon (thought, spoken). One pairing
    * leaves an association at 25%; it takes a repetition to cross this — the
@@ -300,15 +303,18 @@ export class DigitalBrain {
   /** Stimuli currently held by sensory persistence, one per modality. */
   private presentations: Map<SensoryModality, { signal: Float32Array; ticksLeft: number }> = new Map();
   /**
-   * Ticks a stimulus stays available after it arrives (sensory persistence).
-   * Bounded by what one pathway can carry without adapting (see SpikeBus).
+   * How long (real ms) a stimulus stays available after it arrives (sensory
+   * persistence). Bounded by what one pathway can carry without adapting (see
+   * SpikeBus).
    */
-  static readonly PRESENTATION_TICKS = 30;
+  private static readonly PRESENTATION_MS = 3000;
+  /** The presentation window in ticks. */
+  readonly presentationTicks: number;
 
   /** Slow-decaying peak of each region's drive (what the dashboard bars show). */
   private drivePeaks: Map<string, number> = new Map();
-  /** Per-tick decay of the held peak (≈ 1 s at the server's 10 Hz tick). */
-  private static readonly DRIVE_PEAK_DECAY = 0.9;
+  /** Per-tick decay of the held peak: 0.9 per 100 ms (≈ 1 s), whatever the tick rate. */
+  private readonly drivePeakDecay: number;
 
   /** "from->to" of the connectome projections that modulate instead of drive. */
   private modulatoryPathways: Set<string> = new Set();
@@ -340,12 +346,33 @@ export class DigitalBrain {
   private static readonly LEARN_THRESHOLD = 3;
 
   /**
-   * Ticks run inline for a perception: the presentation window plus the first
-   * stretch of its propagation through the connectome. The tail of the wave
-   * (and the event boundary that encodes the episode) plays out on the
+   * Real ms run inline for a perception: the presentation window plus the
+   * first stretch of its propagation through the connectome. The tail of the
+   * wave (and the event boundary that encodes the episode) plays out on the
    * following regular ticks.
    */
-  static readonly PERCEPTION_TICKS = 50;
+  private static readonly PERCEPTION_MS = 5000;
+  /** The perception in ticks (what the server's scheduler runs per stimulus). */
+  readonly perceptionTicks: number;
+
+  /** Decay time (real ms) of the trace of what was last read or recalled, in `think()`. */
+  private static readonly THOUGHT_TRACE_MS = 5000;
+  private readonly thoughtTraceTicks: number;
+
+  // ── Human-timescale intervals of the regions (real ms) ──
+  /** A vocal command is held for the utterance plus the time its sound takes to come back. */
+  private static readonly VOCAL_HOLD_MS = 5000;
+  /** A hand command is held while the drawing stays in view and its image comes back. */
+  private static readonly HAND_HOLD_MS = 5500;
+  /** Silence / blank that ends a heard sound or a seen image (then the imitation or copy is issued). */
+  private static readonly PLAN_GAP_MS = 1000;
+  /** Longest stretch of input the hippocampus binds into one episode. */
+  private static readonly EPISODE_MAX_MS = 25_000;
+  /** Silence that closes an episode (event boundary). */
+  private static readonly EPISODE_GAP_MS = 2500;
+
+  /** Real milliseconds per tick (1000 / tickRate). */
+  readonly msPerTick: number;
 
   /** Cortical target of the thalamic relay, per modality (nodes of the connectome). */
   private static readonly THALAMIC_RELAY: Record<SensoryModality, readonly string[]> = {
@@ -453,6 +480,17 @@ export class DigitalBrain {
 
   constructor(config: Partial<BrainConfiguration> = {}) {
     this.config = { ...DEFAULT_BRAIN_CONFIG, ...config };
+    if (!(this.config.tickRate > 0) || !Number.isFinite(this.config.tickRate)) {
+      throw new Error(`tickRate must be a positive number of ticks per second (got ${this.config.tickRate})`);
+    }
+    this.msPerTick = 1000 / this.config.tickRate;
+    this.presentationTicks = this.ticksFor(DigitalBrain.PRESENTATION_MS);
+    this.perceptionTicks = this.ticksFor(DigitalBrain.PERCEPTION_MS);
+    this.associationWindowTicks = this.ticksFor(DigitalBrain.ASSOCIATION_WINDOW_MS);
+    this.babbleIntervalTicks = this.ticksFor(DigitalBrain.BABBLE_INTERVAL_MS);
+    this.scribbleIntervalTicks = this.ticksFor(DigitalBrain.SCRIBBLE_INTERVAL_MS);
+    this.thoughtTraceTicks = this.ticksFor(DigitalBrain.THOUGHT_TRACE_MS);
+    this.drivePeakDecay = Math.pow(0.9, this.msPerTick / 100);
 
     console.log(`\n🧠 ═══════════════════════════════════════════`);
     console.log(`   DIGITAL BRAIN — Initializing...`);
@@ -516,8 +554,13 @@ export class DigitalBrain {
     this.setupConnectome();
 
     console.log(`✅ Brain initialized successfully.`);
-    console.log(`   Tick rate: ${this.config.tickRate} Hz`);
+    console.log(`   Tick rate: ${this.config.tickRate} Hz (a stimulus stays ${this.presentationTicks} ticks, a percept waits ${this.associationWindowTicks})`);
     console.log(`   Consolidation every: ${this.config.memory.consolidationIntervalMs / 1000}s\n`);
+  }
+
+  /** Ticks that span `ms` of real time at this brain's tick rate (at least 1). */
+  ticksFor(ms: number): number {
+    return Math.max(1, Math.round(ms / this.msPerTick));
   }
 
   /**
@@ -561,15 +604,26 @@ export class DigitalBrain {
       numBands: DigitalBrain.COCHLEAR_BANDS,
       numFrames: DigitalBrain.SPECTROGRAM_FRAMES,
     }));
-    this.addRegion(new Hippocampus(1000, 1000));
+    this.addRegion(new Hippocampus(1000, 1000, 10000, {
+      maxEventTicks: this.ticksFor(DigitalBrain.EPISODE_MAX_MS),
+      eventGapTicks: this.ticksFor(DigitalBrain.EPISODE_GAP_MS),
+    }));
     const amygdala = new Amygdala(500, 500);
     for (const [word, emotion] of AFFECTIVE_LEXICON) {
       amygdala.conditionSemantic(wordToPattern(word, this.lexicon.dimensions), emotion);
     }
     this.addRegion(amygdala);
     this.addRegion(new PrefrontalCortex(3000, 1000));
-    this.addRegion(new MotorCortex({ inputCount: DigitalBrain.AUDITORY_NEURONS }));
-    this.addRegion(new HandMotorCortex({ inputCount: DigitalBrain.VISUAL_CORTEX_INPUTS }));
+    this.addRegion(new MotorCortex({
+      inputCount: DigitalBrain.AUDITORY_NEURONS,
+      holdTicks: this.ticksFor(DigitalBrain.VOCAL_HOLD_MS),
+      planGapTicks: this.ticksFor(DigitalBrain.PLAN_GAP_MS),
+    }));
+    this.addRegion(new HandMotorCortex({
+      inputCount: DigitalBrain.VISUAL_CORTEX_INPUTS,
+      holdTicks: this.ticksFor(DigitalBrain.HAND_HOLD_MS),
+      planGapTicks: this.ticksFor(DigitalBrain.PLAN_GAP_MS),
+    }));
     this.addRegion(new BrocaArea(this.lexicon, 1000, 1000));
     this.addRegion(new WernickeArea(this.lexicon, 1000, 1000));
 
@@ -896,7 +950,7 @@ export class DigitalBrain {
       this.babbling &&
       !motor.vocalizing &&
       !this.presentations.has('auditory') &&
-      this.ticksSinceVocalization >= DigitalBrain.BABBLE_INTERVAL_TICKS
+      this.ticksSinceVocalization >= this.babbleIntervalTicks
     ) {
       this.vocalize(motor.babble());
     }
@@ -983,7 +1037,7 @@ export class DigitalBrain {
       this.scribbling &&
       !hand.drawing &&
       !this.presentations.has('visual') &&
-      this.ticksSinceDrawing >= DigitalBrain.SCRIBBLE_INTERVAL_TICKS
+      this.ticksSinceDrawing >= this.scribbleIntervalTicks
     ) {
       this.draw(hand.scribble());
     }
@@ -1391,12 +1445,12 @@ export class DigitalBrain {
     // Decaying trace of the last thing it read: recent perception clearly
     // dominates the thought right after reading (so distinct inputs yield
     // distinct thoughts), then fades back toward the spontaneous activity of the
-    // language areas (exponential decay over ~50 ticks ≈ 5 s at the 10 Hz server tick).
-    const traceWeight = 6.0 * Math.exp(-this.ticksSinceRead / 50);
+    // language areas (exponential decay over ~5 s of real time).
+    const traceWeight = 6.0 * Math.exp(-this.ticksSinceRead / this.thoughtTraceTicks);
     if (traceWeight > 0.01) addInto(this.lastLinguisticIntention ?? undefined, traceWeight);
     // …and of what a percept just brought back from memory: seeing the ball
     // brings the word "ball" to mind.
-    const recallWeight = 6.0 * Math.exp(-this.ticksSinceRecall / 50);
+    const recallWeight = 6.0 * Math.exp(-this.ticksSinceRecall / this.thoughtTraceTicks);
     if (recallWeight > 0.01) addInto(this.recalledLexicalPattern ?? undefined, recallWeight);
 
     // Decode the mental state into the words the brain is currently activating.
@@ -1474,7 +1528,7 @@ export class DigitalBrain {
     // the thalamus relays it on every tick of that window. Plasticity needs
     // this: STDP and the engram of a stimulus are defined over tens of ms of
     // sustained drive, not over a single sample.
-    this.presentations.set(type, { signal, ticksLeft: DigitalBrain.PRESENTATION_TICKS });
+    this.presentations.set(type, { signal, ticksLeft: this.presentationTicks });
   }
 
   /**
@@ -1519,7 +1573,7 @@ export class DigitalBrain {
     const startTime = this.currentTime;
 
     if (options.propagate !== false) {
-      for (let i = 0; i < DigitalBrain.PERCEPTION_TICKS; i++) {
+      for (let i = 0; i < this.perceptionTicks; i++) {
         this.tick();
       }
     }
@@ -1578,7 +1632,7 @@ export class DigitalBrain {
       const activity = region.step(dt, effects);
       this.drivePeaks.set(
         regionId,
-        Math.max(activity.drive, (this.drivePeaks.get(regionId) ?? 0) * DigitalBrain.DRIVE_PEAK_DECAY),
+        Math.max(activity.drive, (this.drivePeaks.get(regionId) ?? 0) * this.drivePeakDecay),
       );
 
       // 3. Send output spikes to the bus

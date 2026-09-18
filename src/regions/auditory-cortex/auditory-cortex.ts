@@ -233,6 +233,7 @@ export class AuditoryCortex extends BrainRegion {
   private prototypes: PrototypeMemory;
   /** Outcome of the last completed sound. */
   private lastRecognition: Recognition | null = null;
+  private suppressPercept = false;
   private lastEngram: Int32Array = new Int32Array(0);
   private perceptCount = 0;
 
@@ -508,6 +509,12 @@ export class AuditoryCortex extends BrainRegion {
     for (let i = 0; i < this.winCounts.length; i++) this.winCounts[i] *= FATIGUE_RETENTION;
     this.adapt(mean, engram, 1.0);
 
+    // Self-generated exploration (a babble, a scribble) is not an object of
+    // the world: it founds no category and is not offered for association.
+    if (this.suppressPercept) {
+      this.suppressPercept = false;
+      return;
+    }
     const recognition = this.prototypes.observe(engram, this.currentTime);
     if (recognition) {
       this.lastRecognition = recognition;
@@ -530,6 +537,14 @@ export class AuditoryCortex extends BrainRegion {
     } finally {
       this.liveLearning = live;
     }
+  }
+
+  /**
+   * The presentation that is starting is the brain's own motor exploration:
+   * learn from it as usual, but do not treat it as a percept.
+   */
+  suppressNextPercept(): void {
+    this.suppressPercept = true;
   }
 
   /** Engram of the last completed presentation (what `getRecognition()` refers to). */

@@ -27,7 +27,7 @@ Tres propiedades guían el proyecto:
 ### Características principales
 
 - **Núcleo SNN** — Neurona de **Izhikevich** (RS/FS/CH/IB), plasticidad **STDP** (LTP/LTD), homeostasis y escalado sináptico.
-- **9 regiones cerebrales** que heredan de una clase base común `BrainRegion`:
+- **10 regiones cerebrales** que heredan de una clase base común `BrainRegion`:
   | Región | Función |
   |--------|---------|
   | Tálamo | Filtro sensorial y cuello de botella de atención |
@@ -39,6 +39,7 @@ Tres propiedades guían el proyecto:
   | Wernicke | Comprensión lingüística (patrón → palabra) |
   | Broca | Producción del lenguaje (intención + emoción → palabras) |
   | Corteza Motora Vocal | Controla el tracto vocal; aprende el mapa audición→motor balbuceando |
+  | Corteza Motora de la Mano | Dibuja en la pizarra; aprende el mapa visión→motor garabateando |
 - **Neuromodulación global** — 6 neurotransmisores (Dopamina, Serotonina, Noradrenalina, Cortisol, Acetilcolina, Oxitocina) que alteran dinámicamente el motor SNN.
 - **Conectoma humano** — 19 conexiones interregionales con retrasos axonales sobre un **bus de spikes** basado en eventos.
 - **Consolidación de memoria (sueño)** — motor periódico que reproduce memorias del hipocampo en la corteza para consolidarlas.
@@ -63,6 +64,7 @@ Cada capacidad tiene un test con criterios cuantitativos en `tests/`:
 - **Sentidos que aprenden** (`sensory-learning.test.ts`) — *aprendizaje por exposición, sin etiquetas*: al enseñarle dibujos y vocales por las mismas entradas que usa el dashboard, el cerebro **forma categorías por sí solo**, **reconoce** lo que ya ha visto u oído (también con ruido o medio tapado), distingue lo nuevo y lo **recuerda tras reiniciar**.
 - **Asociación entre modalidades** (`association-learning.test.ts`) — *aprender qué va con qué, por repetición*: al enseñarle un dibujo junto a su palabra (o un sonido), la asociación **crece con cada repetición** (tras una sola no se fía; tras unas pocas sí), ver el dibujo le **trae la palabra a la mente** (la piensa y la dice), leer la palabra le trae el dibujo, enseñado con frases enteras **aísla la palabra que corresponde**, la dopamina lo acelera y todo **persiste**.
 - **Voz** (`vocal-learning.test.ts`) — *aprender a usar la voz balbuceando*: antes de balbucear no puede repetir ninguna vocal que oye; con la voz activada **balbucea solo, se oye a sí mismo** y aprende qué orden motora produce qué sonido; cuanto más balbucea, **más vocales repite** y con poco error (3–7 % del rango vocal; al azar sería ≈33 %); no entra en eco con su propia voz, solo responde a sonidos y la habilidad **persiste**. Y unido a la asociación: si se le enseña que un dibujo va con un sonido, **al ver el dibujo dice ese sonido**.
+- **Mano** (`drawing-learning.test.ts`) — *aprender a dibujar garabateando*: antes de garabatear no puede copiar nada; con la mano activada **garabatea sola, ve las marcas que deja** y aprende qué orden pinta qué sitio; cuanto más garabatea, **mejores son sus copias** (parecido con el modelo 0 → ~0,35 → ~0,60) y cada copia se parece a su modelo y no a los otros; no entra en bucle con sus propias copias; enseñada una palabra junto a un dibujo, **al leer la palabra lo dibuja de memoria** y al ver el dibujo **escribe la palabra**; el 👍/👎 del maestro **refuerza o debilita** lo que acaba de recordar; todo **persiste**.
 - **Servidor** (`server-guards.test.ts`, `server-integration.test.ts`) — entradas malformadas, orígenes ajenos, cuerpos gigantes e inundaciones contra el servidor real: nada puede envenenar (NaN), agotar o bloquear el cerebro; un archivo de estado corrupto se detecta (CRC) y se restaura la copia anterior.
 
 > **Honestidad técnica:** la comprensión del lenguaje es **asociativa** (recupera y reordena palabras del léxico relacionadas con la entrada), no razonamiento simbólico. Es el comportamiento esperado de una SNN con léxico distribuido.
@@ -109,7 +111,7 @@ Three principles drive the project:
 ### Key features
 
 - **SNN core** — **Izhikevich** neuron (RS/FS/CH/IB), **STDP** plasticity (LTP/LTD), homeostasis and synaptic scaling.
-- **9 brain regions** extending a common `BrainRegion` base class:
+- **10 brain regions** extending a common `BrainRegion` base class:
   | Region | Function |
   |--------|----------|
   | Thalamus | Sensory filter and attention bottleneck |
@@ -121,6 +123,7 @@ Three principles drive the project:
   | Wernicke | Language comprehension (pattern → word) |
   | Broca | Language production (intention + emotion → words) |
   | Vocal Motor Cortex | Drives the vocal tract; learns the auditory→motor map by babbling |
+  | Hand Motor Cortex | Draws on the whiteboard; learns the visual→motor map by scribbling |
 - **Global neuromodulation** — 6 neurotransmitters (Dopamine, Serotonin, Norepinephrine, Cortisol, Acetylcholine, Oxytocin) dynamically altering the SNN engine.
 - **Human connectome** — 19 inter-region connections with axonal delays over an event-based **spike bus**.
 - **Memory consolidation (sleep)** — periodic engine replaying hippocampal memories into cortex to consolidate them.
@@ -145,6 +148,7 @@ Each capability has a test with quantitative criteria under `tests/`:
 - **Senses that learn** (`sensory-learning.test.ts`) — *learning by exposure, no labels*: shown drawings and played vowels through the same entry points the dashboard uses, the brain **forms categories on its own**, **recognizes** what it has seen or heard before (also noisy or half occluded), tells new things apart and **remembers across restarts**.
 - **Cross-modal association** (`association-learning.test.ts`) — *learning what goes with what, by repetition*: shown a drawing together with its word (or a sound), the association **grows with every repetition** (one pairing is not acted upon; a few are), seeing the drawing **brings the word to mind** (it thinks it and says it), reading the word brings the drawing back, taught with whole sentences it **singles out the word that belongs**, dopamine speeds it up, and it all **persists**.
 - **Voice** (`vocal-learning.test.ts`) — *learning to use its voice by babbling*: before babbling it cannot repeat any vowel it hears; with the voice on it **babbles on its own, hears itself** and learns which motor command makes which sound; the more it babbles, the **more vowels it repeats**, with little error (3–7 % of the vocal range; chance would be ≈33 %); it does not echo its own voice, only answers sounds, and the skill **persists**. And together with association: taught that a drawing goes with a sound, **it says that sound when it sees the drawing**.
+- **Hand** (`drawing-learning.test.ts`) — *learning to draw by scribbling*: before scribbling it cannot copy anything; with the hand on it **scribbles on its own, sees the marks it leaves** and learns which command inks which place; the more it scribbles, **the better its copies** (likeness to the model 0 → ~0.35 → ~0.60), each copy looking like its own model and not the others; no loop on its own copies; taught a word with a drawing, **reading the word makes it draw it from memory** and seeing the drawing makes it **write the word**; the teacher's 👍/👎 **strengthens or weakens** what it has just recalled; it all **persists**.
 - **Server** (`server-guards.test.ts`, `server-integration.test.ts`) — malformed input, foreign origins, oversized bodies and floods against the real server: nothing can poison (NaN), exhaust or stall the brain; a corrupted state file is detected (CRC) and the previous snapshot restored.
 
 > **Technical honesty:** language comprehension is **associative** (it retrieves and reorders lexicon words related to the input), not symbolic reasoning. This is the expected behaviour of an SNN with a distributed lexicon.

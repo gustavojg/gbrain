@@ -129,6 +129,25 @@ export function parseVoiceInput(data: unknown): { babble?: boolean; imitate?: bo
   return { babble: babble as boolean | undefined, imitate: imitate as boolean | undefined };
 }
 
+/** Validates `{ scribble?, copy? }`: which parts of the hand to switch. */
+export function parseHandInput(data: unknown): { scribble?: boolean; copy?: boolean } {
+  const { scribble, copy } = asRecord(data);
+  if ((scribble !== undefined && typeof scribble !== 'boolean') || (copy !== undefined && typeof copy !== 'boolean')) {
+    throw new HttpError(400, 'scribble and copy must be booleans');
+  }
+  if (scribble === undefined && copy === undefined) {
+    throw new HttpError(400, 'Expected scribble and/or copy');
+  }
+  return { scribble: scribble as boolean | undefined, copy: copy as boolean | undefined };
+}
+
+/** Validates `{ positive }`: the teacher's verdict on what the brain has just recalled. */
+export function parseFeedbackInput(data: unknown): boolean {
+  const { positive } = asRecord(data);
+  if (typeof positive !== 'boolean') throw new HttpError(400, 'positive must be a boolean');
+  return positive;
+}
+
 /** Validates the optional `sampleRate` of an audio frame (Hz); `undefined` if absent. */
 export function parseSampleRate(data: unknown): number | undefined {
   const { sampleRate } = asRecord(data);

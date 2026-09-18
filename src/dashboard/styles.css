@@ -853,6 +853,27 @@ body::after {
   font-size: 0.62rem;
 }
 
+/* --- Hand: what the brain draws and writes --- */
+#brainCanvas2d {
+  background: #111827;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 6px;
+  image-rendering: pixelated;
+}
+
+.brain-writing {
+  width: 100%;
+  margin: 0.4rem 0;
+  padding: 0.35rem 0.5rem;
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 6px;
+  color: var(--text-primary, #e2e8f0);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  resize: none;
+}
+
 /* --- Vocabulary panel --- */
 .vocab-panel {
   display: flex;

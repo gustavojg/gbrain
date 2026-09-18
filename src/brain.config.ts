@@ -242,6 +242,10 @@ export const DEFAULT_BRAIN_CONFIG: BrainConfiguration = {
     // Prefrontal Cortex → Broca/Wernicke (language production)
     { from: 'prefrontalCortex', to: 'brocaWernicke', weight: 1.0, delay: 12, modulatable: true },
 
+    // Thalamus → Hand motor cortex (dorsal visual stream: the retinotopic
+    // signal, "where the ink is" → how to put it there)
+    { from: 'thalamus', to: 'handMotorCortex', weight: 1.0, delay: 10, modulatable: true },
+
     // Auditory cortex → Vocal motor cortex (dorsal auditory–motor stream:
     // what a sound is like → how to make it)
     { from: 'auditoryCortex', to: 'motorCortex', weight: 1.0, delay: 8, modulatable: true },

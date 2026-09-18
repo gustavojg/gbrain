@@ -14,6 +14,8 @@
  * - GET  /api/imagine       → The brain imagines
  * - POST /api/modulator     → Inject a neuromodulator manually
  * - POST /api/voice         → Switch babbling / vocal imitation ({ babble?, imitate? })
+ * - POST /api/hand          → Switch scribbling / drawing ({ scribble?, copy? })
+ * - POST /api/feedback      → Teacher's verdict on the last recall ({ positive })
  * - WS   /ws                → Real-time stream
  *
  * The WebSocket streams state updates at 2 Hz.
@@ -52,6 +54,8 @@ import {
   isOriginAllowed,
   parseAllowlist,
   parseImageInput,
+  parseFeedbackInput,
+  parseHandInput,
   parseModulatorInput,
   parseSampleRate,
   parseSpectrogramInput,
@@ -395,6 +399,22 @@ async function handleApiRoute(url: URL, req: http.IncomingMessage, res: http.Ser
     return;
   }
 
+  // POST /api/hand — Switch scribbling / drawing
+  if (url.pathname === '/api/hand' && req.method === 'POST') {
+    enforceHttpLimit(req, 'modulator');
+    brain.setHand(parseHandInput(await parseJsonBody(req)));
+    sendJSON({ ok: true, hand: brain.getState().hand });
+    return;
+  }
+
+  // POST /api/feedback — "yes, that's it" / "no, that's not it"
+  if (url.pathname === '/api/feedback' && req.method === 'POST') {
+    enforceHttpLimit(req, 'modulator');
+    const applied = brain.giveFeedback(parseFeedbackInput(await parseJsonBody(req)));
+    sendJSON({ ok: true, applied, emotion: brain.feel() });
+    return;
+  }
+
   // POST /api/tick — Run a manual tick (admin)
   if (url.pathname === '/api/tick' && req.method === 'POST') {
     requireAdmin(req);
@@ -562,6 +582,18 @@ wss.on('connection', (ws: WebSocket) => {
           else notify('Too many changes — slow down');
           break;
         }
+        case 'hand': {
+          const hand = parseHandInput(msg.data);
+          if (limiter.allow('modulator')) brain.setHand(hand);
+          else notify('Too many changes — slow down');
+          break;
+        }
+        case 'feedback': {
+          const positive = parseFeedbackInput(msg.data);
+          if (limiter.allow('modulator')) brain.giveFeedback(positive);
+          else notify('Too much feedback — slow down');
+          break;
+        }
         case 'tick':
           if (limiter.allow('tick')) brain.tick();
           break;
@@ -592,9 +624,12 @@ wss.on('connection', (ws: WebSocket) => {
 
 // The brain's own voice: every vocalization is pushed to the dashboards, which
 // render it with their synthesizer.
+// …and so is everything else it DOES: what it draws and what it writes.
+const RESPONSE_KINDS = new Set(['vocalization', 'drawing', 'writing']);
 brain.on('response', (event) => {
-  if (event.data.kind !== 'vocalization' || clients.size === 0) return;
-  const msg = JSON.stringify({ type: 'vocalization', data: event.data });
+  const kind = event.data.kind;
+  if (typeof kind !== 'string' || !RESPONSE_KINDS.has(kind) || clients.size === 0) return;
+  const msg = JSON.stringify({ type: kind, data: event.data });
   for (const client of clients) {
     if (client.readyState === 1) client.send(msg);
   }

@@ -25,6 +25,7 @@ import { SpikeBus, type SpikePacket } from './core/bus/spike-bus.js';
 import { Connectome } from './core/bus/connectome.js';
 import { NeuromodulatorSystem, ModulatorType, type ModulationEffects } from './core/neuromodulators/modulator-system.js';
 import { type BrainRegion, type RegionActivity } from './core/brain-region.js';
+import type { Recognition } from './core/memory/prototype-memory.js';
 import { ConsolidationEngine, type ConsolidationStats, type ShortTermEntry } from './core/memory/consolidation.js';
 import { BrainPersistence, BACKUP_SUFFIX, writeFileAtomic } from './core/persistence/binary-protocol.js';
 import { VisualEncoder } from './encoders/visual-encoder.js';
@@ -87,6 +88,17 @@ export interface BrainState {
     pendingCount: number;
     threshold: number;
   };
+  /**
+   * What the senses recognize: outcome of the last completed presentation per
+   * modality ("seen/heard before?") and how many categories each sense has
+   * formed by exposure.
+   */
+  recognition?: {
+    visual: Recognition | null;
+    auditory: Recognition | null;
+    visualCategories: number;
+    auditoryCategories: number;
+  };
   /** Visual cortex learning metrics (engram, stability, convergence). */
   learning?: {
     engram: number[];
@@ -125,6 +137,9 @@ export interface PerceptionResult {
   /** Processing time (simulated ms) */
   processingTime: number;
 }
+
+/** Sensory channels of the thalamic relay. */
+type SensoryModality = 'visual' | 'auditory' | 'linguistic';
 
 /** Options shared by the perception entry points (`see`, `hear`, `read`). */
 export interface PerceptionOptions {
@@ -166,6 +181,14 @@ export class DigitalBrain {
   // --- Brain regions ---
   private regions: Map<string, BrainRegion> = new Map();
 
+  /** Stimuli currently held by sensory persistence, one per modality. */
+  private presentations: Map<SensoryModality, { signal: Float32Array; ticksLeft: number }> = new Map();
+  /**
+   * Ticks a stimulus stays available after it arrives (sensory persistence).
+   * Bounded by what one pathway can carry without adapting (see SpikeBus).
+   */
+  static readonly PRESENTATION_TICKS = 30;
+
   /** Slow-decaying peak of each region's drive (what the dashboard bars show). */
   private drivePeaks: Map<string, number> = new Map();
   /** Per-tick decay of the held peak (≈ 1 s at the server's 10 Hz tick). */
@@ -200,7 +223,12 @@ export class DigitalBrain {
    */
   private static readonly LEARN_THRESHOLD = 3;
 
-  /** Ticks a perception needs to propagate through the connectome (~50 ms simulated). */
+  /**
+   * Ticks run inline for a perception: the presentation window plus the first
+   * stretch of its propagation through the connectome. The tail of the wave
+   * (and the event boundary that encodes the episode) plays out on the
+   * following regular ticks.
+   */
   static readonly PERCEPTION_TICKS = 50;
 
   /** Cortical target of the thalamic relay, per modality (nodes of the connectome). */
@@ -502,11 +530,12 @@ export class DigitalBrain {
   ): PerceptionResult {
     console.log(`👁️  Perceiving image (${width}×${height})...`);
 
-    // Encode to spikes
-    const spikes = this.visualEncoder.encode(pixels, width, height, this.config.snn.dt);
+    // Retinal features as graded rates: the image is HELD for a presentation
+    // window and the visual cortex samples fresh spikes from it every tick.
+    const rates = this.visualEncoder.encodeRates(pixels, width, height);
 
     // Send to the thalamus
-    this.injectSensoryInput('visual', spikes);
+    this.injectSensoryInput('visual', rates);
 
     // Process several ticks to propagate through the brain
     return this.processPerception('visual', options);
@@ -541,7 +570,10 @@ export class DigitalBrain {
     sampleRate: number = DigitalBrain.DEFAULT_MIC_SAMPLE_RATE,
     options: PerceptionOptions = {},
   ): PerceptionResult {
-    const spectrogram = this.audioEncoder.encodeMagnitudeFrame(magnitudes, sampleRate, this.currentTime);
+    // Frames that arrive while the previous one is still being heard belong to
+    // the same utterance; after a silence, a new sound event begins.
+    const continuing = this.presentations.has('auditory');
+    const spectrogram = this.audioEncoder.encodeMagnitudeFrame(magnitudes, sampleRate, continuing);
     this.injectSensoryInput('auditory', spectrogram);
     return this.processPerception('auditory', options);
   }
@@ -685,6 +717,22 @@ export class DigitalBrain {
         }
       }
     }
+  }
+
+  /**
+   * What the senses currently recognize (learning by exposure): the outcome of
+   * the last completed presentation in each modality, and the number of
+   * perceptual categories formed so far.
+   */
+  getRecognition(): NonNullable<BrainState['recognition']> {
+    const visual = this.regions.get('visualCortex') as VisualCortex | undefined;
+    const auditory = this.regions.get('auditoryCortex') as AuditoryCortex | undefined;
+    return {
+      visual: visual?.getRecognition() ?? null,
+      auditory: auditory?.getRecognition() ?? null,
+      visualCategories: visual?.categoryCount ?? 0,
+      auditoryCategories: auditory?.categoryCount ?? 0,
+    };
   }
 
   /**
@@ -931,30 +979,45 @@ export class DigitalBrain {
   /**
    * Injects sensory input into the thalamus.
    */
-  private injectSensoryInput(type: 'visual' | 'auditory' | 'linguistic', spikes: Float32Array): void {
+  private injectSensoryInput(type: SensoryModality, signal: Float32Array): void {
+    // A stimulus is not an instantaneous volley: it stays available for a
+    // presentation window (sensory persistence — iconic / echoic memory), and
+    // the thalamus relays it on every tick of that window. Plasticity needs
+    // this: STDP and the engram of a stimulus are defined over tens of ms of
+    // sustained drive, not over a single sample.
+    this.presentations.set(type, { signal, ticksLeft: DigitalBrain.PRESENTATION_TICKS });
+  }
+
+  /**
+   * Relays the stimuli currently being presented (called once per tick).
+   */
+  private relayPresentations(effects: ModulationEffects): void {
+    if (this.presentations.size === 0) return;
     const thalamus = this.regions.get('thalamus') as Thalamus | undefined;
 
-    // The thalamus is the gateway to the cortex: what it relays is the
-    // attention-filtered signal (top-K salient channels, with the bottleneck
-    // and gain set by ACh/NE), not the raw sensory vector.
-    let relayed = spikes;
-    if (thalamus) {
-      thalamus.feedInput(spikes, this.currentTime);
-      relayed = thalamus.processAttention(spikes, this.modulators.getEffects()).filteredInput;
+    for (const [type, presentation] of this.presentations) {
+      // The thalamus is the gateway to the cortex: what it relays is the
+      // attention-filtered signal (top-K salient channels, with the bottleneck
+      // and gain set by ACh/NE), not the raw sensory vector.
+      let relayed = presentation.signal;
+      if (thalamus) {
+        thalamus.feedInput(presentation.signal, this.currentTime);
+        relayed = thalamus.processAttention(presentation.signal, effects).filteredInput;
+      }
+
+      // Each modality has its own thalamic nucleus and cortical target
+      // (LGN → visual, MGN → auditory, pulvinar → language areas); the relay
+      // travels along that projection of the connectome (its delay and weight).
+      this.bus.send({
+        source: 'thalamus',
+        targets: [DigitalBrain.THALAMIC_RELAY[type]],
+        spikes: relayed,
+        timestamp: this.currentTime,
+        metadata: { inputType: type },
+      });
+
+      if (--presentation.ticksLeft <= 0) this.presentations.delete(type);
     }
-
-    // Each modality has its own thalamic nucleus and cortical target
-    // (LGN → visual, MGN → auditory, pulvinar → language areas); the relay
-    // travels along that projection of the connectome (its delay and weight).
-    const target = DigitalBrain.THALAMIC_RELAY[type];
-
-    this.bus.send({
-      source: 'thalamus',
-      targets: [target],
-      spikes: relayed,
-      timestamp: this.currentTime,
-      metadata: { inputType: type },
-    });
   }
 
   /**
@@ -1013,6 +1076,9 @@ export class DigitalBrain {
 
     // 1. Get neuromodulation effects
     const effects = this.modulators.getEffects();
+
+    //    Stimuli being presented keep arriving through the thalamus.
+    this.relayPresentations(effects);
 
     //    The hippocampus stamps the episodes it encodes with the current affect
     //    (emotional episodes are forgotten more slowly).
@@ -1183,6 +1249,7 @@ export class DigitalBrain {
       } : undefined,
       vocabCount: this.lexicon?.size ?? 0,
       vocabulary: this.getVocabularyStateSlice(),
+      recognition: this.getRecognition(),
       learning,
       learningHippocampus,
     };

@@ -184,6 +184,7 @@ function updateDashboard(state) {
 
   // Vocabulary acquisition panel
   updateVocabularyPanel(state.vocabulary, state.vocabCount);
+  updatePerceptionPanel(state.recognition);
 
   // Learning curve (growth of vocabulary + episodic memories over time)
   updateLearningCurve(state);
@@ -198,6 +199,40 @@ function updateDashboard(state) {
 // ================================================================
 // VOCABULARY PANEL
 // ================================================================
+
+// ================================================================
+// PERCEPTION PANEL (learning by exposure)
+// ================================================================
+
+const lastPerceptLogged = { visual: null, auditory: null };
+
+function updatePerceptionPanel(recognition) {
+  if (!recognition) return;
+  renderPercept('perceptVisual', 'visual', recognition.visual, recognition.visualCategories, 'seen');
+  renderPercept('perceptAuditory', 'auditory', recognition.auditory, recognition.auditoryCategories, 'heard');
+}
+
+function renderPercept(rowId, sense, r, categories, verb) {
+  const what = document.querySelector(`#${rowId} .percept-what`);
+  if (!what || !r) return;
+
+  const badge = r.isNew
+    ? `<span class="percept-badge is-new">new</span>`
+    : `<span class="percept-badge is-known">${verb} ×${Number(r.exposures)} · ${Math.round(Number(r.familiarity) * 100)}% match</span>`;
+  what.classList.remove('percept-empty');
+  what.innerHTML =
+    `<span class="percept-label">${escapeHtml(r.label)}</span>${badge}` +
+    `<span class="percept-total">${Number(categories)} categor${categories === 1 ? 'y' : 'ies'}</span>`;
+
+  // Log each recognition once (the state stream repeats the last one).
+  const key = `${r.id}:${r.exposures}`;
+  if (lastPerceptLogged[sense] !== key) {
+    lastPerceptLogged[sense] = key;
+    addLog('info', r.isNew
+      ? `${sense === 'visual' ? '👁️' : '👂'} Something new → ${r.label}`
+      : `${sense === 'visual' ? '👁️' : '👂'} Recognized ${r.label} (${verb} ×${r.exposures})`);
+  }
+}
 
 function updateVocabularyPanel(vocab, fallbackTotal) {
   const totalEl = document.getElementById('vocabTotal');
@@ -1142,7 +1177,7 @@ document.getElementById('toggleMic')?.addEventListener('click', async () => {
     const audioCtx = new AudioContext();
     const source = audioCtx.createMediaStreamSource(micStream);
     micAnalyser = audioCtx.createAnalyser();
-    micAnalyser.fftSize = 256;
+    micAnalyser.fftSize = 1024; // ~47 Hz per bin at 48 kHz: enough to tell vowels apart
     source.connect(micAnalyser);
 
     btn.textContent = '⏹ Disable';

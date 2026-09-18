@@ -174,14 +174,16 @@ export class AudioEncoder {
    *
    * @param magnitudes - Linear-frequency magnitudes in [0, 1], bin 0 = DC
    * @param sampleRate - Sample rate of the source (Hz); the bins span 0 … sampleRate/2
-   * @param now - Current time (ms). Frames older than `maxFrameAgeMs` are
-   *   dropped first, so a new utterance is not glued to one heard long ago.
+   * @param continueUtterance - `true` while the previous frame is still being
+   *   heard (frames arriving back to back form one utterance, e.g. a syllable);
+   *   `false` starts a new sound event with an empty window, so that a sound is
+   *   the same sound whatever happened to be heard before it.
    * @returns Flat spectrogram, `numBands × numFrames` values in [0, 1]
    */
   encodeMagnitudeFrame(
     magnitudes: number[] | Float32Array,
     sampleRate: number,
-    now: number,
+    continueUtterance: boolean,
   ): Float32Array {
     const { numBands, numFrames } = this.config;
     const binHz = sampleRate / 2 / Math.max(1, magnitudes.length);
@@ -202,19 +204,12 @@ export class AudioEncoder {
       bands[b] = Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0;
     }
 
-    if (now - this.lastFrameTime > AudioEncoder.MAX_FRAME_AGE_MS) this.spectrogramBuffer = [];
-    this.lastFrameTime = now;
+    if (!continueUtterance) this.spectrogramBuffer = [];
     this.spectrogramBuffer.push(bands);
     if (this.spectrogramBuffer.length > numFrames) this.spectrogramBuffer.shift();
 
     return this.getSpectrogram();
   }
-
-  /** Time of the last frame pushed by `encodeMagnitudeFrame` (ms). */
-  private lastFrameTime: number = -Infinity;
-
-  /** Silence (ms of simulated time) after which the sliding window starts over. */
-  private static readonly MAX_FRAME_AGE_MS = 300;
 
   /**
    * Computes an FFT frame with a Hanning window.

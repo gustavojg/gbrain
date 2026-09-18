@@ -120,8 +120,13 @@ export class SpikeBus extends EventEmitter {
    */
   private readonly depression: Map<string, { resources: number; lastTime: number; failed: boolean }> = new Map();
 
-  /** Fraction of the available resources consumed by one volley. */
-  private static readonly DEPRESSION_USE = 0.05;
+  /**
+   * Fraction of the available resources consumed by one volley. At 0.02 a
+   * pathway carries a sustained stimulus presentation (~30 consecutive
+   * volleys) several times in a row before it adapts, yet still gives out
+   * after ~80 uninterrupted volleys — no loop can reverberate indefinitely.
+   */
+  private static readonly DEPRESSION_USE = 0.02;
   /** Recovery time constant of the resources (ms). */
   private static readonly DEPRESSION_RECOVERY_MS = 200;
   /** Below this level the pathway fails (stops transmitting)… */

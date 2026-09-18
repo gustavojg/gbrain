@@ -1,8 +1,8 @@
 # 🧠 gBrain — Digital Brain / Cerebro Digital
 
-> A biologically-inspired **Spiking Neural Network** simulating 8 interconnected brain regions, real synaptic plasticity (STDP), global neuromodulation and a live 3D dashboard.
+> A biologically-inspired **Spiking Neural Network** simulating 8 interconnected brain regions, real synaptic plasticity (STDP), global neuromodulation and a live dashboard.
 >
-> Red neuronal **de impulsos (SNN)** bio-inspirada que simula 8 regiones cerebrales interconectadas, plasticidad sináptica real (STDP), neuromodulación global y un dashboard 3D en vivo.
+> Red neuronal **de impulsos (SNN)** bio-inspirada que simula 8 regiones cerebrales interconectadas, plasticidad sináptica real (STDP), neuromodulación global y un dashboard en vivo.
 
 **🔴 Live demo / Demo en vivo:** [gbrain-production-7f5c.up.railway.app](https://gbrain-production-7f5c.up.railway.app)
 
@@ -22,7 +22,7 @@ Tres propiedades guían el proyecto:
 
 1. **Biológicamente plausible** — neurona de Izhikevich, STDP, homeostasis, conectoma humano.
 2. **Aprendizaje real y medible** — cada capacidad (visión, memoria, lenguaje) tiene un test cuantitativo que demuestra que aprende.
-3. **Observable en vivo** — dashboard 3D con la actividad de cada región y los niveles hormonales en tiempo real.
+3. **Observable en vivo** — dashboard con la actividad de cada región y los niveles hormonales en tiempo real.
 
 ### Características principales
 
@@ -92,7 +92,7 @@ npx tsx tests/language-loop.test.ts
 
 ### Stack tecnológico
 
-TypeScript · Node.js (ESM) · Express-less HTTP nativo + WebSocket (`ws`) · Three.js / WebGL (dashboard) · Railway (despliegue).
+TypeScript · Node.js (ESM) · Express-less HTTP nativo + WebSocket (`ws`) · Canvas 2D + WebAudio (dashboard) · Railway (despliegue).
 
 ---
 
@@ -106,7 +106,7 @@ Three principles drive the project:
 
 1. **Biologically plausible** — Izhikevich neuron, STDP, homeostasis, human connectome.
 2. **Real, measurable learning** — every capability (vision, memory, language) ships a quantitative test proving it learns.
-3. **Observable live** — a 3D dashboard streaming each region's activity and hormone levels in real time.
+3. **Observable live** — a dashboard streaming each region's activity and hormone levels in real time.
 
 ### Key features
 
@@ -176,7 +176,7 @@ npx tsx tests/language-loop.test.ts
 
 ### Tech stack
 
-TypeScript · Node.js (ESM) · native HTTP + WebSocket (`ws`) · Three.js / WebGL (dashboard) · Railway (deployment).
+TypeScript · Node.js (ESM) · native HTTP + WebSocket (`ws`) · Canvas 2D + WebAudio (dashboard) · Railway (deployment).
 
 ---
 
@@ -193,7 +193,7 @@ src/
 ├── regions/              # 8 brain regions (thalamus, cortices, hippocampus...)
 ├── encoders/             # text / visual / audio → spikes
 ├── decoders/             # spikes → text / emotion / image / speech
-├── dashboard/            # Three.js 3D client (index.html + brain-viz.js)
+├── dashboard/            # Canvas 2D client (index.html + brain-viz.js)
 ├── brain.ts              # DigitalBrain orchestrator
 └── server.ts             # HTTP + WebSocket server
 tests/                    # Quantitative learning-verification tests

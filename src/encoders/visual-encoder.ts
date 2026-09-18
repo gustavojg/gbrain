@@ -223,6 +223,91 @@ export class VisualEncoder {
     return out;
   }
 
+  /** Coarse grid on which objects are told apart (cells of the scene). */
+  private static readonly SEGMENT_GRID = 32;
+  /** Smallest object worth a fixation, in coarse cells. */
+  private static readonly SEGMENT_MIN_CELLS = 4;
+  /** Margin around an object when the eye fixates it (fraction of its extent). */
+  private static readonly FIXATION_MARGIN = 0.15;
+
+  /**
+   * The objects in a scene: connected regions of content (what stands out
+   * from the background), found on a coarse grid so that a stroke's gaps do
+   * not split an object and two objects a few cells apart stay two. This is
+   * what the superior colliculus gets from the retina to point the eye at:
+   * where things are, not what they are. Ordered by size (bottom-up
+   * saliency), largest first.
+   *
+   * @returns Bounding boxes in pixel coordinates; empty with fewer than two objects
+   */
+  segment(pixels: number[] | Float32Array | Uint8Array, width: number, height: number): Array<{ x: number; y: number; w: number; h: number }> {
+    let img: Float32Array = new Float32Array(pixels.length);
+    for (let i = 0; i < pixels.length; i++) img[i] = (pixels[i] as number) / 255;
+    if (width >= 3 * this.config.processWidth && height >= 3 * this.config.processHeight) img = this.median3(img, width, height);
+    let background = Infinity;
+    for (let i = 0; i < img.length; i++) if (img[i] < background) background = img[i];
+    const lit = background + 0.2;
+    // Coarse occupancy grid (max-pooled): a cell is on if any pixel in it is lit.
+    const g = VisualEncoder.SEGMENT_GRID;
+    const gw = Math.min(g, width), gh = Math.min(g, height);
+    const grid = new Uint8Array(gw * gh);
+    for (let y = 0; y < height; y++) {
+      const gy = Math.floor((y * gh) / height);
+      for (let x = 0; x < width; x++) {
+        if (img[y * width + x] >= lit) grid[gy * gw + Math.floor((x * gw) / width)] = 1;
+      }
+    }
+    // Connected components (8-neighbourhood) by flood fill.
+    const seen = new Uint8Array(gw * gh);
+    const boxes: Array<{ x: number; y: number; w: number; h: number; cells: number }> = [];
+    const stack: number[] = [];
+    for (let start = 0; start < grid.length; start++) {
+      if (grid[start] === 0 || seen[start] === 1) continue;
+      let minX = gw, maxX = -1, minY = gh, maxY = -1, cells = 0;
+      stack.push(start);
+      seen[start] = 1;
+      while (stack.length > 0) {
+        const c = stack.pop() as number;
+        const cx = c % gw, cy = Math.floor(c / gw);
+        cells++;
+        if (cx < minX) minX = cx; if (cx > maxX) maxX = cx; if (cy < minY) minY = cy; if (cy > maxY) maxY = cy;
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+          const nx = cx + dx, ny = cy + dy;
+          if (nx < 0 || nx >= gw || ny < 0 || ny >= gh) continue;
+          const n = ny * gw + nx;
+          if (grid[n] === 1 && seen[n] === 0) { seen[n] = 1; stack.push(n); }
+        }
+      }
+      if (cells < VisualEncoder.SEGMENT_MIN_CELLS) continue;
+      // Back to pixels.
+      const x0 = Math.floor((minX * width) / gw), x1 = Math.ceil(((maxX + 1) * width) / gw);
+      const y0 = Math.floor((minY * height) / gh), y1 = Math.ceil(((maxY + 1) * height) / gh);
+      boxes.push({ x: x0, y: y0, w: x1 - x0, h: y1 - y0, cells });
+    }
+    if (boxes.length < 2) return [];
+    return boxes.sort((a, b) => b.cells - a.cells || a.x - b.x).map(({ x, y, w, h }) => ({ x, y, w, h }));
+  }
+
+  /**
+   * What the eye sees when it fixates an object: the object's box with a
+   * margin, cut out of the scene (the rest falls outside the fovea). The
+   * crop goes through the ordinary retina — a small object is then zoomed
+   * as any small thing is.
+   */
+  static fixate<T extends number[] | Float32Array | Uint8Array>(
+    pixels: T, width: number, height: number, box: { x: number; y: number; w: number; h: number }, channels: number = 1,
+  ): { pixels: number[]; width: number; height: number } {
+    const margin = Math.max(2, Math.round(VisualEncoder.FIXATION_MARGIN * Math.max(box.w, box.h)));
+    const x0 = Math.max(0, box.x - margin), y0 = Math.max(0, box.y - margin);
+    const x1 = Math.min(width, box.x + box.w + margin), y1 = Math.min(height, box.y + box.h + margin);
+    const cw = x1 - x0, ch = y1 - y0;
+    const out = new Array<number>(cw * ch * channels);
+    for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) for (let c = 0; c < channels; c++) {
+      out[(y * cw + x) * channels + c] = pixels[((y0 + y) * width + x0 + x) * channels + c] as number;
+    }
+    return { pixels: out, width: cw, height: ch };
+  }
+
   /** 3×3 median filter. */
   private median3(img: Float32Array, w: number, h: number): Float32Array {
     const out = new Float32Array(w * h);

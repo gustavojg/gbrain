@@ -351,6 +351,7 @@ function showAffect(d) {
   }
   if (d.kind === 'question-learned') { addLog('info', `❓ “${escapeHtml(String(d.question).replace(/^lexical:/, ''))}” asks for the ${escapeHtml(String(d.modality))} of things (${Number(d.known)} questions known)`); return; }
   if (d.kind === 'answer') return; // the writing line says it
+  if (d.kind === 'saccade') { addLog('info', `👀 Looking at thing ${Number(d.index)} of ${Number(d.count)}`); return; }
   if (d.kind === 'foreseen') { addLog('emotion', `🔮 It had imagined ${escapeHtml((d.sources || []).map((s) => String(s).replace(/^[a-z]+:/, '')).join(' + '))} — and here it is`); return; }
   if (d.kind === 'startle') addLog('emotion', '😳 Startled by a sudden loud sound');
   else if (d.kind === 'looming') addLog('emotion', '😨 Something is coming closer fast');

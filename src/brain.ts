@@ -535,6 +535,23 @@ export class DigitalBrain {
    * SpikeBus).
    */
   private static readonly PRESENTATION_MS = 3000;
+
+  // ── The moving eye ──
+  /**
+   * A scene with several objects is not seen at once: the eye fixates one,
+   * the cortex sees it alone, and a saccade takes the eye to the next
+   * (superior colliculus for where, inhibition of return so that each is
+   * visited once). The pause between fixations lets the cortex close one
+   * presentation before the next begins.
+   */
+  private static readonly SACCADE_GAP_MS = 1200;
+  private static readonly MAX_FIXATIONS = 4;
+  private readonly saccadeGapTicks: number;
+  private fixations: Array<{ rates: Float32Array; colour: Float32Array | null; box: { x: number; y: number; w: number; h: number } }> = [];
+  private fixationIndex = 0;
+  private fixationCount = 0;
+  private ticksSinceGaze = 0;
+  private saccades = 0;
   /** The presentation window in ticks. */
   readonly presentationTicks: number;
 
@@ -714,6 +731,7 @@ export class DigitalBrain {
     }
     this.msPerTick = 1000 / this.config.tickRate;
     this.presentationTicks = this.ticksFor(DigitalBrain.PRESENTATION_MS);
+    this.saccadeGapTicks = this.ticksFor(DigitalBrain.SACCADE_GAP_MS);
     this.perceptionTicks = this.ticksFor(DigitalBrain.PERCEPTION_MS);
     this.associationWindowTicks = this.ticksFor(DigitalBrain.ASSOCIATION_WINDOW_MS);
     this.explorationIntervalTicks = this.ticksFor(DigitalBrain.EXPLORATION_INTERVAL_MS);
@@ -963,18 +981,71 @@ export class DigitalBrain {
     this.detectFace(retina);
     this.detectLooming(retina);
 
+    const rgb = options.rgb && options.rgb.length >= width * height * 3 ? options.rgb : null;
+    const colourOf = (px: ArrayLike<number>, w: number, h: number): Float32Array | null => {
+      const colour = VisualEncoder.encodeColor(px, w, h);
+      let any = 0;
+      for (let i = 0; i < colour.length; i++) any += colour[i];
+      return any > 0 ? colour : null;
+    };
+
+    // Several objects: the eye fixates them one at a time (saccades). The
+    // first now; the rest follow, each once the cortex has closed the last.
+    const objects = this.visualEncoder.segment(pixels, width, height).slice(0, DigitalBrain.MAX_FIXATIONS);
+    this.fixations = [];
+    if (objects.length >= 2) {
+      const fixations = objects.map((box) => {
+        const view = VisualEncoder.fixate(pixels, width, height, box);
+        const viewRgb = rgb ? VisualEncoder.fixate(rgb, width, height, box, 3) : null;
+        return {
+          rates: this.visualEncoder.encodeRates(view.pixels, view.width, view.height),
+          colour: viewRgb ? colourOf(viewRgb.pixels, viewRgb.width, viewRgb.height) : null,
+          box,
+        };
+      });
+      this.fixationCount = fixations.length;
+      this.fixationIndex = 0;
+      this.fixations = fixations.slice(1);
+      this.gaze(fixations[0]);
+      return this.processPerception('visual', options);
+    }
+
     // Send to the thalamus
     this.injectSensoryInput('visual', rates);
     // …and, if the image has colour, its colour goes its own way (V4).
-    if (options.rgb && options.rgb.length >= width * height * 3) {
-      const colour = VisualEncoder.encodeColor(options.rgb, width, height);
-      let any = 0;
-      for (let i = 0; i < colour.length; i++) any += colour[i];
-      if (any > 0) this.injectSensoryInput('colour', colour);
+    if (rgb) {
+      const colour = colourOf(rgb, width, height);
+      if (colour) this.injectSensoryInput('colour', colour);
     }
 
     // Process several ticks to propagate through the brain
     return this.processPerception('visual', options);
+  }
+
+  /** The eye lands on an object: the cortex sees it (and its colour) alone. */
+  private gaze(fixation: { rates: Float32Array; colour: Float32Array | null; box: { x: number; y: number; w: number; h: number } }): void {
+    this.fixationIndex++;
+    this.saccades++;
+    this.ticksSinceGaze = 0;
+    this.injectSensoryInput('visual', fixation.rates);
+    if (fixation.colour) this.injectSensoryInput('colour', fixation.colour);
+    this.emitEvent({
+      type: 'affect',
+      timestamp: this.currentTime,
+      data: { kind: 'saccade', index: this.fixationIndex, count: this.fixationCount, box: fixation.box, remaining: this.fixations.length },
+    });
+  }
+
+  /** Saccades pending: after the cortex has closed the current fixation, the eye moves on. */
+  private moveEye(): void {
+    if (this.fixations.length === 0) return;
+    if (this.presentations.has('visual')) {
+      this.ticksSinceGaze = 0;
+      return;
+    }
+    if (++this.ticksSinceGaze < this.saccadeGapTicks) return;
+    const next = this.fixations.shift();
+    if (next) this.gaze(next);
   }
 
   /**
@@ -2165,6 +2236,7 @@ export class DigitalBrain {
 
     //    Stimuli being presented keep arriving through the thalamus.
     this.relayPresentations(effects);
+    this.moveEye();
 
     //    The hippocampus stamps the episodes it encodes with the current affect
     //    (emotional episodes are forgotten more slowly).

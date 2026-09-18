@@ -87,13 +87,34 @@ export class VisualEncoder {
    */
   encodeRates(pixels: number[] | Float32Array | Uint8Array, width: number, height: number): Float32Array {
     // 1. Convert to normalized Float32Array (0-1)
-    let normalized = new Float32Array(pixels.length);
+    let normalized: Float32Array = new Float32Array(pixels.length);
     for (let i = 0; i < pixels.length; i++) {
       normalized[i] = (pixels[i] as number) / 255;
     }
 
+    // 1b. Nonlinear denoising in the outer retina: a 3×3 median removes
+    // isolated specks (salt-and-pepper) and fills pinholes in strokes before
+    // the cells pool — the photoreceptor-bipolar-amacrine circuitry is not a
+    // linear averager (Baccus & Meister 2002).
+    if (width >= 3 * this.config.processWidth && height >= 3 * this.config.processHeight) {
+      normalized = this.median3(normalized, width, height);
+    }
+
+    // 1c. Something small is looked at more closely: the eye brings a small
+    // object into the fovea and the cortex sees it at the same scale as a
+    // large one (size invariance at the front end; the innate detectors keep
+    // the raw view, see encodeIntensity).
+    normalized = this.zoomIfSmall(normalized, width, height);
+
     // 2. Resize to processing resolution
     let processed = this.resize(normalized, width, height, this.config.processWidth, this.config.processHeight);
+
+    // 2b. Receptor gain: a cell half covered by a stroke responds more than
+    // half (photoreceptor responses are compressive, Naka-Rushton). Without
+    // it, a stroke that straddles two cells read as two faint cells while the
+    // same stroke inside one cell read as bright — a square's sides differed
+    // in brightness by the accident of where they fell on the retina.
+    for (let i = 0; i < processed.length; i++) processed[i] = Math.min(1, processed[i] * VisualEncoder.RECEPTOR_GAIN);
 
     // 3. Foveation (center the content)
     if (this.config.foveation) {
@@ -104,15 +125,159 @@ export class VisualEncoder {
     let output: Float32Array;
     if (this.config.edgeDetection) {
       const edges = this.detectEdges(processed, this.config.processWidth, this.config.processHeight);
-      // Concatenate processed image + edge maps
+      // Concatenate the contrast image + edge maps
       output = new Float32Array(processed.length + edges.length);
-      output.set(processed, 0);
+      output.set(this.contrast(processed, this.config.processWidth, this.config.processHeight), 0);
       output.set(edges, processed.length);
     } else {
-      output = processed;
+      output = this.contrast(processed, this.config.processWidth, this.config.processHeight);
     }
 
     return output;
+  }
+
+  /**
+   * The retinal image itself — resized and centred, luminance in 0..1 — as the
+   * innate detectors read it (a face, something looming). What the cortex
+   * receives is its contrast (see `encodeRates`).
+   */
+  encodeIntensity(pixels: number[] | Float32Array | Uint8Array, width: number, height: number): Float32Array {
+    const normalized = new Float32Array(pixels.length);
+    for (let i = 0; i < pixels.length; i++) normalized[i] = (pixels[i] as number) / 255;
+    let processed = this.resize(normalized, width, height, this.config.processWidth, this.config.processHeight);
+    if (this.config.foveation) processed = this.foveate(processed, this.config.processWidth, this.config.processHeight);
+    return processed;
+  }
+
+  /**
+   * Centre–surround contrast, what retinal ganglion cells report: each cell's
+   * luminance minus the mean of its 3×3 neighbourhood, rectified, with a
+   * response floor below which the faint contrast of scattered noise is not
+   * reported. A thin stroke stays bright; the inside of a filled patch goes
+   * dark and only its border remains — a filled rectangle and an outlined
+   * car are no longer the same thing to the cortex, and absolute brightness
+   * no longer dominates what a shape is (Kuffler 1953).
+   */
+  private static readonly CONTRAST_FLOOR = 0.15;
+  private static readonly RECEPTOR_GAIN = 1.5;
+
+  private contrast(img: Float32Array, w: number, h: number): Float32Array {
+    const out = new Float32Array(w * h);
+    let peak = 0;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        let sum = 0;
+        let n = 0;
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const yy = y + dy, xx = x + dx;
+            if (yy < 0 || yy >= h || xx < 0 || xx >= w) continue;
+            sum += img[yy * w + xx];
+            n++;
+          }
+        }
+        const c = img[y * w + x] - sum / n;
+        out[y * w + x] = c > VisualEncoder.CONTRAST_FLOOR ? c : 0;
+        if (out[y * w + x] > peak) peak = out[y * w + x];
+      }
+    }
+    // A stroke loses part of its luminance to its own surround (its neighbours
+    // along the stroke are lit too): a bounded rescale keeps strokes near the
+    // level they had without amplifying faint noise.
+    if (peak > 0) {
+      const gain = Math.min(1 / peak, 1.25);
+      for (let i = 0; i < out.length; i++) out[i] = Math.min(1, out[i] * gain);
+    }
+    return out;
+  }
+
+  /** Content smaller than this fraction of the image is zoomed to ZOOM_TARGET of it. */
+  private static readonly ZOOM_BELOW = 0.5;
+  private static readonly ZOOM_TARGET = 0.75;
+
+  /** Crops the content's bounding box (with a margin) and enlarges it to fill ZOOM_TARGET of the image. */
+  private zoomIfSmall(img: Float32Array, w: number, h: number): Float32Array {
+    let background = Infinity;
+    for (let i = 0; i < img.length; i++) if (img[i] < background) background = img[i];
+    const lit = background + 0.2;
+    let minX = w, maxX = -1, minY = h, maxY = -1;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        if (img[y * w + x] < lit) continue;
+        if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y;
+      }
+    }
+    if (maxX < 0) return img;
+    const bw = maxX - minX + 1, bh = maxY - minY + 1;
+    const extent = Math.max(bw, bh);
+    if (extent < 4 || extent >= VisualEncoder.ZOOM_BELOW * Math.min(w, h)) return img;
+    const scale = (VisualEncoder.ZOOM_TARGET * Math.min(w, h)) / extent;
+    const outW = Math.min(w, Math.round(bw * scale)), outH = Math.min(h, Math.round(bh * scale));
+    // Crop and enlarge (bilinear), then paste centred on the background.
+    const crop = new Float32Array(bw * bh);
+    for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) crop[y * bw + x] = img[(minY + y) * w + minX + x];
+    const enlarged = this.resize(crop, bw, bh, outW, outH);
+    const out = new Float32Array(w * h).fill(background);
+    const ox = Math.floor((w - outW) / 2), oy = Math.floor((h - outH) / 2);
+    for (let y = 0; y < outH; y++) for (let x = 0; x < outW; x++) out[(oy + y) * w + ox + x] = enlarged[y * outW + x];
+    return out;
+  }
+
+  /** 3×3 median filter. */
+  private median3(img: Float32Array, w: number, h: number): Float32Array {
+    const out = new Float32Array(w * h);
+    const window = new Float32Array(9);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        let n = 0;
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const yy = y + dy, xx = x + dx;
+            if (yy < 0 || yy >= h || xx < 0 || xx >= w) continue;
+            window[n++] = img[yy * w + xx];
+          }
+        }
+        const values = Array.from(window.subarray(0, n)).sort((a, b) => a - b);
+        out[y * w + x] = values[n >> 1];
+      }
+    }
+    return out;
+  }
+
+  /**
+   * The colour of what is in view, as the colour cortex receives it: a
+   * histogram of hue × saturation over the chromatic pixels, plus white and
+   * grey for the achromatic light ones, scaled so the dominant colour is 1.
+   * Dark pixels are the background and do not count. Position, size and
+   * shape play no part: the blue card and the blue car give the same code.
+   *
+   * Layout (26 channels): 12 hue bins × {vivid, pale}, then white, then grey.
+   *
+   * @param rgb - Interleaved r, g, b bytes (0–255), width × height × 3 values
+   */
+  static encodeColor(rgb: ArrayLike<number>, width: number, height: number): Float32Array {
+    const code = new Float32Array(26);
+    const n = Math.min(width * height, Math.floor(rgb.length / 3));
+    for (let p = 0; p < n; p++) {
+      const r = rgb[p * 3] / 255, g = rgb[p * 3 + 1] / 255, b = rgb[p * 3 + 2] / 255;
+      const max = Math.max(r, g, b), min = Math.min(r, g, b);
+      const light = max;
+      if (light < 0.25) continue; // background / dark
+      const sat = max > 0 ? (max - min) / max : 0;
+      if (sat < 0.25) {
+        code[light >= 0.6 ? 24 : 25]++;
+        continue;
+      }
+      const d = max - min;
+      let hue = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+      if (hue < 0) hue += 6;
+      const bin = Math.min(11, Math.floor(hue * 2)); // 12 bins of 30°
+      code[bin * 2 + (sat >= 0.6 ? 0 : 1)]++;
+    }
+    let peak = 0;
+    for (let i = 0; i < code.length; i++) if (code[i] > peak) peak = code[i];
+    if (peak > 0) for (let i = 0; i < code.length; i++) code[i] /= peak;
+    return code;
   }
 
   /**

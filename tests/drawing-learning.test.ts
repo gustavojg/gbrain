@@ -134,13 +134,15 @@ check('the more it has scribbled, the better its copies',
 console.log('\n3. SPECIFICITY');
 {
   const names = Object.keys(MODELS);
+  const table: string[] = [];
   const specific = names.every((name) => {
     const copy = later.copies[name];
-    if (!copy) return false;
+    if (!copy) { table.push(`${name}: no copy`); return false; }
     const own = likeness(CELLS[name], copy.cells);
+    table.push(`${name} copy → ${names.map((m) => `${m} ${likeness(CELLS[m], copy.cells).toFixed(2)}`).join(', ')}`);
     return names.every((other) => other === name || own > likeness(CELLS[other], copy.cells));
   });
-  check('each copy looks like its own model, not like the others', specific);
+  check('each copy looks like its own model, not like the others', specific, table.join(' | '));
 }
 
 // ── 4. NO LOOP ──────────────────────────────────────────────────────────────

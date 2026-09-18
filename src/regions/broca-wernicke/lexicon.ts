@@ -52,6 +52,8 @@ export interface LexiconMatch {
   word: string;
   /** Cosine similarity with the query pattern (0–1) */
   similarity: number;
+  /** Mean level of the word's channels in the pattern, relative to its peak (0..1). */
+  level?: number;
 }
 
 /**
@@ -232,14 +234,30 @@ export class Lexicon {
     if (peak === 0) return [];
 
     const matches: LexiconMatch[] = [];
+    const floor = peak * 0.25;
     for (const [word, entry] of this.entries) {
       const norm = this.getCachedNorm(word, entry.pattern);
       if (norm === 0) continue;
-      // Scale-free: the most strongly present channel counts as fully present.
-      const presence = this.dotProduct(pattern, entry.pattern) / (peak * norm * norm);
-      matches.push({ word, similarity: Math.min(1, presence) });
+      // A word is contained in the pattern when ALL of its channels are
+      // present (above a fraction of the pattern's peak), whatever their
+      // level: a pattern that superposes two words holds each at half
+      // strength but holds every channel of both. Counting channels rather
+      // than summing weight also keeps a word that merely shares n-grams with
+      // the one present ("noche" with "coche") from passing as contained.
+      let present = 0;
+      let total = 0;
+      let level = 0;
+      for (let i = 0; i < entry.pattern.length; i++) {
+        if (entry.pattern[i] <= 0) continue;
+        total++;
+        if (pattern[i] >= floor) present++;
+        level += pattern[i];
+      }
+      if (total === 0) continue;
+      matches.push({ word, similarity: present / total, level: level / total / peak });
     }
-    matches.sort((a, b) => b.similarity - a.similarity);
+    // Fully contained words first; among them, the one present most strongly.
+    matches.sort((a, b) => b.similarity - a.similarity || (b.level ?? 0) - (a.level ?? 0));
     return matches.slice(0, topK);
   }
 

@@ -505,6 +505,7 @@ export class AuditoryCortex extends BrainRegion {
     const mean = new Float32Array(this.inputCount);
     for (let i = 0; i < mean.length; i++) mean[i] = this.presentationInput[i] / this.presentationTicks;
     this.resetPresentation();
+    const surprise = this.surpriseOf(mean, engram);
 
     for (let i = 0; i < this.winCounts.length; i++) this.winCounts[i] *= FATIGUE_RETENTION;
     this.adapt(mean, engram, 1.0);
@@ -517,10 +518,25 @@ export class AuditoryCortex extends BrainRegion {
     }
     const recognition = this.prototypes.observe(engram, this.currentTime);
     if (recognition) {
+      recognition.surprise = surprise;
       this.lastRecognition = recognition;
       this.lastEngram = engram;
       this.perceptCount++;
     }
+  }
+
+  /** 1 − cosine between the input and what the engram's neurons expect (their mean weights), before they learn from it. */
+  private surpriseOf(input: Float32Array, engram: ArrayLike<number>): number {
+    let dot = 0, na = 0, nb = 0;
+    for (let i = 0; i < this.inputCount; i++) {
+      let w = 0;
+      for (let k = 0; k < engram.length; k++) w += this.weights[engram[k] * this.inputCount + i];
+      w /= Math.max(1, engram.length);
+      dot += input[i] * w;
+      na += input[i] * input[i];
+      nb += w * w;
+    }
+    return na > 0 && nb > 0 ? Math.max(0, Math.min(1, 1 - dot / Math.sqrt(na * nb))) : 1;
   }
 
   private resetPresentation(): void {

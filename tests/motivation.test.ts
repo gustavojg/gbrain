@@ -82,11 +82,13 @@ console.log('1. NOVELTY');
   wait(brain, 300);
   see(brain, SQUARE);
   const fresh = lastError(brain, 'novelty') ?? 0;
-  check('the first sight of a thing is a dopamine burst', bursts[0] >= 0.4 && levels[0] > 0.1,
+  // (The bonus is scaled by the cortex's surprise; a first sight surprises a
+  // freshly recruited engram about a third — see perception.test.ts.)
+  check('the first sight of a thing is a dopamine burst', bursts[0] >= 0.3 && levels[0] > 0.1,
     `error=${bursts[0].toFixed(2)} Δdopamine=${levels[0].toFixed(2)}`);
   check('it habituates with every sighting', bursts.every((b, i) => i === 0 || b < bursts[i - 1]) && bursts[4] <= 0.12,
     bursts.map((b) => b.toFixed(2)).join(' → '));
-  check('a new thing brings it back', fresh >= 0.4, `error=${fresh.toFixed(2)}`);
+  check('a new thing brings it back', fresh >= 0.3, `error=${fresh.toFixed(2)}`);
   check('it knows how often it has seen each', brain.expectationOf('visual:Visual-1').seen === 5);
 }
 

@@ -38,6 +38,7 @@ const REGION_COLORS = {
   broca:            { h: 95,  s: 70, l: 50, label: 'Broca' },
   motorCortex:      { h: 25,  s: 85, l: 58, label: 'Vocal Motor' },
   handMotorCortex:  { h: 320, s: 70, l: 62, label: 'Hand Motor' },
+  colorCortex:      { h: 50,  s: 90, l: 60, label: 'Colour Ctx' },
 };
 
 // 3D positions of brain regions (x, y, z) normalized -1..1
@@ -52,6 +53,7 @@ const REGION_POSITIONS = {
   broca:            { x: -0.4, y: -0.3, z: 0.35,  size: 24 },
   motorCortex:      { x: -0.15, y: 0.35, z: 0.3,  size: 20 },
   handMotorCortex:  { x: 0.2,   y: 0.4,  z: 0.25, size: 20 },
+  colorCortex:      { x: 0.25,  y: 0.25, z: -0.55, size: 16 },
 };
 
 // Connections between regions (for drawing axon lines)
@@ -70,6 +72,7 @@ const CONNECTIONS = [
   ['prefrontalCortex', 'broca'],
   ['auditoryCortex', 'motorCortex'],
   ['thalamus', 'handMotorCortex'],
+  ['thalamus', 'colorCortex'],
   ['prefrontalCortex', 'thalamus'],
   ['prefrontalCortex', 'visualCortex'],
   ['amygdala', 'hippocampus'],
@@ -235,11 +238,12 @@ function updateDashboard(state) {
 // PERCEPTION PANEL (learning by exposure)
 // ================================================================
 
-const lastPerceptLogged = { visual: null, auditory: null };
+const lastPerceptLogged = { visual: null, colour: null, auditory: null };
 
 function updatePerceptionPanel(recognition) {
   if (!recognition) return;
   renderPercept('perceptVisual', 'visual', recognition.visual, recognition.visualCategories, 'seen');
+  renderPercept('perceptColour', 'colour', recognition.colour, recognition.colourCategories, 'seen');
   renderPercept('perceptAuditory', 'auditory', recognition.auditory, recognition.auditoryCategories, 'heard');
 }
 
@@ -342,6 +346,8 @@ function showAffect(d) {
     addLog('emotion', `${line} (dopamine ${Number(e.error) >= 0 ? '+' : ''}${Number(e.error).toFixed(2)})`);
     return;
   }
+  if (d.kind === 'question-learned') { addLog('info', `❓ “${escapeHtml(String(d.question).replace(/^lexical:/, ''))}” asks for the ${escapeHtml(String(d.modality))} of things (${Number(d.known)} questions known)`); return; }
+  if (d.kind === 'answer') return; // the writing line says it
   if (d.kind === 'startle') addLog('emotion', '😳 Startled by a sudden loud sound');
   else if (d.kind === 'looming') addLog('emotion', '😨 Something is coming closer fast');
   else if (d.kind === 'face') addLog('emotion', `🙂 That looks like a face (${Math.round(Number(d.match) * 100)}%)`);
@@ -356,6 +362,7 @@ function updateRecallRow(association) {
   const parts = [];
   if (r.words && r.words.length > 0) parts.push(`“${r.words.map((w) => escapeHtml(w.word)).join(' ')}”`);
   if (r.visual) parts.push(escapeHtml(r.visual.label));
+  if (r.colour) parts.push(escapeHtml(r.colour.label));
   if (r.auditory) parts.push(escapeHtml(r.auditory.label));
   const recalled = parts.length > 0 ? parts.join(' + ') : 'something it cannot name yet';
   const pct = Math.round(Number(r.confidence) * 100);
@@ -377,9 +384,10 @@ function renderPercept(rowId, sense, r, categories, verb) {
   const what = document.querySelector(`#${rowId} .percept-what`);
   if (!what || !r) return;
 
+  const surprise = typeof r.surprise === 'number' ? ` · surprise ${Math.round(Number(r.surprise) * 100)}%` : '';
   const badge = r.isNew
-    ? `<span class="percept-badge is-new">new</span>`
-    : `<span class="percept-badge is-known">${verb} ×${Number(r.exposures)} · ${Math.round(Number(r.familiarity) * 100)}% match</span>`;
+    ? `<span class="percept-badge is-new">new${surprise}</span>`
+    : `<span class="percept-badge is-known">${verb} ×${Number(r.exposures)} · ${Math.round(Number(r.familiarity) * 100)}% match${surprise}</span>`;
   what.classList.remove('percept-empty');
   what.innerHTML =
     `<span class="percept-label">${escapeHtml(r.label)}</span>${badge}` +
@@ -389,9 +397,8 @@ function renderPercept(rowId, sense, r, categories, verb) {
   const key = `${r.id}:${r.exposures}`;
   if (lastPerceptLogged[sense] !== key) {
     lastPerceptLogged[sense] = key;
-    addLog('info', r.isNew
-      ? `${sense === 'visual' ? '👁️' : '👂'} Something new → ${r.label}`
-      : `${sense === 'visual' ? '👁️' : '👂'} Recognized ${r.label} (${verb} ×${r.exposures})`);
+    const icon = { visual: '👁️', colour: '🎨', auditory: '👂' }[sense] || '👁️';
+    addLog('info', r.isNew ? `${icon} Something new → ${r.label}` : `${icon} Recognized ${r.label} (${verb} ×${r.exposures})`);
   }
 }
 
@@ -1040,6 +1047,26 @@ const drawCanvas = document.getElementById('drawCanvas');
 const drawCtx = drawCanvas.getContext('2d');
 let isDrawing = false;
 let lastInk = null;
+let inkColour = '#f1f5f9';
+
+document.querySelectorAll('#inkPalette .ink-swatch').forEach((swatch) => {
+  swatch.addEventListener('click', () => {
+    inkColour = swatch.dataset.ink;
+    document.querySelectorAll('#inkPalette .ink-swatch').forEach((s) => s.classList.toggle('is-selected', s === swatch));
+  });
+});
+
+/** The pixels of a 64×64 canvas as the brain takes them: grey levels and, apart, their colour. */
+function pixelsOf(ctx) {
+  const data = ctx.getImageData(0, 0, 64, 64).data;
+  const pixels = [];
+  const rgb = [];
+  for (let i = 0; i < data.length; i += 4) {
+    pixels.push(Math.round((data[i] + data[i + 1] + data[i + 2]) / 3));
+    rgb.push(data[i], data[i + 1], data[i + 2]);
+  }
+  return { pixels, rgb };
+}
 
 drawCtx.fillStyle = '#111827';
 drawCtx.fillRect(0, 0, 64, 64);
@@ -1070,7 +1097,7 @@ function drawPixel(e) {
   const rect = drawCanvas.getBoundingClientRect();
   const x = Math.floor((e.clientX - rect.left) * (64 / rect.width));
   const y = Math.floor((e.clientY - rect.top) * (64 / rect.height));
-  drawCtx.fillStyle = '#f1f5f9';
+  drawCtx.fillStyle = inkColour;
   if (lastInk) {
     const steps = Math.max(Math.abs(x - lastInk.x), Math.abs(y - lastInk.y));
     for (let i = 1; i <= steps; i++) {
@@ -1122,24 +1149,16 @@ function sendText() {
 
 // Send drawing
 document.getElementById('sendDrawing')?.addEventListener('click', () => {
-  const imageData = drawCtx.getImageData(0, 0, 64, 64);
-  const pixels = [];
-
-  // Convert to grayscale
-  for (let i = 0; i < imageData.data.length; i += 4) {
-    const gray = (imageData.data[i] + imageData.data[i+1] + imageData.data[i+2]) / 3;
-    pixels.push(Math.round(gray));
-  }
-
-  addLog('input', 'Image sent (64×64)');
+  const { pixels, rgb } = pixelsOf(drawCtx);
+  addLog('input', 'Image sent (64×64, with colour)');
 
   if (ws && ws.readyState === 1) {
-    ws.send(JSON.stringify({ type: 'input:image', data: { pixels, width: 64, height: 64 } }));
+    ws.send(JSON.stringify({ type: 'input:image', data: { pixels, rgb, width: 64, height: 64 } }));
   } else {
     fetch(`${API_URL}/input/image`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pixels, width: 64, height: 64 }),
+      body: JSON.stringify({ pixels, rgb, width: 64, height: 64 }),
     })
     .then(r => r.json())
     .then(result => updateResponseBox(result))
@@ -1336,13 +1355,9 @@ document.getElementById('toggleWebcam')?.addEventListener('click', async () => {
 
     webcamInterval = setInterval(() => {
       wCtx.drawImage(video, 0, 0, 64, 64);
-      const imageData = wCtx.getImageData(0, 0, 64, 64);
-      const pixels = [];
-      for (let i = 0; i < imageData.data.length; i += 4) {
-        pixels.push(Math.round((imageData.data[i] + imageData.data[i+1] + imageData.data[i+2]) / 3));
-      }
+      const { pixels, rgb } = pixelsOf(wCtx);
       if (ws && ws.readyState === 1) {
-        ws.send(JSON.stringify({ type: 'input:image', data: { pixels, width: 64, height: 64 } }));
+        ws.send(JSON.stringify({ type: 'input:image', data: { pixels, rgb, width: 64, height: 64 } }));
       }
     }, WEBCAM_FRAME_INTERVAL_MS);
   } catch (err) {
@@ -1608,14 +1623,10 @@ function playVocalization(v) {
 // TEACH — lessons, tests and practice
 // ================================================================
 
-/** The whiteboard drawing as the brain sees it (grayscale 64×64). */
-function currentDrawingPixels() {
-  const imageData = drawCtx.getImageData(0, 0, 64, 64);
-  const pixels = [];
-  for (let i = 0; i < imageData.data.length; i += 4) {
-    pixels.push(Math.round((imageData.data[i] + imageData.data[i + 1] + imageData.data[i + 2]) / 3));
-  }
-  return pixels;
+/** The whiteboard drawing as the brain sees it: grey levels for the shape, colour apart. */
+function currentDrawing() {
+  const { pixels, rgb } = pixelsOf(drawCtx);
+  return { pixels, rgb, width: 64, height: 64 };
 }
 
 let lessonCurve = [];
@@ -1623,7 +1634,7 @@ let lessonCurve = [];
 document.getElementById('teachBtn')?.addEventListener('click', () => {
   const lesson = { repetitions: Math.min(10, Math.max(1, Number(document.getElementById('lessonReps').value) || 4)) };
   if (document.getElementById('lessonUseDrawing').checked) {
-    lesson.image = { pixels: currentDrawingPixels(), width: 64, height: 64 };
+    lesson.image = currentDrawing();
   }
   const text = document.getElementById('lessonText').value.trim();
   if (text) lesson.text = text;
@@ -1644,7 +1655,7 @@ document.getElementById('teachBtn')?.addEventListener('click', () => {
 document.getElementById('testBtn')?.addEventListener('click', () => {
   addLog('input', '🔍 Test: showing the drawing alone');
   document.getElementById('lessonProgress').textContent = 'Test: showing the drawing alone — watch Perception → Recalls, the voice and the hand.';
-  sendControl('input:image', { pixels: currentDrawingPixels(), width: 64, height: 64 }, 'input/image');
+  sendControl('input:image', currentDrawing(), 'input/image');
 });
 
 function showLessonProgress(d) {
@@ -1759,7 +1770,10 @@ function showBrainWriting(w) {
   area.value = (area.value ? area.value + ' ' : '') + w.text.slice(0, 40);
   if (area.value.length > 400) area.value = area.value.slice(-400);
   area.scrollTop = area.scrollHeight;
-  addLog('info', `✍️ Writes “${w.text.slice(0, 40)}” on seeing ${String(w.cue).slice(0, 40)}`);
+  const cue = String(w.cue);
+  addLog('info', cue.startsWith('answer:')
+    ? `❓ Answers “${w.text.slice(0, 40)}” (the ${cue.slice(7)} of what is in front)`
+    : `✍️ Writes “${w.text.slice(0, 40)}” on seeing ${cue.slice(0, 40)}`);
 }
 
 // ================================================================

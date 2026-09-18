@@ -163,6 +163,13 @@
         <div class="draw-container">
           <canvas id="drawCanvas" width="64" height="64"></canvas>
           <div class="draw-controls">
+            <div class="ink-palette" id="inkPalette" role="radiogroup" aria-label="Ink colour">
+              <button class="ink-swatch is-selected" data-ink="#f1f5f9" style="background:#f1f5f9" title="white" aria-label="white ink"></button>
+              <button class="ink-swatch" data-ink="#ef4444" style="background:#ef4444" title="red" aria-label="red ink"></button>
+              <button class="ink-swatch" data-ink="#22c55e" style="background:#22c55e" title="green" aria-label="green ink"></button>
+              <button class="ink-swatch" data-ink="#3b82f6" style="background:#3b82f6" title="blue" aria-label="blue ink"></button>
+              <button class="ink-swatch" data-ink="#facc15" style="background:#facc15" title="yellow" aria-label="yellow ink"></button>
+            </div>
             <button class="small-btn" id="sendDrawing">Send</button>
             <button class="small-btn secondary" id="clearDrawing">Clear</button>
           </div>
@@ -374,6 +381,10 @@
           <div class="percept-row" id="perceptVisual">
             <span class="percept-sense">Sight</span>
             <span class="percept-what percept-empty">nothing seen yet</span>
+          </div>
+          <div class="percept-row" id="perceptColour">
+            <span class="percept-sense">Colour</span>
+            <span class="percept-what percept-empty">nothing coloured seen yet — pick an ink</span>
           </div>
           <div class="percept-row" id="perceptAuditory">
             <span class="percept-sense">Hearing</span>

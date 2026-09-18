@@ -33,6 +33,13 @@ export interface Recognition {
   familiarity: number;
   /** How many times this category has been encountered, this one included. */
   exposures: number;
+  /**
+   * How badly the category predicted this input (0..1): 1 − cosine between
+   * the input and what the category's neurons reconstruct (predictive coding:
+   * the error between the cortex's expectation and what arrived). Set by the
+   * cortex that owns the category; absent where not measured.
+   */
+  surprise?: number;
   /** Whether this stimulus founded the category. */
   isNew: boolean;
   /** Simulation time of the recognition (ms). */

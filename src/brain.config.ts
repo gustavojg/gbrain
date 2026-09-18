@@ -242,6 +242,10 @@ export const DEFAULT_BRAIN_CONFIG: BrainConfiguration = {
     // Prefrontal Cortex → Broca/Wernicke (language production)
     { from: 'prefrontalCortex', to: 'brocaWernicke', weight: 1.0, delay: 12, modulatable: true },
 
+    // Auditory cortex → Vocal motor cortex (dorsal auditory–motor stream:
+    // what a sound is like → how to make it)
+    { from: 'auditoryCortex', to: 'motorCortex', weight: 1.0, delay: 8, modulatable: true },
+
     // Broca/Wernicke → Hippocampus (memorize what is said/understood)
     { from: 'brocaWernicke', to: 'hippocampus', weight: 0.6, delay: 10, modulatable: true },
 

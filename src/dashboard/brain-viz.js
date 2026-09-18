@@ -28,6 +28,7 @@ const REGION_COLORS = {
   prefrontalCortex: { h: 220, s: 75, l: 65, label: 'Prefrontal Ctx' },
   wernicke:         { h: 130, s: 65, l: 55, label: 'Wernicke' },
   broca:            { h: 95,  s: 70, l: 50, label: 'Broca' },
+  motorCortex:      { h: 25,  s: 85, l: 58, label: 'Vocal Motor' },
 };
 
 // 3D positions of brain regions (x, y, z) normalized -1..1
@@ -40,6 +41,7 @@ const REGION_POSITIONS = {
   prefrontalCortex: { x: 0,    y: -0.2, z: 0.65,  size: 35 },
   wernicke:         { x: -0.5, y: -0.1, z: 0.05,  size: 24 },
   broca:            { x: -0.4, y: -0.3, z: 0.35,  size: 24 },
+  motorCortex:      { x: -0.15, y: 0.35, z: 0.3,  size: 20 },
 };
 
 // Connections between regions (for drawing axon lines)
@@ -56,6 +58,7 @@ const CONNECTIONS = [
   ['hippocampus', 'prefrontalCortex'],
   ['amygdala', 'prefrontalCortex'],
   ['prefrontalCortex', 'broca'],
+  ['auditoryCortex', 'motorCortex'],
   ['prefrontalCortex', 'thalamus'],
   ['prefrontalCortex', 'visualCortex'],
   ['amygdala', 'hippocampus'],
@@ -111,6 +114,8 @@ function connectWebSocket() {
       updateDashboard(brainState);
     } else if (msg.type === 'thought') {
       addThought(msg.data);
+    } else if (msg.type === 'vocalization' && msg.data) {
+      playVocalization(msg.data);
     } else if (msg.type === 'notice' && msg.data) {
       addLog('error', `Server: ${msg.data.message}`);
     }
@@ -1244,6 +1249,9 @@ document.getElementById('toggleMic')?.addEventListener('click', async () => {
       const spectrogram = Array.from(dataArray).map(v => v / 255);
       const energy = spectrogram.reduce((sum, v) => sum + v, 0) / spectrogram.length;
       if (energy < MIC_SILENCE_THRESHOLD) return;
+      // The brain already hears its own voice internally: what the mic picks up
+      // from the speakers must not come back as somebody else's sound.
+      if (performance.now() < ownVoiceUntil) return;
 
       if (ws && ws.readyState === 1) {
         ws.send(JSON.stringify({ type: 'input:audio', data: { spectrogram, sampleRate: audioCtx.sampleRate } }));
@@ -1254,6 +1262,94 @@ document.getElementById('toggleMic')?.addEventListener('click', async () => {
     addLog('error', '🎤 Mic error: ' + err.message);
   }
 });
+
+// ================================================================
+// VOICE — the brain's vocal tract, rendered with WebAudio
+// ================================================================
+// Same articulatory model as src/core/voice/vocal-tract.ts: a voiced source
+// shaped by two formants. The brain decides F1/F2; this only makes them audible.
+
+let voiceCtx = null;
+let voiceEnabled = false;
+let ownVoiceUntil = 0;
+const VOICE_PITCH_HZ = 160;
+
+document.getElementById('toggleVoice')?.addEventListener('click', () => {
+  const btn = document.getElementById('toggleVoice');
+  const status = document.getElementById('voiceStatus');
+  voiceEnabled = !voiceEnabled;
+
+  if (voiceEnabled) {
+    // Browsers only allow audio to start from a user gesture — this click.
+    const AudioCtor = window.AudioContext || window.webkitAudioContext;
+    if (!voiceCtx && AudioCtor) voiceCtx = new AudioCtor();
+    voiceCtx?.resume();
+  }
+  btn.textContent = voiceEnabled ? '⏹ Disable' : '▶ Enable';
+  btn.setAttribute('aria-pressed', String(voiceEnabled));
+  status.textContent = voiceEnabled ? 'Babbling — it learns what its commands sound like' : 'Silent';
+  addLog('info', voiceEnabled ? '🗣️ Voice enabled: babbling + imitation' : '🗣️ Voice disabled');
+
+  const voice = { babble: voiceEnabled, imitate: voiceEnabled };
+  if (ws && ws.readyState === 1) {
+    ws.send(JSON.stringify({ type: 'voice', data: voice }));
+  } else {
+    fetch(`${API_URL}/voice`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(voice),
+    }).catch(err => addLog('error', err.message));
+  }
+});
+
+function playVocalization(v) {
+  const command = v.command || {};
+  const f1 = Number(command.f1);
+  const f2 = Number(command.f2);
+  if (!Number.isFinite(f1) || !Number.isFinite(f2)) return;
+  const seconds = Math.min(1, Math.max(0.1, Number(v.durationMs) / 1000 || 0.35));
+
+  const status = document.getElementById('voiceStatus');
+  if (status) {
+    status.textContent = v.source === 'imitation'
+      ? `Repeating what it heard — F1 ${f1.toFixed(0)} Hz · F2 ${f2.toFixed(0)} Hz`
+      : `Babbling — F1 ${f1.toFixed(0)} Hz · F2 ${f2.toFixed(0)} Hz`;
+  }
+  if (v.source === 'imitation') {
+    addLog('info', `🗣️ Repeats a sound it heard (F1 ${f1.toFixed(0)}, F2 ${f2.toFixed(0)} Hz)`);
+  }
+  if (!voiceEnabled || !voiceCtx) return;
+
+  const now = voiceCtx.currentTime;
+  const source = voiceCtx.createOscillator();
+  source.type = 'sawtooth'; // rich in harmonics, like the glottal source
+  source.frequency.value = VOICE_PITCH_HZ;
+
+  const out = voiceCtx.createGain();
+  const level = 0.25 * Math.min(1, Math.max(0, Number(command.amplitude) || 0.9));
+  out.gain.setValueAtTime(0, now);
+  out.gain.linearRampToValueAtTime(level, now + 0.03);
+  out.gain.setValueAtTime(level, now + seconds - 0.08);
+  out.gain.linearRampToValueAtTime(0, now + seconds);
+
+  for (const [freq, q, gain] of [[f1, 8, 1.0], [f2, 10, 0.78]]) {
+    const formant = voiceCtx.createBiquadFilter();
+    formant.type = 'bandpass';
+    formant.frequency.value = freq;
+    formant.Q.value = q;
+    const formantGain = voiceCtx.createGain();
+    formantGain.gain.value = gain;
+    source.connect(formant);
+    formant.connect(formantGain);
+    formantGain.connect(out);
+  }
+  out.connect(voiceCtx.destination);
+  source.start(now);
+  source.stop(now + seconds + 0.02);
+  source.onended = () => out.disconnect();
+
+  ownVoiceUntil = performance.now() + seconds * 1000 + 300;
+}
 
 // ================================================================
 // BROCA CHAT

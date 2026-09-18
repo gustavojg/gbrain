@@ -136,17 +136,20 @@ console.log('\n2. GENERALIZATION');
 {
   const crossId = crossSeen[0].id;
   const squareId = squareSeen[0].id;
+  const squareObject = brain.getRecognition().object?.label ?? null;
   const noisyCross = show(brain, withNoise(CROSS, 0.15));
   const halfCross = show(brain, occludeRight(CROSS, 0.5));
   const halfSquare = show(brain, occludeRight(SQUARE, 0.5));
   check('a noisy drawing (15% of pixels flipped) is recognized', noisyCross.id === crossId && !noisyCross.isNew, describe(noisyCross));
   check('half a drawing is not mistaken for another', halfCross.id === crossId && halfSquare.id !== crossId,
     `${describe(halfCross)} / ${describe(halfSquare)}`);
-  // KNOWN GAP (block 3, hierarchy): half a square, re-centred by foveation, is a
-  // bracket, and a single cortical layer has no completion to see the square in
-  // it. The luminance retina used to pass this through the background level the
-  // images shared, not through the shape. Reported, not counted.
-  console.log(`   ${halfSquare.id === squareId ? '🎉 CLOSED' : '⚠️  OPEN  '} half a square is still the square  (${describe(halfSquare)})`);
+  // Half a square, re-centred by foveation, is a bracket to V1 (a whole-image
+  // template has nothing to complete it with); the parts cortex above it
+  // completes the square from the parts present (block 3, hierarchy).
+  const halfSquareObject = brain.getRecognition().object;
+  check('half a square is still the square — at the object level', halfSquareObject !== null && halfSquareObject.label === squareObject && !halfSquareObject.isNew,
+    `V1: ${describe(halfSquare)}; object: ${halfSquareObject?.label ?? '—'}${halfSquareObject?.isNew ? ' NEW' : ''} (square = ${squareObject})`);
+  console.log(`   ${halfSquare.id === squareId ? '🎉' : 'ℹ️ '} V1 alone ${halfSquare.id === squareId ? 'sees the square too' : 'sees a bracket'}  (${describe(halfSquare)})`);
 
   const novel = show(brain, DIAGONAL);
   check('a genuinely new drawing founds a new category', novel.isNew && novel.id !== crossId && novel.id !== squareId, describe(novel));

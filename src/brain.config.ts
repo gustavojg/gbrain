@@ -227,6 +227,9 @@ export const DEFAULT_BRAIN_CONFIG: BrainConfiguration = {
 
     // Thalamus → Sensory cortices (thalamic relay)
     { from: 'thalamus', to: 'visualCortex',   weight: 1.0, delay: 5,  modulatable: true },
+    // The parts cortex (V2→IT) is fed by the same relay, with the same latency, so that its
+    // percept closes on the same tick as V1's and the two join in one visual code.
+    { from: 'thalamus', to: 'partsCortex',    weight: 1.0, delay: 5,  modulatable: true },
     { from: 'thalamus', to: 'auditoryCortex',  weight: 1.0, delay: 5,  modulatable: true },
     { from: 'thalamus', to: 'brocaWernicke',   weight: 0.8, delay: 8,  modulatable: true },
 

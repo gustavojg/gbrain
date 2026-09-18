@@ -40,6 +40,7 @@ import { ImageGenerator } from './decoders/image-generator.js';
 // --- Brain regions ---
 import { Thalamus } from './regions/thalamus/thalamus.js';
 import { VisualCortex } from './regions/visual-cortex/visual-cortex.js';
+import { PartsCortex } from './regions/visual-cortex/parts-cortex.js';
 import { AuditoryCortex } from './regions/auditory-cortex/auditory-cortex.js';
 import { Hippocampus } from './regions/hippocampus/hippocampus.js';
 import { Amygdala } from './regions/amygdala/amygdala.js';
@@ -124,9 +125,14 @@ export interface BrainState {
     visual: Recognition | null;
     auditory: Recognition | null;
     colour: Recognition | null;
+    /** What the parts cortex (V2→IT) makes of the last thing seen: the object its parts complete. */
+    object: Recognition | null;
     visualCategories: number;
     auditoryCategories: number;
     colourCategories: number;
+    objectCategories: number;
+    /** Local parts learned by the parts cortex. */
+    partsKnown: number;
   };
   /**
    * Cross-modal association: what the last percept brought back from memory,
@@ -482,7 +488,12 @@ export class DigitalBrain {
   > = new Map();
   private perceptSerial = 0;
   /** Percept counters of the sensory cortices already handled (see `collectPercepts`). */
-  private handledPercepts = { visual: 0, auditory: 0, colour: 0 };
+  private handledPercepts = { visual: 0, auditory: 0, colour: 0, parts: 0 };
+  /**
+   * Object-level units (parts cortex) share the visual modality with V1's
+   * units in the association memory, offset so the two never collide.
+   */
+  private static readonly OBJECT_UNIT_OFFSET = 10_000;
   private lastRecall: AssociationRecall | null = null;
   /** Tick of the last recall (any confidence): a voice soon after it is a verdict on it. */
   private lastRecallTick = Number.MIN_SAFE_INTEGER;
@@ -646,7 +657,7 @@ export class DigitalBrain {
   /** Cortical target of the thalamic relay, per modality (nodes of the connectome). */
   private static readonly THALAMIC_RELAY: Record<SensoryModality, readonly string[]> = {
     // Ventral stream (what it is) and dorsal stream (how to act on it).
-    visual: ['visualCortex', 'handMotorCortex'],
+    visual: ['visualCortex', 'partsCortex', 'handMotorCortex'],
     // Colour parts ways with shape in the ventral stream (V4).
     colour: ['colorCortex'],
     auditory: ['auditoryCortex'],
@@ -915,6 +926,9 @@ export class DigitalBrain {
     this.addRegion(new WernickeArea(this.lexicon, 1000, 1000));
     // Last, and with deterministic synapses: the others' seeded trajectories stay as they were.
     this.addRegion(new ColorCortex());
+    // The parts cortex (V2→IT): objects as arrangements of local parts. Added
+    // last, with its own random source, so the other trajectories stay put.
+    this.addRegion(new PartsCortex({ retinaSide: DigitalBrain.RETINA_SIDE, channelMaps: 5, inputCount: DigitalBrain.VISUAL_CORTEX_INPUTS }));
 
     // Connect Broca/Wernicke to the bus as an alias of 'brocaWernicke'
     // to receive packets from the existing connectome
@@ -1483,8 +1497,9 @@ export class DigitalBrain {
       }
       for (const other of ['visual', 'colour', 'auditory'] as const) {
         if (other === modality || cue[other] || !result.recalled[other]) continue;
-        const units = DigitalBrain.topUnits(result.recalled[other]!.pattern, other === 'visual' ? 20 : other === 'colour' ? 6 : 3);
-        const match = cortices[other]?.matchCategory(units);
+        const raw = DigitalBrain.topUnits(result.recalled[other]!.pattern, other === 'visual' ? 28 : other === 'colour' ? 6 : 3);
+        const units = other === 'visual' ? DigitalBrain.splitVisualUnits(raw).v1 : raw;
+        const match = units.length > 0 ? cortices[other]?.matchCategory(units) : null;
         if (match && match.overlap >= (other === 'auditory' ? 0.2 : 0.3)) {
           labels[other] = match.label;
           if (other === 'visual' && !imageUnits) imageUnits = units;
@@ -1678,6 +1693,7 @@ export class DigitalBrain {
     // Its own drawing is not an object of the world (see `vocalize`): the hand
     // learns from it, but it founds no category and is not bound to anything.
     (this.regions.get('visualCortex') as VisualCortex | undefined)?.suppressNextPercept();
+    (this.regions.get('partsCortex') as PartsCortex | undefined)?.suppressNextPercept();
     const rates = this.visualEncoder.encodeRates(renderDrawing(output.cells), BOARD_SIDE, BOARD_SIDE);
     this.injectSensoryInput('visual', rates);
 
@@ -1705,10 +1721,31 @@ export class DigitalBrain {
   /** Picks up the presentations the sensory cortices completed since the last tick. */
   private collectPercepts(): void {
     const visual = this.regions.get('visualCortex') as VisualCortex | undefined;
+    const parts = this.regions.get('partsCortex') as PartsCortex | undefined;
     if (visual && visual.percepts !== this.handledPercepts.visual) {
       this.handledPercepts.visual = visual.percepts;
       const units = Array.from(visual.getLastEngram());
-      this.onPercept('visual', { indices: units, values: units.map(() => 1) }, visual.getRecognition()?.label ?? 'visual', visual.getRecognition()?.surprise ?? 1);
+      // The object level's engram joins V1's in the same visual code: what a
+      // partial view completes up there reaches memory alongside what V1 saw.
+      let recallCode: ModalCode | undefined;
+      if (parts && parts.percepts !== this.handledPercepts.parts) {
+        this.handledPercepts.parts = parts.percepts;
+        const objectUnits = Array.from(parts.getLastEngram(), (u) => u + DigitalBrain.OBJECT_UNIT_OFFSET);
+        units.push(...objectUnits);
+        // Two routes to memory — the whole (V1) and the parts (the object
+        // level). The whole is the more specific and comes first; the parts
+        // complete what the whole has never seen (a new bracket that is half
+        // a square) — a whole V1 has never seen would only dilute their cue.
+        const v1Units = units.slice(0, units.length - objectUnits.length);
+        const v1Code: ModalCode = { indices: v1Units, values: v1Units.map(() => 1) };
+        const objectCode: ModalCode = { indices: objectUnits, values: objectUnits.map(() => 1) };
+        const byWhole = this.associations.recall('visual', v1Code)?.match ?? 0;
+        if (byWhole >= DigitalBrain.MIN_RECALL_MATCH) recallCode = v1Code;
+        else if ((this.associations.recall('visual', objectCode)?.match ?? 0) > byWhole) recallCode = objectCode;
+      }
+      this.onPercept('visual', { indices: units, values: units.map(() => 1) }, visual.getRecognition()?.label ?? 'visual', visual.getRecognition()?.surprise ?? 1, recallCode);
+    } else if (parts && parts.percepts !== this.handledPercepts.parts) {
+      this.handledPercepts.parts = parts.percepts;
     }
     const auditory = this.regions.get('auditoryCortex') as AuditoryCortex | undefined;
     if (auditory && auditory.percepts !== this.handledPercepts.auditory) {
@@ -1736,11 +1773,11 @@ export class DigitalBrain {
    * Recall comes first so that it reflects what had been learned BEFORE this
    * experience.
    */
-  private onPercept(modality: AssociationModality, code: ModalCode, label: string, surprise: number = 1): void {
+  private onPercept(modality: AssociationModality, code: ModalCode, label: string, surprise: number = 1, recallCode: ModalCode = code): void {
     if (code.indices.length === 0) return;
     this.ticksSincePercept = 0;
 
-    this.recallFrom(modality, code, label);
+    this.recallFrom(modality, recallCode, label);
     const key = `${modality}:${label}`;
     // A stamped-in habit answers the cue directly — faster, without attention,
     // and whether or not the recall behind it still holds.
@@ -1797,6 +1834,17 @@ export class DigitalBrain {
         data: { kind: 'association', modalities: Object.keys(event), bindings: this.associations.bindings },
       });
     }
+  }
+
+  /** V1's units and the object level's (offset in the association's visual code), apart. */
+  private static splitVisualUnits(units: number[]): { v1: number[]; objects: number[] } {
+    const v1: number[] = [];
+    const objects: number[] = [];
+    for (const u of units) {
+      if (u >= DigitalBrain.OBJECT_UNIT_OFFSET) objects.push(u - DigitalBrain.OBJECT_UNIT_OFFSET);
+      else v1.push(u);
+    }
+    return { v1, objects };
   }
 
   /** The `k` strongest channels of a reinstated pattern. */
@@ -1856,15 +1904,21 @@ export class DigitalBrain {
     const topUnits = DigitalBrain.topUnits;
 
     const visual = this.regions.get('visualCortex') as VisualCortex | undefined;
+    const parts = this.regions.get('partsCortex') as PartsCortex | undefined;
     if (result.recalled.visual && visual) {
-      const units = topUnits(result.recalled.visual.pattern, 20);
-      const match = visual.matchCategory(units);
+      const { v1, objects } = DigitalBrain.splitVisualUnits(topUnits(result.recalled.visual.pattern, 28));
+      const match = v1.length > 0 ? visual.matchCategory(v1) : null;
+      const objectMatch = parts && objects.length > 0 ? parts.matchCategory(objects) : null;
       if (match && match.overlap >= 0.3) {
         recall.visual = { label: match.label, overlap: match.overlap };
         // What comes to the mind's eye is drawn — if the hand is on and knows
         // how. (Something SEEN is already handled by copying; this is for what
         // it reads or hears.)
-        if (confident && modality !== 'visual') this.drawImaginedImage(visual.imagine(units));
+        if (confident && modality !== 'visual') this.drawImaginedImage(visual.imagine(v1));
+      } else if (objectMatch && objectMatch.overlap >= 0.3) {
+        // V1 has no whole-image match, but the object level does: the parts complete it.
+        recall.visual = { label: objectMatch.label, overlap: objectMatch.overlap };
+        if (confident && modality !== 'visual' && parts) this.drawImaginedImage(parts.imagine(objects));
       }
     }
     const colourCortex = this.regions.get('colorCortex') as ColorCortex | undefined;
@@ -1978,13 +2032,17 @@ export class DigitalBrain {
     const visual = this.regions.get('visualCortex') as VisualCortex | undefined;
     const auditory = this.regions.get('auditoryCortex') as AuditoryCortex | undefined;
     const colour = this.regions.get('colorCortex') as ColorCortex | undefined;
+    const parts = this.regions.get('partsCortex') as PartsCortex | undefined;
     return {
       visual: visual?.getRecognition() ?? null,
       auditory: auditory?.getRecognition() ?? null,
       colour: colour?.getRecognition() ?? null,
       visualCategories: visual?.categoryCount ?? 0,
+      object: parts?.getRecognition() ?? null,
       auditoryCategories: auditory?.categoryCount ?? 0,
       colourCategories: colour?.categoryCount ?? 0,
+      objectCategories: parts?.categoryCount ?? 0,
+      partsKnown: parts?.partsKnown ?? 0,
     };
   }
 
@@ -2967,11 +3025,13 @@ export class DigitalBrain {
     // Pruning: what was met once and never again is not worth its neurons.
     const prunedCategories: string[] = [];
     const motor = this.regions.get('motorCortex') as MotorCortex | undefined;
-    for (const [id, modality] of [['visualCortex', 'visual'], ['colorCortex', 'colour'], ['auditoryCortex', 'auditory']] as const) {
+    for (const [id, modality] of [['visualCortex', 'visual'], ['colorCortex', 'colour'], ['auditoryCortex', 'auditory'], ['partsCortex', 'object']] as const) {
       const region = this.regions.get(id) as { pruneCategories(minExposures: number, afterSleeps: number, inUse: (unit: number) => boolean): string[] } | undefined;
       if (!region) continue;
       const inUse = (unit: number): boolean =>
-        this.associations.usesChannel(modality, unit) || (modality === 'auditory' && motor !== undefined && motor.knowsHeard(unit));
+        modality === 'object'
+          ? this.associations.usesChannel('visual', unit + DigitalBrain.OBJECT_UNIT_OFFSET)
+          : this.associations.usesChannel(modality, unit) || (modality === 'auditory' && motor !== undefined && motor.knowsHeard(unit));
       prunedCategories.push(...region.pruneCategories(DigitalBrain.PRUNE_MIN_EXPOSURES, DigitalBrain.PRUNE_AFTER_SLEEPS, inUse));
     }
     stats.prunedCategories = prunedCategories;

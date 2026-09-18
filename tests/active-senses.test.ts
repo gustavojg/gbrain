@@ -11,6 +11,11 @@
  *   2. CONSONANTS     — an utterance unfolds in time: having babbled "ma"s
  *                       and "pa"s, it repeats "ma" with the lips closed and
  *                       the nose open, "pa" with a release, "a" with neither.
+ *   3. STROKES        — watching someone draw the cross, it copies it the
+ *                       same way: the horizontal stroke first, left to right,
+ *                       then the vertical, top to bottom; shown the other
+ *                       order more often, it switches; a drawing it never saw
+ *                       being made is drawn at once.
  */
 import { DigitalBrain, type BrainEvent, type Vocalization } from '../src/brain.js';
 import { synthesizeFrames, UTTERANCE_FRAME_MS, VOCAL_RANGE, type VocalCommand } from '../src/core/voice/vocal-tract.js';
@@ -141,6 +146,53 @@ console.log('\n2. CONSONANTS');
   // (/i/ and the nasal murmur share a low first formant; a bare /i/ may be
   // taken for a closed-lips onset — a confusion infants make too.)
   check('the bare vowels: repeated with the lips open', bare.repeated >= 3 && bare.right >= 3, bare.detail);
+}
+
+// ── 3. STROKES ──────────────────────────────────────────────────────────────
+console.log('\n3. STROKES');
+{
+  const brain = newBrain();
+  brain.setHand({ copy: true });
+  for (let i = 0; i < 170; i++) { brain.scribbleOnce(); wait(brain, 60); }
+  /** A stroke along the cross's arms, in image pixels (the canvas is 64×64). */
+  const horizontal = (leftToRight: boolean): { points: Array<[number, number]>; durationMs: number } =>
+    ({ points: Array.from({ length: 48 }, (_, i) => [leftToRight ? 8 + i : 55 - i, 32] as [number, number]), durationMs: 400 });
+  const vertical = (topToBottom: boolean): { points: Array<[number, number]>; durationMs: number } =>
+    ({ points: Array.from({ length: 48 }, (_, i) => [32, topToBottom ? 8 + i : 55 - i] as [number, number]), durationMs: 300 });
+  const shown = (strokes: Array<{ points: Array<[number, number]>; durationMs: number }>): void => {
+    quiet(() => brain.see(CROSS, SIDE, SIDE, { propagate: false, strokes }));
+    wait(brain, 200);
+  };
+  const copyOf = (pixels: number[]): ReturnType<DigitalBrain['getLastDrawing']> => {
+    const before = brain.getLastDrawing()?.serial ?? 0;
+    quiet(() => brain.see(pixels, SIDE, SIDE, { propagate: false }));
+    wait(brain, 200);
+    const after = brain.getLastDrawing();
+    return after && after.serial !== before && after.source === 'copy' ? after : null;
+  };
+  const row = (cell: number): number => Math.floor(cell / 14);
+  const col = (cell: number): number => cell % 14;
+  const isHorizontal = (cells: number[]): boolean => cells.length >= 3 && new Set(cells.map(row)).size <= 2 && cells.every((c, i) => i === 0 || col(c) >= col(cells[i - 1]));
+  const isVertical = (cells: number[]): boolean => cells.length >= 3 && new Set(cells.map(col)).size <= 2 && cells.every((c, i) => i === 0 || row(c) >= row(cells[i - 1]));
+  const describe = (d: ReturnType<DigitalBrain['getLastDrawing']>): string =>
+    d ? (d.strokes ? d.strokes.map((s) => `${s.cells.length} cells/${Math.round(s.durationMs)} ms`).join(' → ') : 'at once') : 'no copy';
+
+  const square = copyOf(SQUARE);
+  check('a drawing it never saw being made is drawn at once', square !== null && square.strokes === undefined, describe(square));
+
+  for (let i = 0; i < 3; i++) shown([horizontal(true), vertical(true)]);
+  const copy = copyOf(CROSS);
+  const strokes = copy?.strokes ?? [];
+  check('watching the cross drawn, it copies it in the same strokes', copy !== null && strokes.length >= 2, `${describe(copy)}; ${(brain.getRegion('handMotorCortex') as unknown as { gesturesKnown: number }).gesturesKnown} gestures known`);
+  check('…the horizontal first, left to right', strokes.length >= 2 && isHorizontal(strokes[0].cells), strokes[0] ? strokes[0].cells.map(col).join(',') : '—');
+  check('…then the vertical, top to bottom', strokes.length >= 2 && isVertical(strokes[1].cells), strokes[1] ? strokes[1].cells.map(row).join(',') : '—');
+  check('…with the timing it was shown', strokes.length >= 2 && strokes[0].durationMs > strokes[1].durationMs, describe(copy));
+
+  for (let i = 0; i < 4; i++) shown([vertical(false), horizontal(false)]);
+  const again = copyOf(CROSS);
+  const later = again?.strokes ?? [];
+  check('shown the other way more often, it switches', later.length >= 2 && new Set(later[0].cells.map(col)).size <= 2 && later[0].cells.every((c, i) => i === 0 || row(c) <= row(later[0].cells[i - 1])),
+    later[0] ? `first stroke rows ${later[0].cells.map(row).join(',')}` : describe(again));
 }
 
 // ── Summary ─────────────────────────────────────────────────────────────────

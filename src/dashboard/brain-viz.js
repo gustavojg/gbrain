@@ -1053,6 +1053,9 @@ const drawCtx = drawCanvas.getContext('2d');
 let isDrawing = false;
 let lastInk = null;
 let inkColour = '#f1f5f9';
+// The strokes of the drawing in progress: how it was made, for the hand to learn the gesture.
+let drawStrokes = [];
+let drawStroke = null;
 
 document.querySelectorAll('#inkPalette .ink-swatch').forEach((swatch) => {
   swatch.addEventListener('click', () => {
@@ -1085,6 +1088,7 @@ drawCanvas.addEventListener('pointerdown', (e) => {
   e.preventDefault();
   isDrawing = true;
   lastInk = null;
+  drawStroke = { points: [], start: performance.now() };
   try { drawCanvas.setPointerCapture(e.pointerId); } catch { /* not supported */ }
   drawPixel(e);
 });
@@ -1093,7 +1097,15 @@ drawCanvas.addEventListener('pointermove', (e) => {
   if (isDrawing) drawPixel(e);
 });
 
-const endStroke = () => { isDrawing = false; lastInk = null; };
+const endStroke = () => {
+  isDrawing = false;
+  lastInk = null;
+  if (drawStroke && drawStroke.points.length > 0) {
+    drawStrokes.push({ points: drawStroke.points, durationMs: Math.round(performance.now() - drawStroke.start) });
+    if (drawStrokes.length > 32) drawStrokes.shift();
+  }
+  drawStroke = null;
+};
 drawCanvas.addEventListener('pointerup', endStroke);
 drawCanvas.addEventListener('pointercancel', endStroke);
 drawCanvas.addEventListener('lostpointercapture', endStroke);
@@ -1103,6 +1115,7 @@ function drawPixel(e) {
   const x = Math.floor((e.clientX - rect.left) * (64 / rect.width));
   const y = Math.floor((e.clientY - rect.top) * (64 / rect.height));
   drawCtx.fillStyle = inkColour;
+  if (drawStroke && drawStroke.points.length < 512 && (!lastInk || lastInk.x !== x || lastInk.y !== y)) drawStroke.points.push([x, y]);
   if (lastInk) {
     const steps = Math.max(Math.abs(x - lastInk.x), Math.abs(y - lastInk.y));
     for (let i = 1; i <= steps; i++) {
@@ -1175,6 +1188,7 @@ document.getElementById('sendDrawing')?.addEventListener('click', () => {
 document.getElementById('clearDrawing')?.addEventListener('click', () => {
   drawCtx.fillStyle = '#111827';
   drawCtx.fillRect(0, 0, 64, 64);
+  drawStrokes = [];
 });
 
 // Inject neuromodulators
@@ -1662,7 +1676,9 @@ function playVocalization(v) {
 /** The whiteboard drawing as the brain sees it: grey levels for the shape, colour apart. */
 function currentDrawing() {
   const { pixels, rgb } = pixelsOf(drawCtx);
-  return { pixels, rgb, width: 64, height: 64 };
+  const image = { pixels, rgb, width: 64, height: 64 };
+  if (drawStrokes.length > 0) image.strokes = drawStrokes.map((s) => ({ points: s.points, durationMs: s.durationMs }));
+  return image;
 }
 
 let lessonCurve = [];
@@ -1824,6 +1840,8 @@ function showImagination(im) {
   if (dream || Number(im.novelty) >= 0.5) addLog('info', `${dream ? '🌙 Dreamed' : '💭 Imagined'}: ${escapeHtml([...words, ...evoked].join(' · ') || sources.join(' + '))}`);
 }
 
+let drawingAnimation = 0;
+
 function showBrainDrawing(d) {
   const canvas = document.getElementById('brainCanvas2d');
   const side = Number(d.gridSide);
@@ -1833,15 +1851,31 @@ function showBrainDrawing(d) {
   ctx.fillStyle = '#111827';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = d.source === 'scribble' ? '#64748b' : '#f8fafc';
-  for (const index of d.cells) {
+  const ink = (index) => {
     const i = Number(index);
-    if (!Number.isInteger(i) || i < 0 || i >= side * side) continue;
+    if (!Number.isInteger(i) || i < 0 || i >= side * side) return;
     ctx.fillRect((i % side) * cell, Math.floor(i / side) * cell, cell, cell);
+  };
+  const strokes = Array.isArray(d.strokes) ? d.strokes.filter((s) => s && Array.isArray(s.cells)) : [];
+  if (strokes.length > 0) {
+    // It knows a gesture for this drawing: the strokes appear in order, each over its time.
+    const token = ++drawingAnimation;
+    let at = 0;
+    for (const stroke of strokes) {
+      const duration = Math.min(3000, Math.max(80, Number(stroke.durationMs) || 200));
+      stroke.cells.forEach((index, k) => {
+        setTimeout(() => { if (drawingAnimation === token) { ctx.fillStyle = '#f8fafc'; ink(index); } }, at + (duration * k) / stroke.cells.length);
+      });
+      at += duration + 120;
+    }
+  } else {
+    drawingAnimation++;
+    for (const index of d.cells) ink(index);
   }
   const what = { scribble: 'Scribbling', copy: 'Copying what it saw', 'from-memory': 'Drawing what came to mind', imagined: 'Drawing what it imagined' }[d.source] || 'Drawing';
   const status = document.getElementById('handStatus');
   if (status) status.textContent = what;
-  if (d.source !== 'scribble') addLog('info', `✍️ ${what} (${d.cells.length} cells)`);
+  if (d.source !== 'scribble') addLog('info', `✍️ ${what} (${d.cells.length} cells${strokes.length > 0 ? `, ${strokes.length} strokes as it was shown` : ''})`);
 }
 
 function showBrainWriting(w) {

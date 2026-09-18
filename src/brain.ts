@@ -58,7 +58,8 @@ import { Lexicon } from './regions/broca-wernicke/lexicon.js';
 import { MotorCortex, type MotorOutput } from './regions/motor-cortex/motor-cortex.js';
 import { synthesizeFrames, UTTERANCE_FRAME_MS, type VocalCommand } from './core/voice/vocal-tract.js';
 import { HandMotorCortex, type HandOutput } from './regions/motor-cortex/hand-motor-cortex.js';
-import { BOARD_SIDE, GRID_SIDE, renderDrawing, type Drawing } from './core/hand/whiteboard.js';
+import { BOARD_SIDE, GRID_SIDE, inkedCells, renderDrawing, type Drawing } from './core/hand/whiteboard.js';
+import type { StrokePath } from './core/hand/strokes.js';
 import { seedSpanishLexicon, encodeSentenceToLexiconSpace, wordToPattern } from './regions/broca-wernicke/spanish-lexicon.js';
 import { seedEnglishLexicon } from './regions/broca-wernicke/english-lexicon.js';
 import * as fs from 'fs';
@@ -219,6 +220,8 @@ export interface HandDrawing {
   gridSide: number;
   /** A scribble (exploration), a copy of what it has just seen, a drawing of what came to mind, or of what it imagined. */
   source: 'scribble' | 'copy' | 'from-memory' | 'imagined';
+  /** The strokes it lays the cells down in, when it knows a gesture for the drawing. */
+  strokes?: StrokePath[];
   confidence: number;
   timestamp: number;
   serial: number;
@@ -320,6 +323,12 @@ export interface PerceptionOptions {
   propagate?: boolean;
   /** Colour of the image, interleaved r, g, b per pixel (`see` only). Without it, the thing has no colour. */
   rgb?: Uint8Array | number[];
+  /**
+   * How the image was drawn, if someone drew it in front of the brain: the
+   * strokes in order, each the points the pen went through (image pixels)
+   * and how long it took. The hand learns the gesture (`see` only).
+   */
+  strokes?: Array<{ points: Array<[number, number]>; durationMs?: number }>;
 }
 
 /** Event emitted by the brain */
@@ -1017,6 +1026,10 @@ export class DigitalBrain {
 
     // Send to the thalamus
     this.injectSensoryInput('visual', rates);
+    // The hand notes what is in view (a copy is a copy of it) and, if someone
+    // drew it in front of the brain, watches how (the gesture).
+    (this.regions.get('handMotorCortex') as HandMotorCortex | undefined)?.lookingAt(inkedCells(pixels, width, height));
+    if (options.strokes && options.strokes.length > 0) this.watchStrokes(options.strokes, width, height);
     // …and, if the image has colour, its colour goes its own way (V4).
     if (rgb) {
       const colour = colourOf(rgb, width, height);
@@ -1025,6 +1038,33 @@ export class DigitalBrain {
 
     // Process several ticks to propagate through the brain
     return this.processPerception('visual', options);
+  }
+
+  /** The strokes of a drawing made in view, as paths of whiteboard cells, for the hand to learn the gesture. */
+  private watchStrokes(strokes: NonNullable<PerceptionOptions['strokes']>, width: number, height: number): void {
+    const hand = this.regions.get('handMotorCortex') as HandMotorCortex | undefined;
+    if (!hand) return;
+    const paths: StrokePath[] = [];
+    for (const stroke of strokes) {
+      const cells: number[] = [];
+      const visit = (x: number, y: number): void => {
+        const col = Math.max(0, Math.min(GRID_SIDE - 1, Math.floor((x * GRID_SIDE) / width)));
+        const row = Math.max(0, Math.min(GRID_SIDE - 1, Math.floor((y * GRID_SIDE) / height)));
+        const cell = row * GRID_SIDE + col;
+        if (cells[cells.length - 1] !== cell) cells.push(cell);
+      };
+      // The pen moves continuously between the points reported: walk the line.
+      let last: [number, number] | null = null;
+      for (const [x, y] of stroke.points) {
+        if (last) {
+          const steps = Math.max(1, Math.ceil(Math.max(Math.abs(x - last[0]), Math.abs(y - last[1]))));
+          for (let i = 1; i <= steps; i++) visit(last[0] + ((x - last[0]) * i) / steps, last[1] + ((y - last[1]) * i) / steps);
+        } else visit(x, y);
+        last = [x, y];
+      }
+      if (cells.length > 0) paths.push({ cells, durationMs: stroke.durationMs ?? 0 });
+    }
+    if (paths.length > 0) hand.observeStrokes(paths);
   }
 
   /** The eye lands on an object: the cortex sees it (and its colour) alone. */
@@ -1619,6 +1659,7 @@ export class DigitalBrain {
       timestamp: this.currentTime,
       serial: ++this.drawingSerial,
     };
+    if (output.strokes) drawing.strokes = output.strokes;
     this.lastDrawing = drawing;
 
     // Its own drawing is not an object of the world (see `vocalize`): the hand

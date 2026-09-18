@@ -119,6 +119,12 @@ export class AssociationMemory {
     return this.bindingCount;
   }
 
+  /** Whether some conjunction carries this channel of a modality (the unit is in use by an association). */
+  usesChannel(modality: string, channel: number): boolean {
+    const units = this.carriers.get(modality)?.get(channel);
+    return units !== undefined && units.size > 0;
+  }
+
   /** Number of synapses learned (for monitoring). */
   get synapseCount(): number {
     let n = 0;

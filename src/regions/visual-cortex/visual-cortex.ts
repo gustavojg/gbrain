@@ -31,7 +31,7 @@ import { SpikingNeuron, createNeuronPopulation } from '../../core/snn/neuron.js'
 import type { NeuronTypeName } from '../../core/snn/neuron.js';
 import { rateCoding } from '../../core/snn/spike-train.js';
 import { packArray, unpackFloat32, unpackInt32 } from '../../core/persistence/binary-protocol.js';
-import { PresentationTracker, PrototypeMemory, type Recognition } from '../../core/memory/prototype-memory.js';
+import { PERCEPTUAL_NARROWING, PresentationTracker, PrototypeMemory, RELEASE_KEEP, type CategoryView, type Recognition } from '../../core/memory/prototype-memory.js';
 
 /**
  * Minimum engram overlap (Jaccard) for a stimulus to count as a re-encounter of
@@ -185,6 +185,8 @@ export class VisualCortex extends BrainRegion {
   private suppressPercept = false;
   /** 1 for neurons that are part of a learned engram (see vigilance in dynamicsTick). */
   private tuned!: Int32Array;
+  /** Entrenchment (0..1) of each neuron's categories: relaxes its vigilance (perceptual narrowing). */
+  private entrenched!: Float32Array;
   private lastEngram: Int32Array = new Int32Array(0);
   private perceptCount = 0;
 
@@ -232,6 +234,7 @@ export class VisualCortex extends BrainRegion {
     this.sortIdx = new Int32Array(cfg.neuronCount);
     this.recentSpikeCounts = new Float32Array(cfg.neuronCount);
     this.tuned = new Int32Array(cfg.neuronCount);
+    this.entrenched = new Float32Array(cfg.neuronCount);
     this.seenInput = new Float32Array(cfg.inputCount);
     this.presentation = new PresentationTracker(cfg.neuronCount, cfg.kWinners);
     this.prototypes = new PrototypeMemory({
@@ -334,7 +337,8 @@ export class VisualCortex extends BrainRegion {
       // what it had learned is eroded (a cross seen after 150 unrelated
       // drawings was no longer recognized). A poor match leaves the field to
       // untuned neurons, which get recruited (adaptive resonance; Grossberg, 1987).
-      if (this.tuned[nn] === 1 && score[nn] < VISUAL_VIGILANCE * rateNorm) score[nn] -= MISMATCH_PENALTY * rateNorm;
+      // Perceptual narrowing: a neuron of a well-worn category is lenient — it captures nearby inputs.
+      if (this.tuned[nn] === 1 && score[nn] < VISUAL_VIGILANCE * (1 - PERCEPTUAL_NARROWING.gain * this.entrenched[nn]) * rateNorm) score[nn] -= MISMATCH_PENALTY * rateNorm;
     }
 
     // --- 2. k-WTA lateral inhibition by cosine score (+ homeostatic bias) ---
@@ -573,6 +577,7 @@ export class VisualCortex extends BrainRegion {
       this.lastRecognition = recognition;
       this.lastEngram = engram;
       this.perceptCount++;
+      this.refreshEntrenchment();
     }
   }
 
@@ -667,6 +672,50 @@ export class VisualCortex extends BrainRegion {
   /** Completed presentations so far — changes exactly when a new percept is available. */
   get percepts(): number {
     return this.perceptCount;
+  }
+
+
+  /** The perceptual categories learned so far. */
+  categories(): CategoryView[] {
+    return this.prototypes.list();
+  }
+
+  /** Vigilance of a neuron: relaxed by how entrenched its categories are (perceptual narrowing). */
+  private refreshEntrenchment(): void {
+    this.entrenched = this.prototypes.entrenchment(this.neuronCount, PERCEPTUAL_NARROWING.tau);
+  }
+
+  /**
+   * A sleep passed: categories age, and those met fewer than `minExposures`
+   * times and unseen for `afterSleeps` sleeps are pruned; their neurons, if no
+   * surviving category — nor anything else (`inUse`) — runs on them, are
+   * released for recruitment.
+   *
+   * @returns Labels of the pruned categories
+   */
+  pruneCategories(minExposures: number, afterSleeps: number, inUse: (unit: number) => boolean = () => false): string[] {
+    this.prototypes.age();
+    const pruned = this.prototypes.prune(minExposures, afterSleeps);
+    if (pruned.length === 0) return [];
+    const used = this.prototypes.unitsInUse();
+    // A neuron is released only if nothing else runs on it: no surviving
+    // category, no association, no motor map (synapses that carry something
+    // are not the ones pruned).
+    for (const c of pruned) for (const u of c.units) if (!used.has(u) && !inUse(u)) this.release(u);
+    this.refreshEntrenchment();
+    return pruned.map((c) => c.label);
+  }
+
+  private release(n: number): void {
+    this.tuned[n] = 0;
+    this.winCounts[n] = 0;
+    const offset = n * this.inputCount;
+    for (let i = 0; i < this.inputCount; i++) this.weights[offset + i] *= RELEASE_KEEP;
+    this.onReleased();
+  }
+
+  private onReleased(): void {
+    this.norm2Cache = null;
   }
 
   /** Names a code reinstated from memory: the learned category it overlaps most. */
@@ -923,6 +972,7 @@ export class VisualCortex extends BrainRegion {
     const tuned = unpackInt32(d.tuned, n);
     if (tuned) this.tuned.set(tuned);
     this.prototypes.deserialize(d.categories);
+    this.refreshEntrenchment();
 
     const memories = Array.isArray(d.memories) ? d.memories : [];
     this.memories = [];

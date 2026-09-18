@@ -134,6 +134,8 @@ function connectWebSocket() {
       showBrainDrawing(msg.data);
     } else if (msg.type === 'writing' && msg.data) {
       showBrainWriting(msg.data);
+    } else if (msg.type === 'imagination' && msg.data) {
+      showImagination(msg.data);
     } else if (msg.type === 'lesson' && msg.data) {
       showLessonProgress(msg.data);
     } else if (msg.type === 'practice' && msg.data) {
@@ -286,13 +288,13 @@ function updateMotivationRow(m) {
   let last = '';
   if (e) {
     const sign = e.error >= 0 ? '+' : '−';
-    const what = { novelty: 'new', progress: 'learning', external: e.reward >= 0 ? 'praise' : 'reprimand', omission: 'expected, nothing came' }[e.kind] || e.kind;
+    const what = { novelty: 'new', progress: 'learning', external: e.reward >= 0 ? 'praise' : 'reprimand', omission: 'expected, nothing came', imagination: 'imagined' }[e.kind] || e.kind;
     last = ` · last: ${what}${e.key ? ` (${escapeHtml(e.key.replace(/^(visual|auditory|word|activity):/, ''))})` : ''} dopamine ${sign}${Math.abs(e.error).toFixed(2)}`;
   }
   what.classList.remove('percept-empty');
   what.innerHTML =
     `curious ${pct(m.drives.curiosity)} · bored ${pct(m.drives.boredom)} · lonely ${pct(m.drives.contact)}` +
-    `<span class="percept-total">babble ${Number(m.activityValues.babble).toFixed(2)} · scribble ${Number(m.activityValues.scribble).toFixed(2)} (worth of each activity)${escapeHtml(last)}</span>`;
+    `<span class="percept-total">babble ${Number(m.activityValues.babble).toFixed(2)} · scribble ${Number(m.activityValues.scribble).toFixed(2)} · daydream ${Number(m.activityValues.daydream ?? 0).toFixed(2)} (worth of each activity)${escapeHtml(last)}</span>`;
 }
 
 function updateWorkingMemory(slots) {
@@ -338,9 +340,10 @@ function showAffect(d) {
   if (d.kind === 'dopamine' && d.event) {
     const e = d.event;
     if (Math.abs(Number(e.error)) < 0.15 || e.kind === 'progress' && e.key && e.key.startsWith('activity:')) return;
-    const name = e.key ? escapeHtml(String(e.key).replace(/^(visual|auditory|word|activity):/, '')) : 'that';
+    const name = e.key ? escapeHtml(String(e.key).replace(/^(imagined|foreseen):/, '').replace(/(^|\+)(visual|colour|auditory|word|activity):/g, '$1')) : 'that';
     const line = e.kind === 'novelty' ? `✨ ${name} is new to it` :
       e.kind === 'progress' ? `📈 It is getting better at ${name}` :
+      e.kind === 'imagination' ? (String(e.key || '').startsWith('foreseen:') ? `🔮 It had imagined this: ${name}` : `💭 Imagining something new: ${name}`) :
       e.kind === 'omission' ? `😕 It expected praise for ${name} and nothing came` :
       Number(e.error) > 0 ? `🎁 Better than it expected for ${name}` : `😞 Worse than it expected for ${name}`;
     addLog('emotion', `${line} (dopamine ${Number(e.error) >= 0 ? '+' : ''}${Number(e.error).toFixed(2)})`);
@@ -348,6 +351,7 @@ function showAffect(d) {
   }
   if (d.kind === 'question-learned') { addLog('info', `❓ “${escapeHtml(String(d.question).replace(/^lexical:/, ''))}” asks for the ${escapeHtml(String(d.modality))} of things (${Number(d.known)} questions known)`); return; }
   if (d.kind === 'answer') return; // the writing line says it
+  if (d.kind === 'foreseen') { addLog('emotion', `🔮 It had imagined ${escapeHtml((d.sources || []).map((s) => String(s).replace(/^[a-z]+:/, '')).join(' + '))} — and here it is`); return; }
   if (d.kind === 'startle') addLog('emotion', '😳 Startled by a sudden loud sound');
   else if (d.kind === 'looming') addLog('emotion', '😨 Something is coming closer fast');
   else if (d.kind === 'face') addLog('emotion', `🙂 That looks like a face (${Math.round(Number(d.match) * 100)}%)`);
@@ -1743,6 +1747,51 @@ document.getElementById('feedbackNo')?.addEventListener('click', () => {
   sendControl('feedback', { positive: false }, 'feedback');
 });
 
+/**
+ * Something the brain imagined (awake: a daydream; asleep: a dream). Shown
+ * in the stream of consciousness with its origin marked — it is not a
+ * percept — and in the mind's eye canvas.
+ */
+function showImagination(im) {
+  const box = document.getElementById('thoughtBox');
+  const words = Array.isArray(im.words) ? im.words.map(String) : [];
+  const evoked = [im.visual, im.colour, im.auditory].filter((x) => typeof x === 'string');
+  const sources = (Array.isArray(im.sources) ? im.sources : []).map((s) => String(s).replace(/^[a-z]+:/, ''));
+  const dream = im.origin === 'dream';
+  if (box) {
+    const empty = box.querySelector('.thought-empty');
+    if (empty) empty.remove();
+    const time = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const entry = document.createElement('div');
+    entry.className = 'thought-entry thought-imagined';
+    entry.innerHTML =
+      `<span class="thought-time">${time}</span>` +
+      `<span class="thought-emoji">${dream ? '🌙' : '💭'}</span>` +
+      `<span class="thought-emotion">${dream ? 'dreamed' : 'imagined'}</span>` +
+      `<span class="thought-words">${escapeHtml([...words, ...evoked].join(' · ') || '…')}</span>` +
+      `<span class="thought-sources">${escapeHtml(sources.join(' + '))}${Number(im.novelty) >= 0.5 ? ' · never seen together' : ''}</span>`;
+    box.insertBefore(entry, box.firstChild);
+    while (box.children.length > 30) box.removeChild(box.lastChild);
+  }
+  const canvas = document.getElementById('mindsEye');
+  const side = Number(im.imageSide);
+  if (canvas && Array.isArray(im.image) && side > 0 && side <= 64 && im.image.length === side * side) {
+    const ctx = canvas.getContext('2d');
+    const cell = canvas.width / side;
+    ctx.fillStyle = '#111827';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    for (let i = 0; i < im.image.length; i++) {
+      const v = Math.max(0, Math.min(1, Number(im.image[i]) || 0));
+      if (v <= 0.05) continue;
+      ctx.fillStyle = dream ? `rgba(196, 181, 253, ${v})` : `rgba(248, 250, 252, ${v})`;
+      ctx.fillRect((i % side) * cell, Math.floor(i / side) * cell, cell, cell);
+    }
+    const label = document.getElementById('mindsEyeLabel');
+    if (label) label.textContent = dream ? 'dreamed' : 'imagined';
+  }
+  if (dream || Number(im.novelty) >= 0.5) addLog('info', `${dream ? '🌙 Dreamed' : '💭 Imagined'}: ${escapeHtml([...words, ...evoked].join(' · ') || sources.join(' + '))}`);
+}
+
 function showBrainDrawing(d) {
   const canvas = document.getElementById('brainCanvas2d');
   const side = Number(d.gridSide);
@@ -1757,7 +1806,7 @@ function showBrainDrawing(d) {
     if (!Number.isInteger(i) || i < 0 || i >= side * side) continue;
     ctx.fillRect((i % side) * cell, Math.floor(i / side) * cell, cell, cell);
   }
-  const what = { scribble: 'Scribbling', copy: 'Copying what it saw', 'from-memory': 'Drawing what came to mind' }[d.source] || 'Drawing';
+  const what = { scribble: 'Scribbling', copy: 'Copying what it saw', 'from-memory': 'Drawing what came to mind', imagined: 'Drawing what it imagined' }[d.source] || 'Drawing';
   const status = document.getElementById('handStatus');
   if (status) status.textContent = what;
   if (d.source !== 'scribble') addLog('info', `✍️ ${what} (${d.cells.length} cells)`);
@@ -1818,7 +1867,9 @@ document.getElementById('sleepBtn')?.addEventListener('click', () => {
     .then(r => r.json())
     .then(result => {
       status.textContent = 'Awake';
-      addLog('info', `💤 Consolidation complete: ${result.memoriesReplayed || 0} memories`);
+      const dreams = Array.isArray(result.dreamed) ? result.dreamed.filter(Boolean) : [];
+      addLog('info', `💤 Consolidation complete: ${result.memoriesReplayed || 0} memories, ${result.dreams || 0} dreams${result.pruned && result.pruned.length ? `, pruned ${result.pruned.length}` : ''}`);
+      for (const d of dreams) addLog('info', `🌙 Dreamed: ${escapeHtml(String(d))}`);
     })
     .catch(err => {
       status.textContent = 'Error';

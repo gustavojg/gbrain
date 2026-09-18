@@ -589,6 +589,9 @@ async function handleApiRoute(url: URL, req: http.IncomingMessage, res: http.Ser
       memoriesReplayed: stats.memoriesReplayed,
       episodesConsolidated: stats.consolidatedLabels.length,
       synapsesStrengthened: stats.synapsesStrengthened,
+      dreams: stats.dreams ?? 0,
+      dreamed: stats.dreamed ?? [],
+      pruned: stats.prunedCategories ?? [],
     });
     return;
   }
@@ -818,8 +821,8 @@ wss.on('connection', (ws: WebSocket) => {
 
 // The brain's own voice: every vocalization is pushed to the dashboards, which
 // render it with their synthesizer.
-// …and so is everything else it DOES: what it draws and what it writes.
-const RESPONSE_KINDS = new Set(['vocalization', 'drawing', 'writing']);
+// …and so is everything else it DOES: what it draws and what it writes — and what it imagines, awake or asleep.
+const RESPONSE_KINDS = new Set(['vocalization', 'drawing', 'writing', 'imagination']);
 brain.on('response', (event) => {
   const kind = event.data.kind;
   if (typeof kind !== 'string' || !RESPONSE_KINDS.has(kind)) return;

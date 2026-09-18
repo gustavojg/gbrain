@@ -56,7 +56,7 @@ const DEFAULT_HAND_CONFIG: HandMotorConfig = {
 /** A drawing issued by the hand motor cortex, with why it was issued. */
 export interface HandOutput {
   cells: Drawing;
-  source: 'scribble' | 'copy' | 'from-memory';
+  source: 'scribble' | 'copy' | 'from-memory' | 'imagined';
   /** For a copy or a drawing from memory: how strongly the image drove the map (0–1). */
   confidence: number;
 }

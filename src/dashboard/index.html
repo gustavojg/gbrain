@@ -437,9 +437,15 @@
 
       <!-- Stream of consciousness -->
       <div class="io-section">
-        <label class="io-label">💭 Stream of Consciousness</label>
-        <div class="thought-box" id="thoughtBox">
-          <div class="thought-empty">…the brain is idle. Read something to it.</div>
+        <label class="io-label">💭 Stream of Consciousness <span class="io-hint">— 💭 imagined and 🌙 dreamed entries are its own, not things seen</span></label>
+        <div class="thought-row">
+          <div class="thought-box" id="thoughtBox">
+            <div class="thought-empty">…the brain is idle. Read something to it, or leave it alone and it will daydream.</div>
+          </div>
+          <div class="minds-eye-wrap" title="The mind's eye: the image the visual cortex renders of what it imagines">
+            <canvas id="mindsEye" class="minds-eye" width="56" height="56"></canvas>
+            <span class="minds-eye-label" id="mindsEyeLabel">mind's eye</span>
+          </div>
         </div>
       </div>
 

@@ -501,6 +501,39 @@ export class Hippocampus extends BrainRegion {
     return candidates;
   }
 
+  /**
+   * A dream: two episodes chosen at random, half the units of each, and CA3
+   * completes the chimera (generative replay; van de Ven et al. 2020). The
+   * result is not imprinted and founds no episode — it is what the cortex is
+   * shown during REM, with plasticity low.
+   *
+   * @returns The completed chimera and the episodes it was made of, or `null` with fewer than two episodes
+   */
+  dream(random: () => number = Math.random): { code: Float32Array; sources: [number, number] } | null {
+    const n = this.episodicMemories.length;
+    if (n < 2) return null;
+    const a = Math.floor(random() * n);
+    let b = Math.floor(random() * (n - 1));
+    if (b >= a) b++;
+    const codeA = this.episodicMemories[a].pattern;
+    const codeB = this.episodicMemories[b].pattern;
+    const activeA: number[] = [];
+    const activeB: number[] = [];
+    for (let i = 0; i < codeA.length; i++) if (codeA[i] > 0) activeA.push(i);
+    for (let i = 0; i < codeB.length; i++) if (codeB[i] > 0) activeB.push(i);
+    const take = (units: number[], count: number): number[] => {
+      const pool = [...units];
+      const out: number[] = [];
+      while (out.length < count && pool.length > 0) out.push(pool.splice(Math.floor(random() * pool.length), 1)[0]);
+      return out;
+    };
+    const half = Math.max(1, Math.round(this.kActive / 2));
+    const cue = new Float32Array(this.neuronCount);
+    for (const u of take(activeA, half)) cue[u] = 1;
+    for (const u of take(activeB, half)) cue[u] = 1;
+    return { code: this.completeFromCode(cue), sources: [a, b] };
+  }
+
   // ----------------------------------------------------------------
   // Persistence of the episodic index
   // ----------------------------------------------------------------

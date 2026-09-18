@@ -25,7 +25,7 @@ import { SpikeBus, type SpikePacket } from './core/bus/spike-bus.js';
 import { Connectome } from './core/bus/connectome.js';
 import { NeuromodulatorSystem, ModulatorType, type ModulationEffects } from './core/neuromodulators/modulator-system.js';
 import { type BrainRegion, type RegionActivity } from './core/brain-region.js';
-import type { Recognition } from './core/memory/prototype-memory.js';
+import { PrototypeMemory, type Recognition } from './core/memory/prototype-memory.js';
 import { AssociationMemory, type ModalCode } from './core/memory/association-memory.js';
 import { ConsolidationEngine, type ConsolidationStats, type ShortTermEntry } from './core/memory/consolidation.js';
 import { BrainPersistence, BACKUP_SUFFIX, writeFileAtomic } from './core/persistence/binary-protocol.js';
@@ -45,6 +45,9 @@ import { Hippocampus } from './regions/hippocampus/hippocampus.js';
 import { Amygdala } from './regions/amygdala/amygdala.js';
 import { appraiseProsody, type ProsodyAppraisal, type VoiceContour } from './regions/amygdala/prosody.js';
 import { Motivation, type ActivityKind, type Drives, type RewardEvent } from './core/motivation/motivation.js';
+import { ImaginationMemory, mixUnits, type ImaginationOrigin, type ImaginedCombination } from './core/imagination/imagination.js';
+import type { CategoryView } from './core/memory/prototype-memory.js';
+import { mulberry32 } from './core/random.js';
 import { SequenceMemory, type Prediction } from './core/memory/sequence-memory.js';
 import { ColorCortex } from './regions/color-cortex/color-cortex.js';
 import { QuestionMemory } from './core/memory/question-memory.js';
@@ -85,6 +88,8 @@ export interface BrainState {
   workingMemory?: Array<{ label: string; priority: number; age: number }>;
   /** Questions it has learned to answer, and the last answer it gave */
   questions?: { known: number; lastAnswer: { question: string; modality: string; word: string; timestamp: number } | null };
+  /** What it has imagined, awake and asleep. */
+  imagination?: ImaginationState;
   /** Spike bus traffic */
   busTraffic: Record<string, { sent: number; received: number }>;
   /** Total ticks processed */
@@ -212,8 +217,8 @@ export interface HandDrawing {
   /** Inked cells of the GRID_SIDE × GRID_SIDE grid (`row * gridSide + col`). */
   cells: Drawing;
   gridSide: number;
-  /** A scribble (exploration), a copy of what it has just seen, or a drawing of what came to mind. */
-  source: 'scribble' | 'copy' | 'from-memory';
+  /** A scribble (exploration), a copy of what it has just seen, a drawing of what came to mind, or of what it imagined. */
+  source: 'scribble' | 'copy' | 'from-memory' | 'imagined';
   confidence: number;
   timestamp: number;
   serial: number;
@@ -247,6 +252,44 @@ export interface InnateState {
   affectiveWords: number;
   /** 0..1: sleep pressure; the brain sleeps when it reaches 1 (and is at rest). */
   sleepPressure: number;
+}
+
+/**
+ * Something the brain made up: two things it knows, recombined and completed
+ * by its own memory (see core/imagination). Tagged with its origin — never an
+ * episode of the world.
+ */
+export interface Imagined {
+  origin: ImaginationOrigin;
+  /** What it was made of ('visual:Visual-1', 'colour:Colour-2'). */
+  sources: string[];
+  /** Words it brought to mind. */
+  words: string[];
+  /** Categories it evoked in each modality (what it "sees" and "hears"). */
+  visual: string | null;
+  colour: string | null;
+  auditory: string | null;
+  /** How far from anything experienced (0..1): 1 for a combination never met. */
+  novelty: number;
+  /** Times this combination has been imagined, this one included. */
+  times: number;
+  /** The image in the mind's eye (retinal pattern, 0..1), if any. */
+  image: number[] | null;
+  imageSide: number;
+  timestamp: number;
+  serial: number;
+}
+
+/** State of the imagination (see core/imagination). */
+export interface ImaginationState {
+  lastImagined: Imagined | null;
+  /** Daydreams and dreams so far. */
+  daydreams: number;
+  dreams: number;
+  /** Distinct combinations imagined, and how many of them later turned up for real. */
+  combinations: number;
+  foreseen: number;
+  recent: ImaginedCombination[];
 }
 
 /** State of the motivation system (see core/motivation). */
@@ -335,10 +378,42 @@ export class DigitalBrain {
   /** Need for contact from which a babble becomes a call, and the least time between calls. */
   private static readonly CALL_CONTACT = 0.7;
   private static readonly CALL_INTERVAL_MS = 60_000;
+
+  // ── Imagination (default mode) and dreams ──
+  /** Alone with nothing coming in for this long, the mind starts to wander. */
+  private static readonly DAYDREAM_AFTER_MS = 5000;
+  private readonly daydreamAfterTicks: number;
+  /** Reward of a first imagining of a combination never experienced (habituates with repetition). */
+  private static readonly IMAGINATION_GAIN = 0.4;
+  /** Reward when something imagined turns up for real (an imagining that proved useful). */
+  private static readonly FORESEEN_REWARD = 0.5;
+  /** Overlap from which what a cue reinstates is the other thing: the pair was experienced together. */
+  private static readonly KNOWN_PAIR_OVERLAP = 0.3;
+  /** REM: chimeras of two episodes completed in CA3 and shown to the cortex, per sleep. */
+  private static readonly DREAMS_PER_SLEEP = 3;
+  /** REM plasticity: the cortex sees the dream, it barely learns it. */
+  private static readonly DREAM_PLASTICITY = 0.3;
+  /** REM: learned things replayed as variants (shifted, noisy) so that the categories generalize. */
+  private static readonly REM_VARIANTS = 4;
+  private static readonly REM_CYCLES = 4;
+  /** Pruning: a category met fewer times than this and unseen for this many sleeps is dropped. */
+  private static readonly PRUNE_MIN_EXPOSURES = 2;
+  private static readonly PRUNE_AFTER_SLEEPS = 2;
+  private readonly imagination = new ImaginationMemory();
+  /** Imagination and dreams draw from their own random source: they leave every other trajectory untouched. */
+  private readonly imaginationRandom = mulberry32(0x1ac1e);
+  private lastImagined: Imagined | null = null;
+  private imaginedSerial = 0;
+  private daydreams = 0;
+  private dreams = 0;
+  private foreseen = 0;
+  /** Ticks since the last percept of the world (own voice and drawings do not count). */
+  private ticksSincePercept = Number.MAX_SAFE_INTEGER;
+  private ticksSinceDaydream = 0;
   /** Dopamine released per unit of positive prediction error, and per unit of negative (the dip). */
   private static readonly DOPAMINE_BURST_GAIN = 0.5;
   private static readonly DOPAMINE_DIP_GAIN = 0.4;
-  private chosen: Record<ActivityKind, number> = { babble: 0, scribble: 0 };
+  private chosen: Record<ActivityKind, number> = { babble: 0, scribble: 0, daydream: 0 };
   private motorLearnings = { babble: 0, scribble: 0 };
 
   // ── Questions: what a question asks for, and answering it ──
@@ -642,6 +717,7 @@ export class DigitalBrain {
     this.perceptionTicks = this.ticksFor(DigitalBrain.PERCEPTION_MS);
     this.associationWindowTicks = this.ticksFor(DigitalBrain.ASSOCIATION_WINDOW_MS);
     this.explorationIntervalTicks = this.ticksFor(DigitalBrain.EXPLORATION_INTERVAL_MS);
+    this.daydreamAfterTicks = this.ticksFor(DigitalBrain.DAYDREAM_AFTER_MS);
     this.motivation = new Motivation({
       rewardWindowTicks: this.ticksFor(DigitalBrain.VERDICT_WINDOW_MS),
       boredomTicks: this.ticksFor(60_000),
@@ -1145,6 +1221,19 @@ export class DigitalBrain {
     const available: ActivityKind[] = [];
     if (this.babbling && motor && !motor.vocalizing && !this.presentations.has('auditory')) available.push('babble');
     if (this.scribbling && hand && !hand.drawing && !this.presentations.has('visual')) available.push('scribble');
+    // Nothing coming in for a while: the default mode — the mind wanders. A
+    // mental activity, on its own clock: it takes no turn from the voice or
+    // the hand. Boredom brings it forward; the value it has earned, too.
+    this.ticksSinceDaydream++;
+    if (this.presentations.size === 0 && !this.isHearing && this.ticksSincePercept >= this.daydreamAfterTicks) {
+      const drives = this.motivation.drives(this.tickCount);
+      const pause = this.explorationIntervalTicks * (1 - DigitalBrain.BOREDOM_URGE * drives.boredom) * (1.2 - this.motivation.activityValues.daydream);
+      if (this.ticksSinceDaydream >= Math.max(1, Math.round(pause))) {
+        this.ticksSinceDaydream = 0;
+        this.chosen.daydream++;
+        this.imagineOnce('daydream');
+      }
+    }
     if (available.length === 0) return;
 
     const drives = this.motivation.drives(this.tickCount);
@@ -1169,6 +1258,189 @@ export class DigitalBrain {
     this.chosen[kind]++;
     if (kind === 'babble' && motor) this.vocalize(motor.babble());
     else if (kind === 'scribble' && hand) this.draw(hand.scribble());
+  }
+
+  // ================================================================
+  // IMAGINATION — the default mode, awake and asleep
+  // ================================================================
+
+  /** Everything it knows in the kinds it can recombine. */
+  private knownThings(): Array<{ modality: AssociationModality; category: CategoryView }> {
+    const things: Array<{ modality: AssociationModality; category: CategoryView }> = [];
+    for (const c of (this.regions.get('visualCortex') as VisualCortex | undefined)?.categories() ?? []) things.push({ modality: 'visual', category: c });
+    for (const c of (this.regions.get('colorCortex') as ColorCortex | undefined)?.categories() ?? []) things.push({ modality: 'colour', category: c });
+    for (const c of (this.regions.get('auditoryCortex') as AuditoryCortex | undefined)?.categories() ?? []) things.push({ modality: 'auditory', category: c });
+    return things;
+  }
+
+  /**
+   * One imagining. Two things it knows, taken at random, are recombined into
+   * a cue — half the units of each when they are of one kind (a chimera), the
+   * two side by side when they are of different kinds (a colour on a shape).
+   * The association memory completes the cue into words and into the other
+   * kinds, as it completes any partial cue (constructive episodic simulation;
+   * Schacter & Addis 2007), and the visual cortex renders it in the mind's
+   * eye through its feedback synapses (Kosslyn). Nothing of it is perceived:
+   * it founds no category, is bound to nothing and becomes no episode —
+   * reality monitoring (Johnson & Raye 1981) by construction.
+   *
+   * Awake (a daydream), imagining something never experienced is rewarding —
+   * dopamine the brain makes for itself when the world brings none — less
+   * each time the same imagining repeats, so it does not loop on one. Asleep
+   * (a dream) it is just what the sleeping cortex shows itself.
+   */
+  imagineOnce(origin: ImaginationOrigin, random: () => number = this.imaginationRandom): Imagined | null {
+    const things = this.knownThings();
+    if (things.length < 2) {
+      if (origin === 'daydream') this.reward(this.motivation.activityRewarded('daydream', 0, this.tickCount));
+      return null;
+    }
+    const ai = Math.floor(random() * things.length);
+    let bi = Math.floor(random() * (things.length - 1));
+    if (bi >= ai) bi++;
+    const a = things[ai];
+    const b = things[bi];
+    const sources = [`${a.modality}:${a.category.label}`, `${b.modality}:${b.category.label}`];
+
+    const visual = this.regions.get('visualCortex') as VisualCortex | undefined;
+    const colour = this.regions.get('colorCortex') as ColorCortex | undefined;
+    const auditory = this.regions.get('auditoryCortex') as AuditoryCortex | undefined;
+    const cortices = { visual, colour, auditory } as const;
+    const code = (units: readonly number[]): ModalCode => ({ indices: [...units], values: units.map(() => 1) });
+
+    const cue: Partial<Record<AssociationModality, ModalCode>> = {};
+    const labels: Record<'visual' | 'colour' | 'auditory', string | null> = { visual: null, colour: null, auditory: null };
+    let novelty: number;
+    if (a.modality === b.modality) {
+      const mixed = mixUnits(a.category.units, b.category.units, random);
+      cue[a.modality] = code(mixed);
+      const nearest = a.modality === 'lexical' ? null : cortices[a.modality]?.matchCategory(mixed) ?? null;
+      novelty = 1 - (nearest?.overlap ?? 0);
+      if (a.modality !== 'lexical') labels[a.modality] = nearest ? `${nearest.label}~` : null;
+    } else {
+      cue[a.modality] = code(a.category.units);
+      cue[b.modality] = code(b.category.units);
+      if (a.modality !== 'lexical') labels[a.modality] = a.category.label;
+      if (b.modality !== 'lexical') labels[b.modality] = b.category.label;
+      // Experienced together already? Then what one brings back of the other's kind IS the other.
+      const from = this.associations.recall(a.modality, cue[a.modality]!);
+      const reinstated = from?.recalled[b.modality];
+      const overlap = reinstated ? PrototypeMemory.overlap(DigitalBrain.topUnits(reinstated.pattern, b.category.units.length), b.category.units) : 0;
+      novelty = overlap >= DigitalBrain.KNOWN_PAIR_OVERLAP ? 0.2 : 1;
+    }
+
+    // Completion: what the cue brings to mind — words, and the kinds not in the cue.
+    const words = new Set<string>();
+    let lexicalPattern: Float32Array | null = null;
+    let imageUnits: readonly number[] | null = cue.visual?.indices ?? null;
+    for (const [modality, c] of Object.entries(cue) as Array<[AssociationModality, ModalCode]>) {
+      const result = this.associations.recall(modality, c);
+      if (!result || result.match < DigitalBrain.MIN_RECALL_MATCH) continue;
+      if (result.recalled.lexical) {
+        const read = this.readWords(result.recalled.lexical.pattern);
+        // The word that comes to mind for each thing: the one it spells best.
+        if (read.words.length > 0) words.add(read.words[0].word);
+        if (!lexicalPattern) lexicalPattern = read.pattern;
+        else for (let i = 0; i < lexicalPattern.length; i++) lexicalPattern[i] = Math.max(lexicalPattern[i], read.pattern[i]);
+      }
+      for (const other of ['visual', 'colour', 'auditory'] as const) {
+        if (other === modality || cue[other] || !result.recalled[other]) continue;
+        const units = DigitalBrain.topUnits(result.recalled[other]!.pattern, other === 'visual' ? 20 : other === 'colour' ? 6 : 3);
+        const match = cortices[other]?.matchCategory(units);
+        if (match && match.overlap >= (other === 'auditory' ? 0.2 : 0.3)) {
+          labels[other] = match.label;
+          if (other === 'visual' && !imageUnits) imageUnits = units;
+        }
+      }
+    }
+    const image = visual && imageUnits ? visual.imagine(imageUnits) : null;
+
+    const record = this.imagination.imagined(sources, this.tickCount, novelty >= 0.5);
+    const imagined: Imagined = {
+      origin,
+      sources,
+      words: [...words],
+      visual: labels.visual,
+      colour: labels.colour,
+      auditory: labels.auditory,
+      novelty,
+      times: record.count,
+      image: image ? Array.from(image, (v) => Math.round(v * 100) / 100) : null,
+      imageSide: image ? Math.round(Math.sqrt(image.length)) : 0,
+      timestamp: this.currentTime,
+      serial: ++this.imaginedSerial,
+    };
+    this.lastImagined = imagined;
+    if (origin === 'daydream') this.daydreams++;
+    else this.dreams++;
+
+    // The words come to mind (the thought stream shows them; on waking, the dream is remembered).
+    if (lexicalPattern) {
+      this.recalledLexicalPattern = lexicalPattern;
+      this.ticksSinceRecall = 0;
+    }
+    if (origin === 'daydream') {
+      // Its own reward: new, and less each time it is the same imagining.
+      const reward = (DigitalBrain.IMAGINATION_GAIN * novelty) / record.count;
+      this.reward(this.motivation.activityRewarded('daydream', reward, this.tickCount, `imagined:${sources.join('+')}`));
+      // If the hand is on and knows how, it draws what it imagined.
+      const hand = this.regions.get('handMotorCortex') as HandMotorCortex | undefined;
+      // Drawn once, the first time it imagines something never experienced.
+      const output = image && hand?.copy && novelty >= 0.5 && record.count === 1 ? hand.drawImagined(image) : null;
+      if (output) this.draw({ ...output, source: 'imagined' });
+    }
+    this.emitEvent({ type: 'response', timestamp: this.currentTime, data: { kind: 'imagination', ...imagined } });
+    return imagined;
+  }
+
+  /**
+   * REM, generative replay of what it knows: each well-met visual category is
+   * rendered from its engram, shifted and roughened, and shown to the cortex
+   * with plasticity low — variants it never saw, so that the category comes
+   * to cover them (Hoel 2021: dreams as regularization against overfitting).
+   * Shown as its own imagery: no percept, no category.
+   */
+  private replayVariants(effects: ModulationEffects, random: () => number = this.imaginationRandom): number {
+    const visual = this.regions.get('visualCortex') as VisualCortex | undefined;
+    if (!visual) return 0;
+    const categories = visual.categories()
+      .filter((c) => c.exposures >= DigitalBrain.PRUNE_MIN_EXPOSURES)
+      .sort((x, y) => y.lastSeen - x.lastSeen)
+      .slice(0, DigitalBrain.REM_VARIANTS);
+    if (categories.length === 0) return 0;
+    const silence = new Float32Array(visual.inputs);
+    for (const c of categories) {
+      const image = visual.imagine(c.units);
+      const side = Math.round(Math.sqrt(image.length));
+      const variant = new Float32Array(image.length);
+      if (side * side === image.length) {
+        const dx = Math.floor(random() * 3) - 1;
+        const dy = Math.floor(random() * 3) - 1;
+        for (let y = 0; y < side; y++) for (let x = 0; x < side; x++) {
+          const nx = x + dx, ny = y + dy;
+          if (nx >= 0 && nx < side && ny >= 0 && ny < side) variant[ny * side + nx] = image[y * side + x];
+        }
+      } else variant.set(image);
+      for (let i = 0; i < variant.length; i++) variant[i] = Math.max(0, Math.min(1, variant[i] * (0.8 + 0.4 * random())));
+      visual.suppressNextPercept();
+      for (let k = 0; k < DigitalBrain.REM_CYCLES; k++) visual.reactivate(variant, effects);
+      // Silence closes the presentation as the brain's own imagery.
+      for (let k = 0; k < 12; k++) visual.reactivate(silence, effects);
+    }
+    visual.settle();
+    return categories.length;
+  }
+
+  /** What it has imagined, awake and asleep. */
+  getImagination(): ImaginationState {
+    return {
+      lastImagined: this.lastImagined,
+      daydreams: this.daydreams,
+      dreams: this.dreams,
+      combinations: this.imagination.size,
+      foreseen: this.foreseen,
+      recent: this.imagination.recent(6),
+    };
   }
 
   /**
@@ -1324,6 +1596,7 @@ export class DigitalBrain {
    */
   private onPercept(modality: AssociationModality, code: ModalCode, label: string, surprise: number = 1): void {
     if (code.indices.length === 0) return;
+    this.ticksSincePercept = 0;
 
     this.recallFrom(modality, code, label);
     const key = `${modality}:${label}`;
@@ -1353,22 +1626,56 @@ export class DigitalBrain {
     this.recentPercepts.set(modality, percept);
 
     const event: Record<string, ModalCode> = { [modality]: code };
+    const experienced = [key];
     for (const [other, recent] of this.recentPercepts) {
       if (other === modality) continue;
       if (this.tickCount - recent.tick > this.associationWindowTicks) continue;
       if (recent.boundWith.has(serial)) continue;
       event[other] = recent.code;
+      experienced.push(`${other}:${recent.label}`);
       recent.boundWith.add(serial);
       percept.boundWith.add(recent.serial);
     }
     if (Object.keys(event).length >= 2) {
       this.associations.bind(event, this.modulators.getEffects().learningRateMultiplier);
+      // Something it had imagined, met for real: the imagining proved useful.
+      const foreseen = this.imagination.foresaw(experienced);
+      if (foreseen) {
+        this.foreseen++;
+        this.reward(this.motivation.activityRewarded('daydream', DigitalBrain.FORESEEN_REWARD, this.tickCount, `foreseen:${foreseen.sources.join('+')}`));
+        this.emitEvent({ type: 'affect', timestamp: this.currentTime, data: { kind: 'foreseen', sources: foreseen.sources, imagined: foreseen.count } });
+      }
       this.emitEvent({
         type: 'memory',
         timestamp: this.currentTime,
         data: { kind: 'association', modalities: Object.keys(event), bindings: this.associations.bindings },
       });
     }
+  }
+
+  /** The `k` strongest channels of a reinstated pattern. */
+  private static topUnits(pattern: Map<number, number>, k: number): number[] {
+    return [...pattern].sort((a, b) => b[1] - a[1] || a[0] - b[0]).slice(0, k).map(([unit]) => unit);
+  }
+
+  /** Reads a reinstated lexical pattern out as the words it really spells. */
+  private readWords(reinstated: Map<number, number>): { pattern: Float32Array; words: Array<{ word: string; similarity: number }> } {
+    const pattern = new Float32Array(this.lexicon.dimensions);
+    for (const [channel, value] of reinstated) if (channel < pattern.length) pattern[channel] = value;
+    const contained = this.lexicon
+      .findContained(pattern, 10)
+      // Only words the reinstated pattern really spells out. While a word is
+      // still unknown to the lexicon, its pattern merely resembles a few
+      // known words (~0.35): better to stay silent than to say those.
+      .filter((m) => m.similarity >= DigitalBrain.RECALLED_WORD_MATCH);
+    // A word that is a piece of a better-matching word ("ver" in "verde",
+    // "o" in "coche") is that word's shadow in the pattern, not a word recalled.
+    const words = contained
+      .filter((m) => m.word.length >= 3)
+      .filter((m, i) => !contained.some((other, j) => j !== i && other.word !== m.word && other.word.includes(m.word)))
+      .slice(0, 6)
+      .map((m) => ({ word: m.word, similarity: m.similarity }));
+    return { pattern, words };
   }
 
   /** Cross-modal recall from a cue, decoded into words and perceptual categories. */
@@ -1395,25 +1702,12 @@ export class DigitalBrain {
     const lexical = result.recalled.lexical;
     let lexicalPattern: Float32Array | null = null;
     if (lexical) {
-      lexicalPattern = new Float32Array(this.lexicon.dimensions);
-      for (const [channel, value] of lexical.pattern) if (channel < lexicalPattern.length) lexicalPattern[channel] = value;
-      const contained = this.lexicon
-        .findContained(lexicalPattern, 10)
-        // Only words the reinstated pattern really spells out. While a word is
-        // still unknown to the lexicon, its pattern merely resembles a few
-        // known words (~0.35): better to stay silent than to say those.
-        .filter((m) => m.similarity >= DigitalBrain.RECALLED_WORD_MATCH);
-      // A word that is a piece of a better-matching word ("ver" in "verde",
-      // "o" in "coche") is that word's shadow in the pattern, not a word recalled.
-      recall.words = contained
-        .filter((m) => m.word.length >= 3)
-        .filter((m, i) => !contained.some((other, j) => j !== i && other.word !== m.word && other.word.includes(m.word)))
-        .slice(0, 6)
-        .map((m) => ({ word: m.word, similarity: m.similarity }));
+      const read = this.readWords(lexical.pattern);
+      lexicalPattern = read.pattern;
+      recall.words = read.words;
     }
 
-    const topUnits = (pattern: Map<number, number>, k: number): number[] =>
-      [...pattern].sort((a, b) => b[1] - a[1] || a[0] - b[0]).slice(0, k).map(([unit]) => unit);
+    const topUnits = DigitalBrain.topUnits;
 
     const visual = this.regions.get('visualCortex') as VisualCortex | undefined;
     if (result.recalled.visual && visual) {
@@ -1927,6 +2221,7 @@ export class DigitalBrain {
     //    Percepts completed by the sensory cortices this tick → association.
     this.collectPercepts();
     if (this.ticksSinceRecall < Number.MAX_SAFE_INTEGER) this.ticksSinceRecall++;
+    if (this.ticksSincePercept < Number.MAX_SAFE_INTEGER) this.ticksSincePercept++;
 
     // 4. Dispatch bus packets (delivery deferred by axonal delays)
     this.bus.tick(this.currentTime);
@@ -2446,13 +2741,60 @@ export class DigitalBrain {
       }));
 
       stats = this.consolidationEngine.consolidate(entries, this.regions);
+
+      // REM. Acetylcholine high, norepinephrine and serotonin low, no
+      // prefrontal control (Hobson & Pace-Schott 2002): CA3 completes
+      // chimeras of two episodes and the cortex is shown them with plasticity
+      // low — generative replay (van de Ven et al. 2020) — and what it knows
+      // comes back recombined as dreams, and as variants of itself.
+      const dreamEffects: ModulationEffects = {
+        learningRateMultiplier: DigitalBrain.DREAM_PLASTICITY,
+        thresholdMultiplier: 0.8,
+        attentionGain: 0.2,
+        consolidationRate: 0.5,
+        spikeGainMultiplier: 0.7,
+        socialWeightBoost: 1.0,
+      };
+      this.modulators.release(ModulatorType.Acetylcholine, 0.1);
+      let chimeras = 0;
+      for (let d = 0; d < DigitalBrain.DREAMS_PER_SLEEP; d++) {
+        const chimera = hippocampus.dream(this.imaginationRandom);
+        if (!chimera || chimera.code.length !== cortex.inputs) break;
+        cortex.reactivate(chimera.code, dreamEffects);
+        chimeras++;
+      }
+      const dreamed: string[] = [];
+      for (let d = 0; d < DigitalBrain.DREAMS_PER_SLEEP; d++) {
+        const dream = this.imagineOnce('dream');
+        if (!dream) break;
+        dreamed.push([...dream.words, dream.visual, dream.colour, dream.auditory].filter((x): x is string => x !== null).join(' '));
+      }
+      const variants = this.replayVariants(dreamEffects);
+      stats.dreams = dreamed.length;
+      stats.dreamed = dreamed;
+
       cortex.settle();
       hippocampus.forget(DigitalBrain.SLEEP_EPISODIC_DECAY);
       hippocampus.downscale(DigitalBrain.SLEEP_SYNAPTIC_DOWNSCALING);
 
       console.log(`   Memories replayed: ${stats.memoriesReplayed}`);
       console.log(`   Synapses strengthened: ${stats.synapsesStrengthened}`);
+      console.log(`   REM: ${chimeras} chimeras in CA3, ${dreamed.length} dreams, ${variants} things replayed as variants`);
+      for (const d of dreamed) console.log(`   🌙 ${d || '(wordless)'}`);
     }
+
+    // Pruning: what was met once and never again is not worth its neurons.
+    const prunedCategories: string[] = [];
+    const motor = this.regions.get('motorCortex') as MotorCortex | undefined;
+    for (const [id, modality] of [['visualCortex', 'visual'], ['colorCortex', 'colour'], ['auditoryCortex', 'auditory']] as const) {
+      const region = this.regions.get(id) as { pruneCategories(minExposures: number, afterSleeps: number, inUse: (unit: number) => boolean): string[] } | undefined;
+      if (!region) continue;
+      const inUse = (unit: number): boolean =>
+        this.associations.usesChannel(modality, unit) || (modality === 'auditory' && motor !== undefined && motor.knowsHeard(unit));
+      prunedCategories.push(...region.pruneCategories(DigitalBrain.PRUNE_MIN_EXPOSURES, DigitalBrain.PRUNE_AFTER_SLEEPS, inUse));
+    }
+    stats.prunedCategories = prunedCategories;
+    if (prunedCategories.length > 0) console.log(`   Pruned: ${prunedCategories.join(', ')}`);
 
     // Emit event
     this.emitEvent({
@@ -2462,6 +2804,9 @@ export class DigitalBrain {
         consolidated: stats.consolidatedLabels.length,
         memoriesReplayed: stats.memoriesReplayed,
         synapsesStrengthened: stats.synapsesStrengthened,
+        dreams: stats.dreams ?? 0,
+        dreamed: stats.dreamed ?? [],
+        pruned: stats.prunedCategories ?? [],
       },
     });
 
@@ -2517,6 +2862,7 @@ export class DigitalBrain {
       workingMemory: ((this.regions.get('prefrontalCortex') as PrefrontalCortex | undefined)?.getWorkingMemory() ?? [])
         .map((slot) => ({ label: slot.label, priority: slot.priority, age: slot.age })),
       questions: { known: this.questions.size, lastAnswer: this.lastAnswer },
+      imagination: this.getImagination(),
       busTraffic,
       tickCount: this.tickCount,
       broca: brocaResponse ? {
@@ -2569,6 +2915,7 @@ export class DigitalBrain {
       sequence: this.sequences.serialize(),
       questions: this.questions.serialize(),
       wordReferents: Array.from(this.wordReferents.entries()).map(([w, m]) => [w, Array.from(m.entries())]),
+      imagination: { combinations: this.imagination.serialize(), daydreams: this.daydreams, dreams: this.dreams, foreseen: this.foreseen },
     };
     for (const [id, region] of this.regions) {
       const extra = region.serializeExtra();
@@ -2582,6 +2929,16 @@ export class DigitalBrain {
     } catch (err) {
       console.error(`⚠️  Could not save lexicon: ${(err as Error).message}`);
     }
+  }
+
+  private restoreImagination(data: unknown): void {
+    if (typeof data !== 'object' || data === null) return;
+    const d = data as { combinations?: unknown; daydreams?: unknown; dreams?: unknown; foreseen?: unknown };
+    this.imagination.deserialize(d.combinations);
+    const count = (x: unknown): number => (typeof x === 'number' && Number.isInteger(x) && x >= 0 ? Math.min(x, 1e9) : 0);
+    this.daydreams = count(d.daydreams);
+    this.dreams = count(d.dreams);
+    this.foreseen = count(d.foreseen);
   }
 
   /**
@@ -2678,6 +3035,7 @@ export class DigitalBrain {
     this.sequences.deserialize(data.extras.sequence);
     this.questions.deserialize(data.extras.questions);
     this.restoreWordReferents(data.extras.wordReferents);
+    this.restoreImagination(data.extras.imagination);
 
     // Restore the persisted lexicon (incl. learned words) if present and
     // dimensionally compatible; otherwise keep the freshly seeded vocabulary.

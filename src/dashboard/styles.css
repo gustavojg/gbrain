@@ -96,8 +96,11 @@ body {
   font-family: var(--font-sans);
   background: var(--bg-primary);
   color: var(--text-primary);
-  min-height: 100vh;
+  height: 100vh;
+  height: 100dvh;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
 }
@@ -128,13 +131,16 @@ body::after {
 /* --- Header --- */
 #header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
+  gap: var(--gap-sm);
   padding: 0.75rem 1.5rem;
   background: var(--gradient-header);
   backdrop-filter: blur(var(--glass-blur));
   border-bottom: 1px solid var(--glass-border);
   z-index: 100;
+  flex-shrink: 0;
 }
 
 .header-left {
@@ -232,7 +238,9 @@ body::after {
   grid-template-columns: 1.2fr 0.8fr 1fr;
   gap: var(--gap-md);
   padding: var(--gap-md);
-  height: calc(100vh - 56px);
+  /* The rest of the viewport under the header, whatever the header's height. */
+  flex: 1;
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -307,6 +315,10 @@ body::after {
   border-radius: var(--radius-md);
   background: radial-gradient(ellipse at 50% 40%, rgba(15, 23, 42, 0.9) 0%, rgba(10, 14, 26, 1) 100%);
   cursor: grab;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 #brainCanvas:active {
@@ -551,6 +563,10 @@ body::after {
   image-rendering: pixelated;
   width: 128px;
   height: 128px;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .draw-controls {
@@ -1184,12 +1200,110 @@ body::after {
 }
 
 @media (max-width: 768px) {
+  body {
+    height: auto;
+    min-height: 100vh;
+    min-height: 100dvh;
+    display: block;
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  #header {
+    padding: 0.5rem 0.75rem;
+  }
+  #header h1 {
+    font-size: 1.05rem;
+  }
+  .brain-emoji {
+    font-size: 1.5rem;
+  }
+  .header-right {
+    flex: 1 1 100%;
+    justify-content: flex-start;
+  }
+  .stat-chip {
+    min-width: 0;
+    padding: 0.25rem 0.5rem;
+  }
   #mainLayout {
     grid-template-columns: 1fr;
-    overflow-y: auto;
+    grid-template-rows: none;
+    grid-auto-rows: auto;
+    flex: none;
+    height: auto;
+    overflow: visible;
+    padding: var(--gap-sm);
+    gap: var(--gap-sm);
+  }
+  .panel {
+    overflow: visible;
+    padding: var(--gap-sm);
   }
   .brain-panel {
     grid-column: auto;
+    height: 380px;
+    overflow: hidden;
+  }
+  #brainCanvas {
+    min-height: 0;
+  }
+  /* Bigger whiteboard for a finger; the brain still gets 64×64. */
+  #drawCanvas {
+    width: min(100%, 240px);
+    height: auto;
+    aspect-ratio: 1;
+  }
+  .draw-container {
+    flex-wrap: wrap;
+  }
+  .webcam-container video {
+    max-width: 240px;
+  }
+  .region-row {
+    grid-template-columns: 84px 1fr 34px;
+  }
+  .learning-metric {
+    grid-template-columns: 110px 1fr 44px;
+  }
+}
+
+/* Touch screens: tap targets a finger can hit, and text fields that do not make
+   iOS zoom in (it zooms on any input under 16px). */
+@media (pointer: coarse) {
+  .small-btn,
+  .send-btn,
+  .icon-btn,
+  .inject-btn {
+    min-height: 40px;
+    min-width: 40px;
+    padding: 0.5rem 0.9rem;
+    font-size: 0.8rem;
+  }
+  .icon-btn {
+    width: 40px;
+    height: 40px;
+  }
+  .draw-controls {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .input-group input,
+  .teach-row input[type="text"],
+  .teach-row select,
+  .teach-row input[type="number"],
+  .brain-writing {
+    font-size: 16px;
+  }
+  .teach-row input[type="number"] {
+    width: 4rem;
+  }
+  .neuro-bar {
+    grid-template-columns: 28px 1fr 60px 38px 40px;
+  }
+  #brainCanvas2d {
+    width: 140px;
+    height: 140px;
   }
 }
 

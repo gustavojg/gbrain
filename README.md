@@ -102,6 +102,8 @@ En el dashboard, el panel **🎓 Teach** hace de maestro:
 
 Todo ello va por `POST /api/lesson`, `/api/practice`, `/api/feedback`, `/api/voice` y `/api/hand` (o sus mensajes WebSocket), validados y con límite de frecuencia.
 
+El dashboard funciona también en el móvil o la tablet: los paneles se apilan y la página hace scroll, se dibuja en la pizarra con el dedo, y los botones tienen tamaño de dedo.
+
 ### Stack tecnológico
 
 TypeScript · Node.js (ESM) · Express-less HTTP nativo + WebSocket (`ws`) · Canvas 2D + WebAudio (dashboard) · Railway (despliegue).
@@ -197,6 +199,8 @@ In the dashboard, the **🎓 Teach** panel is the teacher:
 5. **Practice** lets it babble or scribble ×100 in a few seconds: that is how it learns its motor maps (needed to imitate sounds and copy drawings).
 
 All of it goes through `POST /api/lesson`, `/api/practice`, `/api/feedback`, `/api/voice` and `/api/hand` (or their WebSocket messages), validated and rate-limited.
+
+The dashboard also works on a phone or tablet: the panels stack and the page scrolls, the whiteboard takes finger strokes, and the buttons are finger-sized.
 
 ### Tech stack
 

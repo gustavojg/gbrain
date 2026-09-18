@@ -1584,7 +1584,7 @@ function playVocalization(v) {
   const status = document.getElementById('voiceStatus');
   if (status) {
     const what = { imitation: 'Repeating what it heard', naming: 'Saying what this reminds it of', babble: 'Babbling', call: 'Calling — nobody has talked to it for a while' }[v.source] || 'Vocalizing';
-    status.textContent = `${what} — F1 ${f1.toFixed(0)} Hz · F2 ${f2.toFixed(0)} Hz`;
+    status.textContent = `${what} — ${command.onset === 'nasal' ? '“m” + ' : command.onset === 'stop' ? '“p” + ' : ''}vowel F1 ${f1.toFixed(0)} Hz · F2 ${f2.toFixed(0)} Hz`;
   }
   if (v.source === 'imitation') {
     addLog('info', `🗣️ Repeats a sound it heard (F1 ${f1.toFixed(0)}, F2 ${f2.toFixed(0)} Hz)`);
@@ -1593,7 +1593,38 @@ function playVocalization(v) {
   }
   if (!voiceEnabled || !voiceCtx) return;
 
-  const now = voiceCtx.currentTime;
+  // The onset first: a nasal murmur (lips closed, sound through the nose) or
+  // a stop burst (lips released), then the vowel.
+  const now0 = voiceCtx.currentTime;
+  let lead = 0;
+  if (command.onset === 'nasal') {
+    lead = 0.09;
+    const hum = voiceCtx.createOscillator();
+    hum.type = 'triangle';
+    hum.frequency.value = VOICE_PITCH_HZ;
+    const nasal = voiceCtx.createBiquadFilter();
+    nasal.type = 'lowpass';
+    nasal.frequency.value = 400;
+    const humGain = voiceCtx.createGain();
+    humGain.gain.setValueAtTime(0, now0);
+    humGain.gain.linearRampToValueAtTime(0.18, now0 + 0.02);
+    humGain.gain.linearRampToValueAtTime(0.05, now0 + lead);
+    hum.connect(nasal); nasal.connect(humGain); humGain.connect(voiceCtx.destination);
+    hum.start(now0); hum.stop(now0 + lead + 0.01);
+  } else if (command.onset === 'stop') {
+    lead = 0.08;
+    const length = Math.floor(voiceCtx.sampleRate * 0.02);
+    const buffer = voiceCtx.createBuffer(1, length, voiceCtx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / length);
+    const burst = voiceCtx.createBufferSource();
+    burst.buffer = buffer;
+    const burstGain = voiceCtx.createGain();
+    burstGain.gain.value = 0.2;
+    burst.connect(burstGain); burstGain.connect(voiceCtx.destination);
+    burst.start(now0 + lead - 0.02);
+  }
+  const now = now0 + lead;
   const source = voiceCtx.createOscillator();
   source.type = 'sawtooth'; // rich in harmonics, like the glottal source
   source.frequency.value = VOICE_PITCH_HZ;

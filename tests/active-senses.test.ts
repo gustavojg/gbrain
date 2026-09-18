@@ -8,8 +8,12 @@
  *   1. THE MOVING EYE — a scene with a cross and a square, both known and
  *                       named, is looked at in two fixations, each named;
  *                       a single thing is looked at once.
+ *   2. CONSONANTS     — an utterance unfolds in time: having babbled "ma"s
+ *                       and "pa"s, it repeats "ma" with the lips closed and
+ *                       the nose open, "pa" with a release, "a" with neither.
  */
-import { DigitalBrain, type BrainEvent } from '../src/brain.js';
+import { DigitalBrain, type BrainEvent, type Vocalization } from '../src/brain.js';
+import { synthesizeFrames, UTTERANCE_FRAME_MS, VOCAL_RANGE, type VocalCommand } from '../src/core/voice/vocal-tract.js';
 import { quiet, seedRandom } from './helpers/seed.js';
 
 const SEED = Number(process.env.TEST_SEED ?? 20260917);
@@ -88,6 +92,55 @@ console.log('1. THE MOVING EYE');
   check('each fixation is one of the things it knows', labels.includes(crossLabel) && labels.includes(squareLabel) && brain.getRecognition().visualCategories === categories,
     `${labels.join(' → ')} (${crossLabel} = cross, ${squareLabel} = square); ${brain.getRecognition().visualCategories} categories`);
   check('…and it names them one by one', written.includes('cruz') && written.includes('cuadrado'), written.join(' ') || 'nothing written');
+}
+
+// ── 2. CONSONANTS ───────────────────────────────────────────────────────────
+console.log('\n2. CONSONANTS');
+{
+  const brain = newBrain();
+  brain.setVoice({ imitate: true });
+  /** Someone says an utterance: its frames reach the ear one every 200 ms. */
+  const sayTo = (command: VocalCommand): Vocalization | null => {
+    const before = brain.getLastVocalization()?.serial ?? 0;
+    for (const frame of synthesizeFrames(command)) {
+      quiet(() => brain.hearFrame(frame, 48000, { propagate: false }));
+      wait(brain, brain.ticksFor(UTTERANCE_FRAME_MS));
+    }
+    wait(brain, 140);
+    const after = brain.getLastVocalization();
+    return after && after.serial !== before && after.source === 'imitation' ? after : null;
+  };
+  const error = (v: Vocalization, c: VocalCommand): number =>
+    (Math.abs(v.command.f1 - c.f1) / (VOCAL_RANGE.f1[1] - VOCAL_RANGE.f1[0]) + Math.abs(v.command.f2 - c.f2) / (VOCAL_RANGE.f2[1] - VOCAL_RANGE.f2[0])) / 2;
+  const VOWELS: Record<string, [number, number]> = { a: [700, 1200], i: [300, 2300], o: [500, 900], u: [350, 800] };
+  for (let i = 0; i < 480; i++) { brain.babbleOnce(); wait(brain, 60); }
+  const said = (c: VocalCommand): string => `${c.onset === 'nasal' ? 'm' : c.onset === 'stop' ? 'p' : ''}${c.f1.toFixed(0)}/${c.f2.toFixed(0)}`;
+  /** Each syllable of a kind, said to it once: what it repeats, and with what lips. */
+  const trial = (onset: 'nasal' | 'stop' | undefined): { repeated: number; right: number; detail: string } => {
+    let repeated = 0, right = 0;
+    const detail: string[] = [];
+    for (const [vowel, [f1, f2]] of Object.entries(VOWELS)) {
+      const command: VocalCommand = { f1, f2, amplitude: 0.9 };
+      if (onset) command.onset = onset;
+      const v = sayTo(command);
+      const name = `${onset === 'nasal' ? 'm' : onset === 'stop' ? 'p' : ''}${vowel}`;
+      if (!v) { detail.push(`${name}→—`); continue; }
+      repeated++;
+      // The lips are what this is about; the vowel's accuracy is the vocal test's business.
+      const ok = v.command.onset === onset;
+      if (ok) right++;
+      detail.push(`${name}→${said(v.command)}${ok ? '' : ' ✗'}${error(v, command) >= 0.2 ? ' (vowel off)' : ''}`);
+    }
+    return { repeated, right, detail: detail.join(' ') };
+  };
+  const nasal = trial('nasal');
+  const stop = trial('stop');
+  const bare = trial(undefined);
+  check('"ma", "mi", "mo", "mu": repeated with the lips closed and the nose open', nasal.repeated >= 3 && nasal.right === nasal.repeated, nasal.detail);
+  check('"pa", "pi", "po", "pu": repeated with a release', stop.repeated >= 3 && stop.right === stop.repeated, stop.detail);
+  // (/i/ and the nasal murmur share a low first formant; a bare /i/ may be
+  // taken for a closed-lips onset — a confusion infants make too.)
+  check('the bare vowels: repeated with the lips open', bare.repeated >= 3 && bare.right >= 3, bare.detail);
 }
 
 // ── Summary ─────────────────────────────────────────────────────────────────

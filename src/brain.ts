@@ -56,7 +56,7 @@ import { BrocaArea, type LanguageResponse } from './regions/broca-wernicke/broca
 import { WernickeArea } from './regions/broca-wernicke/wernicke.js';
 import { Lexicon } from './regions/broca-wernicke/lexicon.js';
 import { MotorCortex, type MotorOutput } from './regions/motor-cortex/motor-cortex.js';
-import { synthesizeSpectrum, type VocalCommand } from './core/voice/vocal-tract.js';
+import { synthesizeFrames, UTTERANCE_FRAME_MS, type VocalCommand } from './core/voice/vocal-tract.js';
 import { HandMotorCortex, type HandOutput } from './regions/motor-cortex/hand-motor-cortex.js';
 import { BOARD_SIDE, GRID_SIDE, renderDrawing, type Drawing } from './core/hand/whiteboard.js';
 import { seedSpanishLexicon, encodeSentenceToLexiconSpace, wordToPattern } from './regions/broca-wernicke/spanish-lexicon.js';
@@ -356,6 +356,9 @@ export class DigitalBrain {
   private babbling = false;
   private lastVocalization: Vocalization | null = null;
   private vocalizationSerial = 0;
+  /** Frames of the utterance in progress still to be heard, one per UTTERANCE_FRAME_MS. */
+  private voiceFrames: Float32Array[] = [];
+  private ticksSinceVoiceFrame = 0;
   /** Vocalizations counted as calls for contact. */
   private calls = 0;
   private lastCallTick = Number.MIN_SAFE_INTEGER;
@@ -878,6 +881,8 @@ export class DigitalBrain {
       inputCount: DigitalBrain.AUDITORY_NEURONS,
       holdTicks: this.ticksFor(DigitalBrain.VOCAL_HOLD_MS),
       planGapTicks: this.ticksFor(DigitalBrain.PLAN_GAP_MS),
+      // The onset frame of an utterance: what the lips learn from and read.
+      onsetTicks: this.ticksFor(UTTERANCE_FRAME_MS),
     }));
     this.addRegion(new HandMotorCortex({
       inputCount: DigitalBrain.VISUAL_CORTEX_INPUTS,
@@ -1034,6 +1039,15 @@ export class DigitalBrain {
       timestamp: this.currentTime,
       data: { kind: 'saccade', index: this.fixationIndex, count: this.fixationCount, box: fixation.box, remaining: this.fixations.length },
     });
+  }
+
+  /** The rest of an utterance reaches the ear frame by frame, as the mouth moves. */
+  private speakOn(): void {
+    if (this.voiceFrames.length === 0) return;
+    if (++this.ticksSinceVoiceFrame < this.ticksFor(UTTERANCE_FRAME_MS)) return;
+    this.ticksSinceVoiceFrame = 0;
+    const frame = this.voiceFrames.shift() as Float32Array;
+    this.injectSensoryInput('auditory', this.audioEncoder.encodeMagnitudeFrame(frame, 48000, true));
   }
 
   /** Saccades pending: after the cortex has closed the current fixation, the eye moves on. */
@@ -1537,9 +1551,12 @@ export class DigitalBrain {
     // drawing taught with a vowel got bound to the vowel AND to the brain's
     // own slightly-off repetition of it, and the association split in two.)
     (this.regions.get('auditoryCortex') as AuditoryCortex | undefined)?.suppressNextPercept();
-    const spectrum = synthesizeSpectrum(output.command);
-    const spectrogram = this.audioEncoder.encodeMagnitudeFrame(spectrum, 48000, false);
-    this.injectSensoryInput('auditory', spectrogram);
+    // An utterance unfolds in time: the onset (a murmur, a burst) now, the
+    // vowel a frame later, into the same window of the ear.
+    const frames = synthesizeFrames(output.command);
+    this.injectSensoryInput('auditory', this.audioEncoder.encodeMagnitudeFrame(frames[0], 48000, false));
+    this.voiceFrames = frames.slice(1);
+    this.ticksSinceVoiceFrame = 0;
 
     this.emitEvent({ type: 'response', timestamp: this.currentTime, data: { kind: 'vocalization', ...vocalization } });
     return vocalization;
@@ -2237,6 +2254,7 @@ export class DigitalBrain {
     //    Stimuli being presented keep arriving through the thalamus.
     this.relayPresentations(effects);
     this.moveEye();
+    this.speakOn();
 
     //    The hippocampus stamps the episodes it encodes with the current affect
     //    (emotional episodes are forgotten more slowly).

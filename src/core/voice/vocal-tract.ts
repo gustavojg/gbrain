@@ -15,6 +15,16 @@
  * 1952), and they are what infants explore when they babble vowel-like sounds.
  */
 
+/**
+ * How an utterance begins: with the lips closed and the velum open (a nasal
+ * murmur, /m/), with the lips closed and released (a stop burst, /p/), or
+ * open from the start (a bare vowel). The first consonants of babbling.
+ */
+export type Onset = 'nasal' | 'stop';
+
+/** The onsets a command can have, in the order the motor cortex numbers them (0 = none). */
+export const ONSETS: ReadonlyArray<Onset | null> = [null, 'nasal', 'stop'];
+
 /** Articulatory command, in acoustic terms. */
 export interface VocalCommand {
   /** First formant (Hz). */
@@ -23,7 +33,12 @@ export interface VocalCommand {
   f2: number;
   /** Loudness, 0–1. */
   amplitude: number;
+  /** Lip closure before the vowel, if any. */
+  onset?: Onset;
 }
+
+/** Duration of one frame of an utterance (the onset lasts one; the vowel follows). */
+export const UTTERANCE_FRAME_MS = 200;
 
 /** Range of the articulators: the vowel space the tract can produce. */
 export const VOCAL_RANGE = {
@@ -38,13 +53,15 @@ const FORMANT_WIDTH = { f1: 90, f2: 120 } as const;
 const F2_LEVEL = 0.78;
 
 /** Maps normalized articulator positions (0–1, 0–1) to a command. */
-export function commandFromArticulators(x: number, y: number, amplitude: number = 0.9): VocalCommand {
+export function commandFromArticulators(x: number, y: number, amplitude: number = 0.9, onset: Onset | null = null): VocalCommand {
   const clamp = (v: number): number => Math.max(0, Math.min(1, v));
-  return {
+  const command: VocalCommand = {
     f1: VOCAL_RANGE.f1[0] + clamp(x) * (VOCAL_RANGE.f1[1] - VOCAL_RANGE.f1[0]),
     f2: VOCAL_RANGE.f2[0] + clamp(y) * (VOCAL_RANGE.f2[1] - VOCAL_RANGE.f2[0]),
     amplitude: clamp(amplitude),
   };
+  if (onset) command.onset = onset;
+  return command;
 }
 
 /**
@@ -66,6 +83,37 @@ export function synthesizeSpectrum(command: VocalCommand, bins: number = 512, sa
     spectrum[bin] = Math.min(1, command.amplitude * level);
   }
   return spectrum;
+}
+
+/**
+ * The sound of a command over time: one frame per `UTTERANCE_FRAME_MS`. A
+ * bare vowel is one frame. A nasal onset is a murmur first — the lips
+ * closed, the sound leaving through the nose: a low nasal formant and
+ * little else — then the vowel. A stop onset is a release burst first —
+ * brief, broadband, aperiodic — then the vowel. (Closure itself is silence
+ * and needs no frame.)
+ */
+export function synthesizeFrames(command: VocalCommand, bins: number = 512, sampleRate: number = 48000): Float32Array[] {
+  const vowel = synthesizeSpectrum(command, bins, sampleRate);
+  if (!command.onset) return [vowel];
+  const onset = new Float32Array(bins);
+  const binHz = sampleRate / 2 / bins;
+  for (let bin = 0; bin < bins; bin++) {
+    const hz = bin * binHz;
+    if (command.onset === 'nasal') {
+      // The nasal murmur: a low nasal formant (~300 Hz) and the weak, damped
+      // resonances of the nasal tract around 1 and 2.3 kHz (Fujimura 1962).
+      const murmur =
+        Math.exp(-((hz - 300) ** 2) / (2 * 90 * 90)) +
+        0.4 * Math.exp(-((hz - 1000) ** 2) / (2 * 200 * 200)) +
+        0.25 * Math.exp(-((hz - 2300) ** 2) / (2 * 250 * 250));
+      onset[bin] = Math.min(1, 0.6 * command.amplitude * murmur);
+    } else {
+      // A burst: flat, slightly rising with frequency, from ~500 Hz up.
+      onset[bin] = hz < 500 ? 0 : Math.min(1, 0.35 * command.amplitude * (0.6 + 0.4 * Math.min(1, hz / 4000)));
+    }
+  }
+  return [onset, vowel];
 }
 
 /** Perceptual distance between two commands: mean formant error in Hz. */

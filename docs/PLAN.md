@@ -79,9 +79,9 @@ retiran, y el lenguaje se reconstruye desde el sonido.
 
 | Mecanismo | Base | Hoy | Test |
 |---|---|---|---|
-| **Ojo que se mueve**: sacadas sobre una imagen mayor que la fóvea, dirigidas por saliencia y por atención descendente | Colículo superior, campos oculares frontales | Foveación fija en el centro del contenido | Explora una escena con varios objetos y los nombra uno a uno |
-| **Trazos**: modelo interno tipo cerebelo que aprende trayectorias y tiempos | Cerebelo (Wolpert, Kawato) | Dibuja de golpe | Copia un dibujo con el orden de trazos de una persona |
-| **Consonantes**: dinámica temporal del tracto vocal | Articuladores | Dos formantes fijos | Imita "ma" y "pa" |
+| **Ojo que se mueve**: sacadas sobre una imagen mayor que la fóvea, dirigidas por saliencia y por atención descendente | Colículo superior, campos oculares frontales | **Hecho** (saliencia ascendente): la retina segmenta la escena en regiones de contenido (rejilla gruesa 32×32), el ojo fija la mayor, la corteza la ve sola (forma y color) y, cerrada esa presentación, una sacada (1,2 s) lleva el ojo a la siguiente; cada objeto se visita una vez, máximo 4. Pendiente: dirección descendente por atención (la pregunta o la memoria de trabajo eligen dónde mirar) | `active-senses.test.ts` §1: una escena con la cruz y el cuadrado se mira en dos fijaciones y los nombra uno a uno; una cosa sola, una mirada |
+| **Trazos**: modelo interno tipo cerebelo que aprende trayectorias y tiempos | Cerebelo (Wolpert, Kawato) | Dibuja de golpe (pendiente: el dashboard no envía el orden de trazos) | Copia un dibujo con el orden de trazos de una persona |
+| **Consonantes**: dinámica temporal del tracto vocal | Articuladores | **Hecho**: una emisión se despliega en el tiempo, una trama de 200 ms de inicio (murmullo nasal /m/: formante nasal 300 Hz y resonancias débiles; o ráfaga de liberación /p/: banda ancha) y luego la vocal, en la misma ventana del oído. Los labios son tres unidades del mapa motor (abiertos, nasal, oclusiva) que aprenden y leen solo los primeros ticks de lo oído; la mitad del balbuceo empieza con los labios cerrados | `active-senses.test.ts` §2: tras balbucear, repite m+vocal con los labios cerrados y la nariz abierta, p+vocal con liberación y la vocal sola con los labios abiertos (la /i/ sola puede confundirse con /m/: comparten el primer formante bajo) |
 
 ## Bloque 5 — Desarrollo
 

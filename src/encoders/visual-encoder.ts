@@ -223,10 +223,13 @@ export class VisualEncoder {
     return out;
   }
 
-  /** Coarse grid on which objects are told apart (cells of the scene). */
-  private static readonly SEGMENT_GRID = 32;
-  /** Smallest object worth a fixation, in coarse cells. */
+  /** Cells of the coarse grid on which objects are told apart, along the image's shorter side. */
+  private static readonly SEGMENT_CELLS = 16;
+  /** Fraction of a cell's pixels that must be lit for the cell to count (specks of noise do not). */
+  private static readonly SEGMENT_OCCUPANCY = 0.2;
+  /** Smallest object worth a fixation, in coarse cells — and relative to the largest object. */
   private static readonly SEGMENT_MIN_CELLS = 4;
+  private static readonly SEGMENT_MIN_SHARE = 0.15;
   /** Margin around an object when the eye fixates it (fraction of its extent). */
   private static readonly FIXATION_MARGIN = 0.15;
 
@@ -247,16 +250,22 @@ export class VisualEncoder {
     let background = Infinity;
     for (let i = 0; i < img.length; i++) if (img[i] < background) background = img[i];
     const lit = background + 0.2;
-    // Coarse occupancy grid (max-pooled): a cell is on if any pixel in it is lit.
-    const g = VisualEncoder.SEGMENT_GRID;
-    const gw = Math.min(g, width), gh = Math.min(g, height);
-    const grid = new Uint8Array(gw * gh);
+    // Coarse occupancy grid: a cell is on if enough of its pixels are lit —
+    // a stroke lights it, a speck of noise does not.
+    const cell = Math.max(2, Math.round(Math.min(width, height) / VisualEncoder.SEGMENT_CELLS));
+    const gw = Math.ceil(width / cell), gh = Math.ceil(height / cell);
+    const counts = new Int32Array(gw * gh);
+    const sizes = new Int32Array(gw * gh);
     for (let y = 0; y < height; y++) {
-      const gy = Math.floor((y * gh) / height);
+      const gy = Math.floor(y / cell);
       for (let x = 0; x < width; x++) {
-        if (img[y * width + x] >= lit) grid[gy * gw + Math.floor((x * gw) / width)] = 1;
+        const c = gy * gw + Math.floor(x / cell);
+        sizes[c]++;
+        if (img[y * width + x] >= lit) counts[c]++;
       }
     }
+    const grid = new Uint8Array(gw * gh);
+    for (let c = 0; c < grid.length; c++) if (counts[c] >= VisualEncoder.SEGMENT_OCCUPANCY * sizes[c]) grid[c] = 1;
     // Connected components (8-neighbourhood) by flood fill.
     const seen = new Uint8Array(gw * gh);
     const boxes: Array<{ x: number; y: number; w: number; h: number; cells: number }> = [];
@@ -285,7 +294,11 @@ export class VisualEncoder {
       boxes.push({ x: x0, y: y0, w: x1 - x0, h: y1 - y0, cells });
     }
     if (boxes.length < 2) return [];
-    return boxes.sort((a, b) => b.cells - a.cells || a.x - b.x).map(({ x, y, w, h }) => ({ x, y, w, h }));
+    // What is tiny next to the largest thing is not another thing (a speck, a crumb of the stroke).
+    const largest = Math.max(...boxes.map((b) => b.cells));
+    const objects = boxes.filter((b) => b.cells >= VisualEncoder.SEGMENT_MIN_SHARE * largest);
+    if (objects.length < 2) return [];
+    return objects.sort((a, b) => b.cells - a.cells || a.x - b.x).map(({ x, y, w, h }) => ({ x, y, w, h }));
   }
 
   /**

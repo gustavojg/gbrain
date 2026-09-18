@@ -28,7 +28,8 @@
 
 import { BrainRegion } from '../../core/brain-region.js';
 import type { ModulationEffects } from '../../core/neuromodulators/modulator-system.js';
-import { commandFromArticulators, type VocalCommand } from '../../core/voice/vocal-tract.js';
+import { commandFromArticulators, ONSETS, type VocalCommand } from '../../core/voice/vocal-tract.js';
+import { packArray, unpackFloat32 } from '../../core/persistence/binary-protocol.js';
 
 export interface MotorCortexConfig {
   /** Motor units per side of the (square) articulatory map. */
@@ -47,6 +48,11 @@ export interface MotorCortexConfig {
   imitationThreshold: number;
   /** Ticks of silence that end a heard sound (then the imitation is issued). */
   planGapTicks: number;
+  /**
+   * Heard ticks at the start of an utterance during which the onset (a murmur,
+   * a burst) is what is heard — one frame: the lips learn from, and read, only those.
+   */
+  onsetTicks: number;
 }
 
 const DEFAULT_MOTOR_CONFIG: MotorCortexConfig = {
@@ -58,6 +64,7 @@ const DEFAULT_MOTOR_CONFIG: MotorCortexConfig = {
   depressionRatio: 0.5,
   imitationThreshold: 0.25,
   planGapTicks: 10,
+  onsetTicks: 2,
 };
 
 /** A command issued by the motor cortex, with why it was issued. */
@@ -74,6 +81,20 @@ export class MotorCortex extends BrainRegion {
   /** Motor pattern being executed (activity per unit), or `null` when not vocalizing. */
   private held: Float32Array | null = null;
   private heldTicks = 0;
+  /**
+   * The lips: a few units for how an utterance begins (open, closed with a
+   * nasal murmur, closed and released). They learn the auditory → motor map
+   * as the posture units do, so that a heard /m/ or /p/ drives the closure
+   * that produced it. Kept apart from the posture map so that a saved map
+   * of an older brain still loads.
+   */
+  private readonly onsetWeights: Float32Array;
+  private heldOnset = 0;
+  /** Ticks with something heard since the held command began: its first ones carry the onset. */
+  private heldHeardTicks = 0;
+  private readonly onsetPlan = new Float32Array(ONSETS.length);
+  /** Share of babbles that begin with the lips closed (canonical babbling: "ma", "pa"). */
+  private static readonly ONSET_BABBLE_SHARE = 0.5;
 
   /** Motor activity accumulated while an EXTERNAL sound is being heard. */
   private readonly plan: Float32Array;
@@ -100,14 +121,27 @@ export class MotorCortex extends BrainRegion {
 
   /** Whether a heard sound that the map knows is repeated aloud. */
   imitate = false;
+  /** What the last heard sound did to the map (for the dashboard and tests): peak drive and onset drives. */
+  lastListening: { peak: number; onsets: number[]; ticks: number } | null = null;
 
   constructor(config: Partial<MotorCortexConfig> = {}) {
     const cfg = { ...DEFAULT_MOTOR_CONFIG, ...config };
     super('motorCortex', 'Corteza Motora Vocal', cfg.mapSide * cfg.mapSide, cfg.inputCount);
     this.cfg = cfg;
     this.plan = new Float32Array(this.neuronCount);
+    this.onsetWeights = new Float32Array(ONSETS.length * cfg.inputCount);
     // The map starts blank: nothing is known about what any command sounds like.
     this.weights.fill(0);
+  }
+
+  override serializeExtra(): unknown {
+    return { onsetWeights: packArray(this.onsetWeights) };
+  }
+
+  override deserializeExtra(data: unknown): void {
+    if (typeof data !== 'object' || data === null) return;
+    const w = unpackFloat32((data as Record<string, unknown>).onsetWeights, this.onsetWeights.length);
+    if (w) this.onsetWeights.set(w);
   }
 
   /** The auditory → motor map is learned from scratch; no random synapses. */
@@ -136,7 +170,7 @@ export class MotorCortex extends BrainRegion {
   }
 
   /** Population vector: the posture encoded by a pattern of motor activity. */
-  private decode(activity: Float32Array): VocalCommand | null {
+  private decode(activity: Float32Array, onset: number = 0): VocalCommand | null {
     const side = this.cfg.mapSide;
     let total = 0;
     let sx = 0;
@@ -148,7 +182,7 @@ export class MotorCortex extends BrainRegion {
       sx += a * ((i % side) / (side - 1));
       sy += a * (Math.floor(i / side) / (side - 1));
     }
-    return total > 0 ? commandFromArticulators(sx / total, sy / total) : null;
+    return total > 0 ? commandFromArticulators(sx / total, sy / total, 0.9, ONSETS[onset] ?? null) : null;
   }
 
   // ----------------------------------------------------------------
@@ -167,14 +201,36 @@ export class MotorCortex extends BrainRegion {
    */
   babble(): MotorOutput {
     this.babbleCount++;
-    return this.execute(this.bumpAt(Math.random(), Math.random()), 'babble', 0);
+    const r = Math.random();
+    const onset = r < MotorCortex.ONSET_BABBLE_SHARE ? 1 + Math.floor((r / MotorCortex.ONSET_BABBLE_SHARE) * (ONSETS.length - 1)) : 0;
+    return this.execute(this.bumpAt(Math.random(), Math.random()), 'babble', 0, onset);
   }
 
-  private execute(pattern: Float32Array, source: MotorOutput['source'], confidence: number): MotorOutput {
+  private execute(pattern: Float32Array, source: MotorOutput['source'], confidence: number, onset: number = 0): MotorOutput {
     this.held = pattern;
+    this.heldOnset = onset;
+    this.heldHeardTicks = 0;
     this.heldTicks = this.cfg.holdTicks;
     this.resetPlan();
-    return { command: this.decode(pattern)!, source, confidence };
+    return { command: this.decode(pattern, onset)!, source, confidence };
+  }
+
+  /** The onset the heard sound drives most (0 = none), from the map of the lips. */
+  private onsetDrive(heard: ArrayLike<number>): Float32Array {
+    const drive = new Float32Array(ONSETS.length);
+    for (let o = 0; o < ONSETS.length; o++) {
+      const offset = o * this.inputCount;
+      let sum = 0;
+      for (let h = 0; h < heard.length; h++) sum += this.onsetWeights[offset + heard[h]];
+      drive[o] = heard.length > 0 ? sum / heard.length : 0;
+    }
+    return drive;
+  }
+
+  private static bestOnset(plan: Float32Array): number {
+    let best = 0;
+    for (let o = 1; o < plan.length; o++) if (plan[o] > plan[best]) best = o;
+    return plan[best] > 0 ? best : 0;
   }
 
   /**
@@ -201,7 +257,7 @@ export class MotorCortex extends BrainRegion {
     if (peak < this.cfg.imitationThreshold) return null;
 
     for (let m = 0; m < this.neuronCount; m++) if (drive[m] < peak * 0.5) drive[m] = 0;
-    return this.execute(this.normalized(drive), 'naming', Math.min(1, peak));
+    return this.execute(this.normalized(drive), 'naming', Math.min(1, peak), MotorCortex.bestOnset(this.onsetDrive(auditoryUnits)));
   }
 
   /** Takes the imitation that became ready on this tick, if any, and starts executing it. */
@@ -221,7 +277,7 @@ export class MotorCortex extends BrainRegion {
 
     // --- Vocalizing: what is heard is the consequence of the held command ---
     if (this.held) {
-      if (heard.length > 0) this.learn(this.held, heard, modulationEffects.learningRateMultiplier ?? 1);
+      if (heard.length > 0) this.learn(this.held, heard, modulationEffects.learningRateMultiplier ?? 1, this.heldHeardTicks++ < this.cfg.onsetTicks);
       const output = new Float32Array(this.held.length);
       for (let i = 0; i < output.length; i++) output[i] = this.held[i] > 0.5 ? 1 : 0;
       if (--this.heldTicks <= 0) {
@@ -258,14 +314,21 @@ export class MotorCortex extends BrainRegion {
           }
         }
       }
+      // The onset is what is heard at the start: the lips read only those ticks.
+      if (this.planTicks < this.cfg.onsetTicks) {
+        const onsetDrive = this.onsetDrive(heard);
+        for (let o = 0; o < onsetDrive.length; o++) this.onsetPlan[o] += onsetDrive[o];
+      }
       this.planTicks++;
       this.planSilentTicks = 0;
       if (peak > this.planPeakDrive) this.planPeakDrive = peak;
     } else if (this.planTicks > 0 && ++this.planSilentTicks >= this.cfg.planGapTicks) {
       // The sound is over: if the map knew it well enough, imitate it.
+      this.lastListening = { peak: this.planPeakDrive, onsets: Array.from(this.onsetPlan, (v) => v / Math.max(1, Math.min(this.planTicks, this.cfg.onsetTicks))), ticks: this.planTicks };
       if (this.imitate && this.planPeakDrive >= this.cfg.imitationThreshold) {
         const pattern = this.normalized(this.plan);
-        this.pending = this.execute(pattern, 'imitation', Math.min(1, this.planPeakDrive));
+        const onset = MotorCortex.bestOnset(this.onsetPlan);
+        this.pending = this.execute(pattern, 'imitation', Math.min(1, this.planPeakDrive), onset);
       }
       this.resetPlan();
     }
@@ -276,6 +339,7 @@ export class MotorCortex extends BrainRegion {
 
   private resetPlan(): void {
     this.plan.fill(0);
+    this.onsetPlan.fill(0);
     this.planTicks = 0;
     this.planSilentTicks = 0;
     this.planPeakDrive = 0;
@@ -297,7 +361,7 @@ export class MotorCortex extends BrainRegion {
    *     if that sound is now being produced from here, it was not (only)
    *     produced from there.
    */
-  private learn(pattern: Float32Array, heard: number[], gain: number): void {
+  private learn(pattern: Float32Array, heard: number[], gain: number, onsetPhase: boolean = true): void {
     const lr = Math.min(1, this.cfg.learningRate * Math.max(0, gain));
     const ltd = lr * this.cfg.depressionRatio;
     for (let m = 0; m < this.neuronCount; m++) {
@@ -308,6 +372,19 @@ export class MotorCortex extends BrainRegion {
         const w = this.weights[idx];
         if (activity > 0.05) this.weights[idx] = w + lr * (activity - w);
         else if (w > 0) this.weights[idx] = w * (1 - ltd);
+      }
+    }
+    // The lips learn the same way — from the start of the utterance, when the
+    // onset is what comes back: the onset unit that is closed (or open) now
+    // binds to what is heard; the others let go of it.
+    for (let o = 0; onsetPhase && o < ONSETS.length; o++) {
+      const offset = o * this.inputCount;
+      const activity = o === this.heldOnset ? 1 : 0;
+      for (let h = 0; h < heard.length; h++) {
+        const idx = offset + heard[h];
+        const w = this.onsetWeights[idx];
+        if (activity > 0) this.onsetWeights[idx] = w + lr * (activity - w);
+        else if (w > 0) this.onsetWeights[idx] = w * (1 - ltd);
       }
     }
     if (heard.length > 0) this.heldTicksLearned++;

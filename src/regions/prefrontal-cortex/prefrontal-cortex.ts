@@ -471,20 +471,30 @@ export class PrefrontalCortex extends BrainRegion {
     // are sparse (a few dozen spikes) and the pattern-specific part of the
     // drive is small next to `activeInputs × meanWeight`.
     let meanInput = 0;
-    for (let j = 0; j < inputLen; j++) meanInput += spikes[j];
+    const active: number[] = [];
+    for (let j = 0; j < inputLen; j++) {
+      if (spikes[j] !== 0) {
+        active.push(j);
+        meanInput += spikes[j];
+      }
+    }
     meanInput /= Math.max(1, inputLen);
+
+    // Each neuron's total synaptic weight is cached (it only changes when the
+    // neuron learns) and the integration is sparse (only active channels): at
+    // rest this loop costs nothing, and during a wave neurons × active inputs
+    // instead of neurons × all inputs.
+    const totals = this.rowTotals(inputLen);
 
     for (let n = 0; n < this.neuronCount; n++) {
       const baseOffset = n * this.inputCount;
       let sum = 0;
-      let totalWeight = 0;
 
-      for (let j = 0; j < inputLen; j++) {
-        const w = this.weights[baseOffset + j];
-        totalWeight += w;
-        sum += w * spikes[j];
+      for (let a = 0; a < active.length; a++) {
+        const j = active[a];
+        sum += this.weights[baseOffset + j] * spikes[j];
       }
-      sum = Math.max(0, sum - meanInput * totalWeight);
+      sum = Math.max(0, sum - meanInput * totals[n]);
 
       // Apply neuromodulation gain and modulated threshold
       sum *= modulationEffects.spikeGainMultiplier;
@@ -559,6 +569,29 @@ export class PrefrontalCortex extends BrainRegion {
   /** Total synaptic weight every neuron is scaled to (mean row total at first use). */
   private weightBudget = 0;
 
+  /** Cached total afferent weight per neuron (see `rowTotals`). */
+  private rowTotalCache: Float32Array | null = null;
+
+  private rowTotals(inputLen: number): Float32Array {
+    if (!this.rowTotalCache) {
+      const totals = new Float32Array(this.neuronCount);
+      for (let n = 0; n < this.neuronCount; n++) {
+        const baseOffset = n * this.inputCount;
+        let total = 0;
+        for (let j = 0; j < inputLen; j++) total += this.weights[baseOffset + j];
+        totals[n] = total;
+      }
+      this.rowTotalCache = totals;
+    }
+    return this.rowTotalCache;
+  }
+
+  override loadWeights(weights: Float32Array): void {
+    super.loadWeights(weights);
+    this.rowTotalCache = null;
+    this.weightBudget = 0;
+  }
+
   /** Running average of each afferent's activity (presynaptic term of the covariance rule). */
   private inputAverage: Float32Array | null = null;
   /** Rate of that running average (per driven tick). */
@@ -626,6 +659,9 @@ export class PrefrontalCortex extends BrainRegion {
       if (rowTotal > 0) {
         const scale = this.weightBudget / rowTotal;
         for (let j = 0; j < inputLen; j++) this.weights[baseOffset + j] *= scale;
+        if (this.rowTotalCache) this.rowTotalCache[n] = this.weightBudget;
+      } else if (this.rowTotalCache) {
+        this.rowTotalCache[n] = 0;
       }
     }
   }

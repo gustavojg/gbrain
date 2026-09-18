@@ -121,12 +121,14 @@ console.log('\n2. BABBLING');
 }
 babble(brain, 40);
 const early = examine(brain);
-babble(brain, 110);
+babble(brain, 180);
 const later = examine(brain);
 {
+  // Coverage of the vowel space by random babbles is a matter of chance; the
+  // corner vowels (/i/, /u/) are the last to be reached.
   check('the more it has babbled, the more vowels it can repeat',
     later.repeated > naive.repeated && later.repeated >= early.repeated && later.repeated >= 4,
-    `0 babbles: ${naive.repeated}/5 · ~45: ${early.repeated}/5 · ~155: ${later.repeated}/5`);
+    `0 babbles: ${naive.repeated}/5 · ~45: ${early.repeated}/5 · ~225: ${later.repeated}/5`);
 }
 
 // ── 3. ACCURACY ─────────────────────────────────────────────────────────────

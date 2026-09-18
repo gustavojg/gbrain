@@ -40,6 +40,12 @@ export interface RegionActivity {
    */
   drive: number;
   /**
+   * Peak of `drive` held with a slow decay (~1 s of server time). A perception
+   * wave crosses the early regions in a few ticks; the dashboard samples the
+   * state at 2 Hz and would otherwise miss it. Only set by `DigitalBrain.getState()`.
+   */
+  drivePeak?: number;
+  /**
    * Novelty of the firing pattern (EMA, 0..1). ~0 when the region repeats the
    * same pattern (rest / stable attractor) and rises when a stimulus changes
    * WHICH neurons fire. It is the reactive signal of the activity panel:
@@ -181,7 +187,11 @@ export abstract class BrainRegion {
 
     // Initialize state vectors
     this.potentials = new Float32Array(neuronCount);
-    this.potentials.fill(-70); // Resting potential
+    // Rest = 0: `potentials` is a dimensionless drive accumulator (sum of
+    // weights × spikes), not a voltage in mV. Starting at −70 kept the
+    // integrator regions below their activation floor for the first ~25 ticks
+    // of input, so the first stimulus after boot was lost.
+    this.potentials.fill(0);
     this.spikes = new Float32Array(neuronCount);
 
     // Sensory buffer for recent inputs
@@ -257,7 +267,10 @@ export abstract class BrainRegion {
     }
 
     // Retrieve recent inputs from the sensory buffer
-    const recentEntries = this.sensoryBuffer.getRecent(dt * 2);
+    // Window anchored to the CURRENT time: an input that is not refreshed
+    // fades out of the sensory trace, so a region with no afferent traffic
+    // returns to rest instead of re-reading its last packet forever.
+    const recentEntries = this.sensoryBuffer.getRecent(dt * 2, this.currentTime);
     let inputSpikes: Float32Array;
 
     if (recentEntries.length > 0) {
@@ -265,6 +278,15 @@ export abstract class BrainRegion {
       inputSpikes = this.averageEntries(recentEntries);
     } else {
       inputSpikes = new Float32Array(this.inputCount);
+    }
+
+    // Top-down gain: modulatory afferents scale the response to the drivers.
+    // They never add input of their own, so with no driver the region stays
+    // silent, and WHAT it represents is decided by the drivers alone.
+    const topDownGain = 1 + BrainRegion.TOP_DOWN_GAIN * this.topDownLevel;
+    this.topDownLevel *= BrainRegion.TOP_DOWN_DECAY;
+    if (topDownGain !== 1) {
+      for (let i = 0; i < inputSpikes.length; i++) inputSpikes[i] *= topDownGain;
     }
 
     // Update the perceived drive level (EMA). We measure the fraction of
@@ -279,6 +301,9 @@ export abstract class BrainRegion {
 
     // Apply modulation to parameters
     this.modulateBy(modulationEffects);
+
+    // Attended populations recruit more neurons (top-down widens the k-WTA).
+    this.sparsity = Math.min(0.3, this.sparsity * (1 + BrainRegion.TOP_DOWN_RECRUITMENT * (topDownGain - 1)));
 
     // Process through the region's specific implementation
     const outputSpikes = this.processInput(inputSpikes, modulationEffects);
@@ -387,26 +412,103 @@ export abstract class BrainRegion {
    * @param effects - Modulation effects to apply
    */
   modulateBy(effects: ModulationEffects): void {
-    // Adjust firing threshold: serotonin and cortisol ↑ → threshold ↑
-    const modulatedThreshold = this.baseThreshold * effects.thresholdMultiplier;
-
-    // Adjust sparsity: more attention → more neurons can activate
+    // Excitability of the population = fraction of neurons the k-WTA lets fire.
+    //  - attention (NE, ACh) ↑ → more neurons can activate
+    //  - firing threshold (serotonin, cortisol) ↑ → fewer neurons reach it
+    // In a k-WTA population the winners are chosen by rank, so a threshold in
+    // mV would have no effect; raising the threshold is expressed as a
+    // proportionally smaller winning fraction.
     this.sparsity = Math.min(
       0.3,
-      Math.max(0.02, 0.1 * effects.attentionGain)
+      Math.max(0.02, (0.1 * effects.attentionGain) / Math.max(0.1, effects.thresholdMultiplier))
     );
 
-    // The modulated threshold is used internally in processInput
-    // (stored so subclasses can access it)
-    this._modulatedThreshold = modulatedThreshold;
     this._modulatedLearningRate =
       this.baseLearningRate * effects.learningRateMultiplier;
   }
 
-  /** Firing threshold after modulation */
-  protected _modulatedThreshold: number = -55;
+  /** Trace of recent modulatory (top-down) input, 0–1. */
+  private topDownLevel: number = 0;
+  /** Maximum gain added by top-down modulation (×1 … ×1.5). */
+  private static readonly TOP_DOWN_GAIN = 0.5;
+  /** Per-tick decay of the top-down trace (≈ 10 ms time constant). */
+  private static readonly TOP_DOWN_DECAY = 0.9;
+  /** Mean activity per fibre at which top-down modulation saturates. */
+  private static readonly TOP_DOWN_SATURATION = 0.1;
+  /** How much of the top-down gain also widens the winning fraction. */
+  private static readonly TOP_DOWN_RECRUITMENT = 0.5;
+
   /** Learning rate after modulation */
   protected _modulatedLearningRate: number = 0.1;
+
+  /**
+   * Receives a volley from a MODULATORY projection (feedback / top-down).
+   *
+   * Biology: feedback projections target distal dendrites and change the gain
+   * of the neurons they reach rather than making them fire (Sherman &
+   * Guillery, 1998; Reynolds & Heeger, 2009). Only the overall strength of the
+   * volley matters here — the fraction of active fibres, scaled by their
+   * weight — not its spatial pattern, which lives in the source's own space.
+   *
+   * @param data - Spike vector of the modulatory volley (already weighted)
+   */
+  feedModulation(data: Float32Array): void {
+    if (data.length === 0) return;
+    let sum = 0;
+    for (let i = 0; i < data.length; i++) sum += data[i];
+    const level = Math.min(1, sum / data.length / BrainRegion.TOP_DOWN_SATURATION);
+    if (level > this.topDownLevel) this.topDownLevel = level;
+  }
+
+  /** Current top-down modulation level (0–1), for monitoring. */
+  get topDown(): number {
+    return this.topDownLevel;
+  }
+
+  /**
+   * Learned state that is NOT in the weight matrix (episodic index, homeostatic
+   * variables, labelled memories…), as plain JSON. `null` when there is none.
+   * Persisted next to the weights so a restart resumes where the brain left off.
+   */
+  serializeExtra(): unknown {
+    return null;
+  }
+
+  /**
+   * Restores what `serializeExtra()` produced. The data comes from a file:
+   * implementations must validate it and ignore whatever does not fit.
+   */
+  deserializeExtra(_data: unknown): void {
+    // Nothing to restore by default.
+  }
+
+  /**
+   * Offline reactivation (sleep replay): processes a pattern directly, without
+   * going through the sensory buffer and without advancing the region's clock,
+   * so replay never desynchronizes the region from the rest of the brain.
+   * Plasticity applies as in wakefulness, with the given modulation.
+   *
+   * @param pattern - Pattern to reactivate (input space of the region)
+   * @param modulationEffects - Modulation in force during the replay
+   * @returns Number of neurons that fired
+   */
+  reactivate(pattern: Float32Array, modulationEffects: ModulationEffects): number {
+    this.modulateBy(modulationEffects);
+    const output = this.processInput(pattern, modulationEffects);
+    let active = 0;
+    for (let i = 0; i < output.length; i++) if (output[i] > 0) active++;
+    return active;
+  }
+
+  /**
+   * Clears the transient state left by offline reactivation (membrane
+   * potentials and spikes), so that waking up does not start with a burst of
+   * residual activity. Synaptic weights — what was learned — are untouched.
+   */
+  settle(): void {
+    this.potentials.fill(0);
+    this.spikes.fill(0);
+  }
 
   /**
    * Feeds the sensory buffer with a new input vector.

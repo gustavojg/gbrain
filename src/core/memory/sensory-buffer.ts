@@ -99,16 +99,22 @@ export class SensoryBuffer {
    * Biology: Simulates access to the sensory trace that still persists
    * within the iconic/echoic memory window.
    *
-   * @param durationMs - Duration of the window backward from the most recent entry (ms)
+   * @param durationMs - Duration of the window (ms)
+   * @param now - Current time (ms). The window is [now - durationMs, now], so
+   *   a trace that is not refreshed fades out. When omitted, the window is
+   *   measured backward from the most recent entry instead (which never
+   *   expires — only meant for inspecting the buffer, not for driving a region).
    * @returns Array of sensory entries within the window, ordered chronologically
    */
-  getRecent(durationMs: number): SensoryEntry[] {
+  getRecent(durationMs: number, now?: number): SensoryEntry[] {
     if (this.count === 0) return [];
 
-    // Find the most recent timestamp
-    const lastIndex = (this.head - 1 + this.capacity) % this.capacity;
-    const latestTimestamp = this.timestamps[lastIndex];
-    const cutoff = latestTimestamp - durationMs;
+    let reference = now;
+    if (reference === undefined) {
+      const lastIndex = (this.head - 1 + this.capacity) % this.capacity;
+      reference = this.timestamps[lastIndex];
+    }
+    const cutoff = reference - durationMs;
 
     const results: SensoryEntry[] = [];
 

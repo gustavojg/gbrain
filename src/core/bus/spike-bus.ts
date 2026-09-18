@@ -106,6 +106,29 @@ export class SpikeBus extends EventEmitter {
   /** Total counter of processed packets (for statistics) */
   private totalPacketsProcessed: number = 0;
 
+  /**
+   * Short-term synaptic depression state per connection: "from->to" → state.
+   *
+   * Biology: every volley consumes part of a projection's readily releasable
+   * vesicle pool, which recovers over hundreds of ms (Tsodyks & Markram, 1997).
+   * A pathway driven continuously runs out of resources and stops transmitting
+   * until it has recovered. This is what makes reverberating activity in the
+   * recurrent loops of the connectome (PFC → thalamus → cortex → PFC, …) fade
+   * out after a stimulus instead of echoing forever: every region's k-WTA
+   * re-normalizes its output to k spikes, so without depression the loop gain
+   * never drops below 1.
+   */
+  private readonly depression: Map<string, { resources: number; lastTime: number; failed: boolean }> = new Map();
+
+  /** Fraction of the available resources consumed by one volley. */
+  private static readonly DEPRESSION_USE = 0.05;
+  /** Recovery time constant of the resources (ms). */
+  private static readonly DEPRESSION_RECOVERY_MS = 200;
+  /** Below this level the pathway fails (stops transmitting)… */
+  private static readonly DEPRESSION_FAIL_BELOW = 0.2;
+  /** …and it only resumes once recovered above this level (hysteresis). */
+  private static readonly DEPRESSION_RESUME_ABOVE = 0.5;
+
   constructor() {
     super();
     // Increase the listener limit for many regions
@@ -195,6 +218,10 @@ export class SpikeBus extends EventEmitter {
     for (const target of packet.targets) {
       if (!this.regions.has(target)) continue; // Ignore unregistered targets
 
+      // Short-term depression: a silent volley costs nothing; an exhausted
+      // pathway transmits nothing until it has recovered.
+      if (spikeCount > 0 && !this.transmits(packet.source, target, packet.timestamp)) continue;
+
       const delay = this.getDelay(packet.source, target);
       const weight = this.getWeight(packet.source, target);
       const deliveryTime = packet.timestamp + delay;
@@ -209,6 +236,40 @@ export class SpikeBus extends EventEmitter {
       // Binary insertion to keep the order by deliveryTime
       this.insertSorted(delayed);
     }
+  }
+
+  /**
+   * Updates the short-term depression of a connection for a volley sent at
+   * `time` and tells whether the volley gets through.
+   */
+  private transmits(from: string, to: string, time: number): boolean {
+    const key = `${from}->${to}`;
+    let state = this.depression.get(key);
+    if (!state) {
+      state = { resources: 1, lastTime: time, failed: false };
+      this.depression.set(key, state);
+    }
+
+    // Exponential recovery toward 1 since the last volley
+    const elapsed = Math.max(0, time - state.lastTime);
+    state.resources = 1 - (1 - state.resources) * Math.exp(-elapsed / SpikeBus.DEPRESSION_RECOVERY_MS);
+    state.lastTime = time;
+
+    if (state.failed) {
+      if (state.resources < SpikeBus.DEPRESSION_RESUME_ABOVE) return false;
+      state.failed = false;
+    }
+
+    state.resources *= 1 - SpikeBus.DEPRESSION_USE;
+    if (state.resources < SpikeBus.DEPRESSION_FAIL_BELOW) state.failed = true;
+    return true;
+  }
+
+  /**
+   * Available synaptic resources (0–1) of a connection, for monitoring.
+   */
+  getSynapticResources(from: string, to: string): number {
+    return this.depression.get(`${from}->${to}`)?.resources ?? 1;
   }
 
   /**

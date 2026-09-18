@@ -19,6 +19,10 @@
 import { DigitalBrain } from '../src/brain.js';
 import { ModulatorType } from '../src/core/neuromodulators/modulator-system.js';
 import { Thalamus } from '../src/regions/thalamus/thalamus.js';
+import { seedRandom } from './helpers/seed.js';
+
+// Reproducible brain: weights, noise and spike encoding all draw from Math.random.
+seedRandom(102);
 
 console.log('── Verification: affect, attention & neuromodulation ──\n');
 

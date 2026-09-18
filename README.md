@@ -58,6 +58,9 @@ Cada capacidad tiene un test con criterios cuantitativos en `tests/`:
 - **Pensamientos en directo** (`live-thoughts.test.ts`) — `think()` produce pensamientos bien formados, **reactivos** (en reposo el pensamiento está vacío; al leer se vuelve no vacío) y **discriminativos** (entradas distintas → pensamientos distintos, solape <60%).
 - **Afecto, atención y neuromodulación** (`neuro-systems.test.ts`) — la **amígdala** lee texto positivo con valencia claramente mayor que el negativo; la **acetilcolina** ensancha el cuello de botella atencional del tálamo (pasan más señales); la **dopamina** sube el multiplicador de plasticidad y el **cortisol** lo suprime.
 
+- **Cerebro completo** (`whole-brain.test.ts`) — con PRNG sembrado: en **reposo** no dispara nada ni se guardan episodios; un estímulo **recorre las 8 regiones** entrando por el tálamo y después el cerebro **vuelve al reposo**; el código talámico es reproducible y discriminativo; el estado **persiste** bit a bit. Además mide y publica los **huecos conocidos** (defectos auditados aún sin corregir) sin hacer fallar la suite: cuando uno se cierra, se promueve a comprobación dura.
+- **Servidor** (`server-guards.test.ts`, `server-integration.test.ts`) — entradas malformadas, orígenes ajenos, cuerpos gigantes e inundaciones contra el servidor real: nada puede envenenar (NaN), agotar o bloquear el cerebro; un archivo de estado corrupto se detecta (CRC) y se restaura la copia anterior.
+
 > **Honestidad técnica:** la comprensión del lenguaje es **asociativa** (recupera y reordena palabras del léxico relacionadas con la entrada), no razonamiento simbólico. Es el comportamiento esperado de una SNN con léxico distribuido.
 
 ### Puesta en marcha
@@ -132,6 +135,9 @@ Each capability has a test with quantitative criteria under `tests/`:
 - **Vocabulary** (`vocabulary-learning.test.ts`) — learns new words after N exposures, comprehends them afterwards, and persists them to disk.
 - **Live thoughts** (`live-thoughts.test.ts`) — `think()` produces well-formed thoughts that are **reactive** (idle → empty; after reading → non-empty) and **discriminative** (distinct inputs → distinct thoughts, <60% overlap).
 - **Affect, attention & neuromodulation** (`neuro-systems.test.ts`) — the **amygdala** reads positive text with clearly higher valence than negative text; **acetylcholine** widens the thalamic attentional bottleneck (more signals pass); **dopamine** raises the plasticity multiplier and **cortisol** suppresses it.
+
+- **Whole brain** (`whole-brain.test.ts`) — with a seeded PRNG: at **rest** nothing fires and no episode is stored; a stimulus **travels through all 8 regions**, entering via the thalamus, and then the brain **returns to rest**; the thalamic code is reproducible and discriminative; state **persists** bit for bit. It also measures and prints the **known gaps** (audited defects not fixed yet) without failing the suite: once one closes, it is promoted to a hard check.
+- **Server** (`server-guards.test.ts`, `server-integration.test.ts`) — malformed input, foreign origins, oversized bodies and floods against the real server: nothing can poison (NaN), exhaust or stall the brain; a corrupted state file is detected (CRC) and the previous snapshot restored.
 
 > **Technical honesty:** language comprehension is **associative** (it retrieves and reorders lexicon words related to the input), not symbolic reasoning. This is the expected behaviour of an SNN with a distributed lexicon.
 

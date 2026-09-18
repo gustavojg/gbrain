@@ -25,8 +25,8 @@ import { SpikeBus, type SpikePacket } from './core/bus/spike-bus.js';
 import { Connectome } from './core/bus/connectome.js';
 import { NeuromodulatorSystem, ModulatorType, type ModulationEffects } from './core/neuromodulators/modulator-system.js';
 import { type BrainRegion, type RegionActivity } from './core/brain-region.js';
-import { ConsolidationEngine } from './core/memory/consolidation.js';
-import { BrainPersistence } from './core/persistence/binary-protocol.js';
+import { ConsolidationEngine, type ConsolidationStats, type ShortTermEntry } from './core/memory/consolidation.js';
+import { BrainPersistence, BACKUP_SUFFIX, writeFileAtomic } from './core/persistence/binary-protocol.js';
 import { VisualEncoder } from './encoders/visual-encoder.js';
 import { AudioEncoder } from './encoders/audio-encoder.js';
 import { TextEncoder as BrainTextEncoder } from './encoders/text-encoder.js';
@@ -41,6 +41,7 @@ import { VisualCortex } from './regions/visual-cortex/visual-cortex.js';
 import { AuditoryCortex } from './regions/auditory-cortex/auditory-cortex.js';
 import { Hippocampus } from './regions/hippocampus/hippocampus.js';
 import { Amygdala } from './regions/amygdala/amygdala.js';
+import { AFFECTIVE_LEXICON } from './regions/amygdala/affective-lexicon.js';
 import { PrefrontalCortex } from './regions/prefrontal-cortex/prefrontal-cortex.js';
 import { BrocaArea, type LanguageResponse } from './regions/broca-wernicke/broca.js';
 import { WernickeArea } from './regions/broca-wernicke/wernicke.js';
@@ -76,8 +77,14 @@ export interface BrainState {
   /** Vocabulary-acquisition stats (learned words, pending exposures). */
   vocabulary?: {
     total: number;
+    /** Most recent words learned this session (trimmed for streaming). */
     learnedThisSession: string[];
+    /** Total words learned this session (not trimmed). */
+    learnedCount: number;
+    /** Pending words closest to the threshold (trimmed for streaming). */
     pending: Array<{ word: string; count: number }>;
+    /** Total pending words (not trimmed). */
+    pendingCount: number;
     threshold: number;
   };
   /** Visual cortex learning metrics (engram, stability, convergence). */
@@ -119,6 +126,17 @@ export interface PerceptionResult {
   processingTime: number;
 }
 
+/** Options shared by the perception entry points (`see`, `hear`, `read`). */
+export interface PerceptionOptions {
+  /**
+   * Run the propagation ticks inline (default `true`). Pass `false` to only
+   * inject the stimulus and let the caller drive `tick()` — the server does
+   * this through the PerceptionScheduler so the event loop is never blocked —
+   * then build the result with `describePerception()`.
+   */
+  propagate?: boolean;
+}
+
 /** Event emitted by the brain */
 export interface BrainEvent {
   type: 'spike' | 'emotion' | 'memory' | 'consolidation' | 'response';
@@ -148,6 +166,14 @@ export class DigitalBrain {
   // --- Brain regions ---
   private regions: Map<string, BrainRegion> = new Map();
 
+  /** Slow-decaying peak of each region's drive (what the dashboard bars show). */
+  private drivePeaks: Map<string, number> = new Map();
+  /** Per-tick decay of the held peak (≈ 1 s at the server's 10 Hz tick). */
+  private static readonly DRIVE_PEAK_DECAY = 0.9;
+
+  /** "from->to" of the connectome projections that modulate instead of drive. */
+  private modulatoryPathways: Set<string> = new Set();
+
   // --- Encoders (inputs) ---
   private visualEncoder: VisualEncoder;
   private audioEncoder: AudioEncoder;
@@ -174,11 +200,87 @@ export class DigitalBrain {
    */
   private static readonly LEARN_THRESHOLD = 3;
 
+  /** Ticks a perception needs to propagate through the connectome (~50 ms simulated). */
+  static readonly PERCEPTION_TICKS = 50;
+
+  /** Cortical target of the thalamic relay, per modality (nodes of the connectome). */
+  private static readonly THALAMIC_RELAY = {
+    visual: 'visualCortex',
+    auditory: 'auditoryCortex',
+    linguistic: 'brocaWernicke',
+  } as const;
+  private static readonly SENSORY_RELAY_TARGETS: ReadonlySet<string> = new Set(
+    Object.values(DigitalBrain.THALAMIC_RELAY),
+  );
+
+  /** Cochlear (mel) bands × frames of the sliding spectrogram the auditory cortex reads. */
+  private static readonly COCHLEAR_BANDS = 40;
+  private static readonly SPECTROGRAM_FRAMES = 10;
+  /** Sample rate assumed for microphone frames that do not declare one (browser default). */
+  private static readonly DEFAULT_MIC_SAMPLE_RATE = 48000;
+
+  /** Side of the (square) retinal image the visual encoder works on. */
+  private static readonly RETINA_SIDE = 14;
+  /** Input channels of the visual cortex. */
+  private static readonly VISUAL_CORTEX_INPUTS = 1000;
+
+  /**
+   * Regions whose weights are NOT restored from legacy (protocol v1) files.
+   * v1 files were written while the brain never rested and the hippocampus had
+   * neither DG inhibition nor synaptic downscaling: their CA3 weights hold a
+   * saturated cluster of noise engrams that would capture new episodes. (The
+   * episodic index itself was never persisted, so no memory is lost.)
+   */
+  private static readonly RESET_ON_LEGACY_STATE: ReadonlySet<string> = new Set(['hippocampus']);
+
+  // ── Sleep (memory consolidation) ──
+  /** Cortical target of hippocampal replay (the hippocampus → PFC projection). */
+  private static readonly CONSOLIDATION_TARGET = 'prefrontalCortex';
+  /**
+   * Episodes replayed per sleep, and replays of each. Replay runs inline, so
+   * the product bounds how long a sleep can hold the event loop (~0.1 s).
+   */
+  private static readonly SLEEP_REPLAY_EPISODES = 8;
+  private static readonly SLEEP_REPLAY_CYCLES = 3;
+  /** Per-sleep downscaling of the CA3 recurrent weights (replayed engrams are re-imprinted). */
+  private static readonly SLEEP_SYNAPTIC_DOWNSCALING = 0.97;
+  /** Per-sleep decay of the episodic index (emotional episodes decay slower). */
+  private static readonly SLEEP_EPISODIC_DECAY = 0.97;
+
+  /** Fraction of the amygdala's commanded release that reaches the modulator pools per appraisal. */
+  private static readonly PHASIC_RELEASE_GAIN = 0.6;
+
   /** Minimum token length to consider for acquisition (filters noise). */
   private static readonly MIN_WORD_LEN = 3;
 
-  /** Unknown words seen so far → exposure count (pending acquisition). */
+  /** Maximum token length to consider for acquisition (filters pasted junk). */
+  private static readonly MAX_WORD_LEN = 24;
+
+  /** Only plain alphabetic tokens (already lowercased / accent-stripped) can be learned. */
+  private static readonly LEARNABLE_WORD = /^[a-z]+$/;
+
+  /**
+   * Bounds on vocabulary acquisition. The brain is fed by untrusted users, so
+   * every structure that grows with input must be capped.
+   */
+  private static readonly MAX_PENDING_VOCAB = 500;
+  private static readonly MAX_LEXICON_SIZE = 5000;
+  private static readonly MAX_LEARNED_HISTORY = 200;
+  private static readonly MAX_WORDS_PER_READ = 100;
+
+  /** How many pending / learned words `getState()` streams to the dashboard. */
+  private static readonly STATE_PENDING_SHOWN = 6;
+  private static readonly STATE_LEARNED_SHOWN = 24;
+
+  /**
+   * Unknown words seen so far → exposure count (pending acquisition).
+   * Insertion-ordered by recency, so the first key is the least recently seen
+   * (evicted first when the map is full).
+   */
   private pendingVocab: Map<string, number> = new Map();
+
+  /** Total words committed to the lexicon during this session. */
+  private learnedCount: number = 0;
 
   /** Words learned (committed to the lexicon) during this session. */
   private learnedThisSession: string[] = [];
@@ -221,21 +323,31 @@ export class DigitalBrain {
     this.modulators = new NeuromodulatorSystem();
 
     // 4. Initialize consolidation
-    this.consolidationEngine = new ConsolidationEngine();
+    this.consolidationEngine = new ConsolidationEngine(DigitalBrain.SLEEP_REPLAY_CYCLES);
 
     // 5. Initialize encoders
+    // 14×14 × (intensity + 4 edge orientations) = 980 channels: the whole
+    // retinal code fits the visual cortex's 1000 inputs. At 32×32 the encoder
+    // emitted 5120 channels and the cortex silently kept the first 1000 — the
+    // top rows of the intensity map, with every edge channel thrown away.
     this.visualEncoder = new VisualEncoder({
-      processWidth: 32,
-      processHeight: 32,
+      processWidth: DigitalBrain.RETINA_SIDE,
+      processHeight: DigitalBrain.RETINA_SIDE,
       foveation: true,
       edgeDetection: true,
     });
+    if (this.visualEncoder.outputSize > DigitalBrain.VISUAL_CORTEX_INPUTS) {
+      throw new Error(
+        `Visual encoder emits ${this.visualEncoder.outputSize} channels but the visual cortex has ` +
+          `${DigitalBrain.VISUAL_CORTEX_INPUTS} inputs`,
+      );
+    }
 
     this.audioEncoder = new AudioEncoder({
       sampleRate: 16000,
       fftSize: 2048,
-      numBands: 40,
-      numFrames: 20,
+      numBands: DigitalBrain.COCHLEAR_BANDS,
+      numFrames: DigitalBrain.SPECTROGRAM_FRAMES,
     });
 
     this.textEncoder = new BrainTextEncoder({
@@ -286,11 +398,25 @@ export class DigitalBrain {
 
     // ── Instantiate regions with reduced sizes ──
     // Total: ~10K neurons (vs 50K before) → smooth performance
-    this.addRegion(new Thalamus({ neuronCount: 500, totalInputSize: 500, bottleneckSize: 100 }));
-    this.addRegion(new VisualCortex({ neuronCount: 2000, inputCount: 1000 }));
-    this.addRegion(new AuditoryCortex({ neuronCount: 1000, inputCount: 400 }));
+    // The attentional bottleneck must be NARROWER than a typical stimulus, or
+    // attention never selects anything: a sentence activates ~90 lexical
+    // channels and an image ~50 retinal ones, so a gate of 100 let everything
+    // through and ACh/NE had nothing to widen. At 40 the gate passes the ~55
+    // most salient channels at baseline modulation and ~67 under high ACh.
+    this.addRegion(new Thalamus({ neuronCount: 500, totalInputSize: 500, bottleneckSize: 40 }));
+    this.addRegion(new VisualCortex({ neuronCount: 2000, inputCount: DigitalBrain.VISUAL_CORTEX_INPUTS }));
+    this.addRegion(new AuditoryCortex({
+      neuronCount: 1000,
+      inputCount: DigitalBrain.COCHLEAR_BANDS * DigitalBrain.SPECTROGRAM_FRAMES,
+      numBands: DigitalBrain.COCHLEAR_BANDS,
+      numFrames: DigitalBrain.SPECTROGRAM_FRAMES,
+    }));
     this.addRegion(new Hippocampus(1000, 1000));
-    this.addRegion(new Amygdala(500, 500));
+    const amygdala = new Amygdala(500, 500);
+    for (const [word, emotion] of AFFECTIVE_LEXICON) {
+      amygdala.conditionSemantic(wordToPattern(word, this.lexicon.dimensions), emotion);
+    }
+    this.addRegion(amygdala);
     this.addRegion(new PrefrontalCortex(3000, 1000));
     this.addRegion(new BrocaArea(this.lexicon, 1000, 1000));
     this.addRegion(new WernickeArea(this.lexicon, 1000, 1000));
@@ -300,8 +426,16 @@ export class DigitalBrain {
     this.bus.onReceive('brocaWernicke', (packet: SpikePacket) => {
       const broca = this.regions.get('broca');
       const wernicke = this.regions.get('wernicke');
-      if (wernicke) wernicke.feedInput(packet.spikes, packet.timestamp);
-      if (broca) broca.feedInput(packet.spikes, packet.timestamp);
+      // The prefrontal projection carries the INTENTION to speak: it drives
+      // Broca (production) but is top-down for Wernicke (comprehension), whose
+      // content must come from what is actually heard or read.
+      const topDown = packet.source === 'prefrontalCortex';
+      // Stamp with the ARRIVAL time (see addRegion).
+      if (wernicke) {
+        if (topDown) wernicke.feedModulation(packet.spikes);
+        else wernicke.feedInput(packet.spikes, this.currentTime);
+      }
+      if (broca) broca.feedInput(packet.spikes, this.currentTime);
     });
 
     // Compute the real total number of neurons
@@ -323,7 +457,14 @@ export class DigitalBrain {
 
     // Subscribe the region to the bus to receive spikes
     this.bus.onReceive(region.id, (packet: SpikePacket) => {
-      region.feedInput(packet.spikes, packet.timestamp);
+      if (this.modulatoryPathways.has(`${packet.source}->${region.id}`)) {
+        region.feedModulation(packet.spikes);
+        return;
+      }
+      // Stamp with the ARRIVAL time, not the send time: the axonal delay has
+      // already elapsed on the bus, and the region's sensory trace must start
+      // when the spikes actually reach it.
+      region.feedInput(packet.spikes, this.currentTime);
     });
 
     console.log(`  🧩 Region added: ${region.id} (${region.name})`);
@@ -337,6 +478,7 @@ export class DigitalBrain {
     for (const conn of connections) {
       this.bus.setDelay(conn.from, conn.to, conn.delay);
       this.bus.setWeight(conn.from, conn.to, conn.weight);
+      if (conn.role === 'modulator') this.modulatoryPathways.add(`${conn.from}->${conn.to}`);
     }
     console.log(`  🔗 Connectome configured: ${connections.length} connections`);
   }
@@ -352,7 +494,12 @@ export class DigitalBrain {
    * @param width - Width
    * @param height - Height
    */
-  see(pixels: number[] | Float32Array | Uint8Array, width: number, height: number): PerceptionResult {
+  see(
+    pixels: number[] | Float32Array | Uint8Array,
+    width: number,
+    height: number,
+    options: PerceptionOptions = {},
+  ): PerceptionResult {
     console.log(`👁️  Perceiving image (${width}×${height})...`);
 
     // Encode to spikes
@@ -362,7 +509,7 @@ export class DigitalBrain {
     this.injectSensoryInput('visual', spikes);
 
     // Process several ticks to propagate through the brain
-    return this.processPerception('visual');
+    return this.processPerception('visual', options);
   }
 
   /**
@@ -370,23 +517,49 @@ export class DigitalBrain {
    *
    * @param audioSamples - PCM samples
    */
-  hear(audioSamples: Float32Array | number[]): PerceptionResult {
+  hear(audioSamples: Float32Array | number[], options: PerceptionOptions = {}): PerceptionResult {
     // Encode to spikes via spectrogram
     const spikes = this.audioEncoder.encode(audioSamples, this.config.snn.dt);
 
     // Send to the thalamus
     this.injectSensoryInput('auditory', spikes);
 
-    return this.processPerception('auditory');
+    return this.processPerception('auditory', options);
   }
 
   /**
-   * The brain "hears" an already-computed spectrogram (from 08_microphone_interaction).
+   * The brain "hears" one frame of microphone audio, as linear FFT magnitudes
+   * in [0, 1] (what the dashboard's AnalyserNode produces). The frame goes
+   * through the cochlear front-end — mel bands + sliding window — so the
+   * auditory cortex receives the spectrogram layout it is built for.
+   *
+   * @param magnitudes - Linear-frequency magnitudes, bin 0 = DC
+   * @param sampleRate - Sample rate of the source in Hz (default: 48 kHz)
    */
-  hearSpectrogram(spectrogram: number[] | Float32Array): PerceptionResult {
-    const spikes = this.audioEncoder.encodeSpectrogram(spectrogram, this.config.snn.dt);
+  hearFrame(
+    magnitudes: number[] | Float32Array,
+    sampleRate: number = DigitalBrain.DEFAULT_MIC_SAMPLE_RATE,
+    options: PerceptionOptions = {},
+  ): PerceptionResult {
+    const spectrogram = this.audioEncoder.encodeMagnitudeFrame(magnitudes, sampleRate, this.currentTime);
+    this.injectSensoryInput('auditory', spectrogram);
+    return this.processPerception('auditory', options);
+  }
+
+  /**
+   * The brain "hears" an already-computed spectrogram: a flat
+   * `[frame0 band0…band39, frame1 …]` array of band energies in [0, 1], oldest
+   * frame first, in the auditory cortex's own layout. For raw microphone
+   * frames (linear FFT bins) use `hearFrame`, which builds this layout.
+   */
+  hearSpectrogram(spectrogram: number[] | Float32Array, options: PerceptionOptions = {}): PerceptionResult {
+    const spikes = new Float32Array(spectrogram.length);
+    for (let i = 0; i < spectrogram.length; i++) {
+      const v = spectrogram[i] as number;
+      spikes[i] = Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 0;
+    }
     this.injectSensoryInput('auditory', spikes);
-    return this.processPerception('auditory');
+    return this.processPerception('auditory', options);
   }
 
   /**
@@ -394,50 +567,7 @@ export class DigitalBrain {
    *
    * @param text - Text to process
    */
-  /**
-   * Map of emotional words → neuromodulator effects.
-   * Biology: Wernicke's area recognizes emotionally charged words
-   * and activates the amygdala, which in turn releases neuromodulators.
-   */
-  private static readonly EMOTIONAL_WORDS: Record<string, { modulator: ModulatorType; amount: number }[]> = {
-    // Positive → dopamine + serotonin
-    'feliz': [{ modulator: ModulatorType.Dopamine, amount: 0.15 }, { modulator: ModulatorType.Serotonin, amount: 0.1 }],
-    'alegria': [{ modulator: ModulatorType.Dopamine, amount: 0.2 }],
-    'amor': [{ modulator: ModulatorType.Oxytocin, amount: 0.2 }, { modulator: ModulatorType.Dopamine, amount: 0.1 }],
-    'carino': [{ modulator: ModulatorType.Oxytocin, amount: 0.15 }],
-    'bien': [{ modulator: ModulatorType.Serotonin, amount: 0.1 }],
-    'gracias': [{ modulator: ModulatorType.Oxytocin, amount: 0.1 }, { modulator: ModulatorType.Serotonin, amount: 0.05 }],
-    'hola': [{ modulator: ModulatorType.Dopamine, amount: 0.05 }, { modulator: ModulatorType.Oxytocin, amount: 0.05 }],
-    'bonito': [{ modulator: ModulatorType.Dopamine, amount: 0.1 }],
-    'entusiasmo': [{ modulator: ModulatorType.Dopamine, amount: 0.2 }, { modulator: ModulatorType.Norepinephrine, amount: 0.1 }],
-    'esperanza': [{ modulator: ModulatorType.Serotonin, amount: 0.15 }],
-    'paz': [{ modulator: ModulatorType.Serotonin, amount: 0.2 }],
-    'calma': [{ modulator: ModulatorType.Serotonin, amount: 0.15 }],
-    'curiosidad': [{ modulator: ModulatorType.Dopamine, amount: 0.1 }, { modulator: ModulatorType.Acetylcholine, amount: 0.1 }],
-    'genial': [{ modulator: ModulatorType.Dopamine, amount: 0.15 }, { modulator: ModulatorType.Serotonin, amount: 0.1 }],
-    'contento': [{ modulator: ModulatorType.Dopamine, amount: 0.1 }, { modulator: ModulatorType.Serotonin, amount: 0.1 }],
-    // Negative → cortisol + norepinephrine
-    'triste': [{ modulator: ModulatorType.Cortisol, amount: 0.1 }],
-    'tristeza': [{ modulator: ModulatorType.Cortisol, amount: 0.15 }],
-    'miedo': [{ modulator: ModulatorType.Cortisol, amount: 0.2 }, { modulator: ModulatorType.Norepinephrine, amount: 0.15 }],
-    'odio': [{ modulator: ModulatorType.Cortisol, amount: 0.15 }, { modulator: ModulatorType.Norepinephrine, amount: 0.1 }],
-    'ansiedad': [{ modulator: ModulatorType.Cortisol, amount: 0.2 }, { modulator: ModulatorType.Norepinephrine, amount: 0.1 }],
-    'estres': [{ modulator: ModulatorType.Cortisol, amount: 0.25 }],
-    'enojo': [{ modulator: ModulatorType.Norepinephrine, amount: 0.2 }, { modulator: ModulatorType.Cortisol, amount: 0.1 }],
-    'mal': [{ modulator: ModulatorType.Cortisol, amount: 0.1 }],
-    'feo': [{ modulator: ModulatorType.Cortisol, amount: 0.05 }],
-    'soledad': [{ modulator: ModulatorType.Cortisol, amount: 0.1 }],
-    'frustracion': [{ modulator: ModulatorType.Cortisol, amount: 0.15 }, { modulator: ModulatorType.Norepinephrine, amount: 0.1 }],
-    // Activation → acetylcholine + norepinephrine
-    'pensar': [{ modulator: ModulatorType.Acetylcholine, amount: 0.1 }],
-    'aprender': [{ modulator: ModulatorType.Acetylcholine, amount: 0.15 }, { modulator: ModulatorType.Dopamine, amount: 0.05 }],
-    'recordar': [{ modulator: ModulatorType.Acetylcholine, amount: 0.1 }],
-    'atencion': [{ modulator: ModulatorType.Acetylcholine, amount: 0.15 }, { modulator: ModulatorType.Norepinephrine, amount: 0.1 }],
-    'dormir': [{ modulator: ModulatorType.Serotonin, amount: 0.2 }],
-    'sonar': [{ modulator: ModulatorType.Serotonin, amount: 0.1 }, { modulator: ModulatorType.Dopamine, amount: 0.05 }],
-  };
-
-  read(text: string): PerceptionResult {
+  read(text: string, options: PerceptionOptions = {}): PerceptionResult {
     console.log(`📖 Reading: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`);
 
     // Encode the text in LEXICON SPACE (not with the TextEncoder's generic
@@ -454,24 +584,22 @@ export class DigitalBrain {
     // Send to the thalamus (linguistic route)
     this.injectSensoryInput('linguistic', spikes);
 
-    // ── Emotional word detection ──
-    // Biology: Wernicke recognizes emotional words → activates the amygdala
-    // → the amygdala releases neuromodulators according to valence
+    // ── Affective appraisal ──
+    // Biology: comprehended words reach the amygdala through the temporal
+    // association cortex; words with a conditioned association evoke their
+    // emotion there, and the central nucleus turns the resulting state into a
+    // phasic neuromodulator release.
     const words = text.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\w\sáéíóúüñ]/g, '').split(/\s+/).filter(w => w.length > 0);
+    const amygdala = this.regions.get('amygdala') as Amygdala | undefined;
     let emotionalHits = 0;
-    for (const word of words) {
-      // Also compare without accents
-      const effects = DigitalBrain.EMOTIONAL_WORDS[word];
-      if (effects) {
-        for (const effect of effects) {
-          this.modulators.release(effect.modulator, effect.amount);
-        }
-        emotionalHits++;
+    if (amygdala) {
+      for (const word of words.slice(0, DigitalBrain.MAX_WORDS_PER_READ)) {
+        if (amygdala.appraise(wordToPattern(word, this.lexicon.dimensions))) emotionalHits++;
       }
-    }
-
-    if (emotionalHits > 0) {
-      console.log(`  💭 ${emotionalHits} emotional words detected`);
+      if (emotionalHits > 0) {
+        this.releaseFromAmygdala(amygdala);
+        console.log(`  💭 ${emotionalHits} emotional words detected`);
+      }
     }
 
     // Novelty → norepinephrine
@@ -480,7 +608,22 @@ export class DigitalBrain {
     // Vocabulary acquisition: learn unknown words after repeated exposure.
     this.acquireVocabulary(words);
 
-    return this.processPerception('text');
+    return this.processPerception('text', options);
+  }
+
+  /**
+   * Phasic neuromodulator release commanded by the amygdala's central nucleus
+   * for its current affective state.
+   */
+  private releaseFromAmygdala(amygdala: Amygdala): void {
+    const release = amygdala.produceNeuromodulators();
+    const gain = DigitalBrain.PHASIC_RELEASE_GAIN;
+    this.modulators.release(ModulatorType.Dopamine, release.dopamine * gain);
+    this.modulators.release(ModulatorType.Serotonin, release.serotonin * gain);
+    this.modulators.release(ModulatorType.Norepinephrine, release.norepinephrine * gain);
+    this.modulators.release(ModulatorType.Cortisol, release.cortisol * gain);
+    this.modulators.release(ModulatorType.Acetylcholine, release.acetylcholine * gain);
+    this.modulators.release(ModulatorType.Oxytocin, release.oxytocin * gain);
   }
 
   /**
@@ -503,8 +646,9 @@ export class DigitalBrain {
     const dim = this.lexicon.dimensions;
 
     // Count one exposure per utterance (dedupe repeats within the same read).
-    for (const word of new Set(words)) {
-      if (word.length < DigitalBrain.MIN_WORD_LEN) continue;
+    for (const word of new Set(words.slice(0, DigitalBrain.MAX_WORDS_PER_READ))) {
+      if (word.length < DigitalBrain.MIN_WORD_LEN || word.length > DigitalBrain.MAX_WORD_LEN) continue;
+      if (!DigitalBrain.LEARNABLE_WORD.test(word)) continue;
 
       if (this.lexicon.has(word)) {
         // Known word → reinforce its engram (bumps frequency / recency).
@@ -512,15 +656,22 @@ export class DigitalBrain {
         continue;
       }
 
-      // Unknown word → accumulate exposures.
+      // Unknown word → accumulate exposures (delete + set keeps the map
+      // ordered by recency for the LRU eviction below).
       const seen = (this.pendingVocab.get(word) ?? 0) + 1;
+      this.pendingVocab.delete(word);
 
       if (seen >= DigitalBrain.LEARN_THRESHOLD) {
+        // The lexicon is searched linearly on every comprehension; stop
+        // acquiring once it is full rather than let it grow without bound.
+        if (this.lexicon.size >= DigitalBrain.MAX_LEXICON_SIZE) continue;
+
         // Commit the new word to the lexicon.
         this.lexicon.add(word, wordToPattern(word, dim));
-        this.pendingVocab.delete(word);
-        if (!this.learnedThisSession.includes(word)) {
-          this.learnedThisSession.push(word);
+        this.learnedCount++;
+        this.learnedThisSession.push(word);
+        if (this.learnedThisSession.length > DigitalBrain.MAX_LEARNED_HISTORY) {
+          this.learnedThisSession.shift();
         }
         // Reward + attention consolidation of the new engram.
         this.modulators.release(ModulatorType.Dopamine, 0.1);
@@ -528,6 +679,10 @@ export class DigitalBrain {
         console.log(`  💡 Learned new word: "${word}" (lexicon: ${this.lexicon.size} words)`);
       } else {
         this.pendingVocab.set(word, seen);
+        if (this.pendingVocab.size > DigitalBrain.MAX_PENDING_VOCAB) {
+          const oldest = this.pendingVocab.keys().next().value;
+          if (oldest !== undefined) this.pendingVocab.delete(oldest);
+        }
       }
     }
   }
@@ -538,7 +693,9 @@ export class DigitalBrain {
   getVocabularyStats(): {
     total: number;
     learnedThisSession: string[];
+    learnedCount: number;
     pending: Array<{ word: string; count: number }>;
+    pendingCount: number;
     threshold: number;
   } {
     const pending = Array.from(this.pendingVocab.entries())
@@ -547,8 +704,20 @@ export class DigitalBrain {
     return {
       total: this.lexicon.size,
       learnedThisSession: [...this.learnedThisSession],
+      learnedCount: this.learnedCount,
       pending,
+      pendingCount: pending.length,
       threshold: DigitalBrain.LEARN_THRESHOLD,
+    };
+  }
+
+  /** Vocabulary stats trimmed to what the dashboard displays (streamed 2×/s). */
+  private getVocabularyStateSlice(): NonNullable<BrainState['vocabulary']> {
+    const stats = this.getVocabularyStats();
+    return {
+      ...stats,
+      learnedThisSession: stats.learnedThisSession.slice(-DigitalBrain.STATE_LEARNED_SHOWN),
+      pending: stats.pending.slice(0, DigitalBrain.STATE_PENDING_SHOWN),
     };
   }
 
@@ -763,20 +932,26 @@ export class DigitalBrain {
    * Injects sensory input into the thalamus.
    */
   private injectSensoryInput(type: 'visual' | 'auditory' | 'linguistic', spikes: Float32Array): void {
-    const thalamus = this.regions.get('thalamus');
+    const thalamus = this.regions.get('thalamus') as Thalamus | undefined;
+
+    // The thalamus is the gateway to the cortex: what it relays is the
+    // attention-filtered signal (top-K salient channels, with the bottleneck
+    // and gain set by ACh/NE), not the raw sensory vector.
+    let relayed = spikes;
     if (thalamus) {
       thalamus.feedInput(spikes, this.currentTime);
+      relayed = thalamus.processAttention(spikes, this.modulators.getEffects()).filteredInput;
     }
 
-    // Also send directly to the appropriate cortex via the bus
-    const targets = type === 'visual' ? ['visualCortex'] :
-                    type === 'auditory' ? ['auditoryCortex'] :
-                    ['wernicke', 'broca'];
+    // Each modality has its own thalamic nucleus and cortical target
+    // (LGN → visual, MGN → auditory, pulvinar → language areas); the relay
+    // travels along that projection of the connectome (its delay and weight).
+    const target = DigitalBrain.THALAMIC_RELAY[type];
 
     this.bus.send({
       source: 'thalamus',
-      targets,
-      spikes,
+      targets: [target],
+      spikes: relayed,
       timestamp: this.currentTime,
       metadata: { inputType: type },
     });
@@ -785,15 +960,27 @@ export class DigitalBrain {
   /**
    * Processes a perception: runs N ticks to propagate signals through the brain.
    */
-  private processPerception(inputType: 'visual' | 'auditory' | 'text' | 'image'): PerceptionResult {
+  private processPerception(
+    inputType: PerceptionResult['inputType'],
+    options: PerceptionOptions,
+  ): PerceptionResult {
     const startTime = this.currentTime;
-    const processingTicks = 50; // ~50ms of processing
 
-    // Run ticks
-    for (let i = 0; i < processingTicks; i++) {
-      this.tick();
+    if (options.propagate !== false) {
+      for (let i = 0; i < DigitalBrain.PERCEPTION_TICKS; i++) {
+        this.tick();
+      }
     }
 
+    return this.describePerception(inputType, startTime);
+  }
+
+  /**
+   * Summarizes the brain's reaction to a perception that started at
+   * `startTime` (simulation ms). Used directly by callers that inject with
+   * `propagate: false` and run the ticks themselves.
+   */
+  describePerception(inputType: PerceptionResult['inputType'], startTime: number): PerceptionResult {
     // Get the resulting emotional state
     const emotion = this.feel();
 
@@ -827,16 +1014,37 @@ export class DigitalBrain {
     // 1. Get neuromodulation effects
     const effects = this.modulators.getEffects();
 
+    //    The hippocampus stamps the episodes it encodes with the current affect
+    //    (emotional episodes are forgotten more slowly).
+    (this.regions.get('hippocampus') as Hippocampus | undefined)?.setAffectiveContext(this.feel().valence);
+
     // 2. Process each region
     for (const [regionId, region] of this.regions) {
       const activity = region.step(dt, effects);
+      this.drivePeaks.set(
+        regionId,
+        Math.max(activity.drive, (this.drivePeaks.get(regionId) ?? 0) * DigitalBrain.DRIVE_PEAK_DECAY),
+      );
 
       // 3. Send output spikes to the bus
       if (activity.activeNeurons.length > 0) {
-        const outgoing = this.connectome.getOutgoing(regionId);
+        // In the connectome the language areas are one node ('brocaWernicke').
+        // What leaves it toward memory is what was UNDERSTOOD, i.e. Wernicke's
+        // output; Broca's output is motor (speech), not an afferent of memory.
+        const nodeId = regionId === 'wernicke' ? 'brocaWernicke' : regionId;
+        let outgoing = this.connectome.getOutgoing(nodeId);
+        // The thalamo-cortical projections carry the attention-filtered
+        // sensory signal (see injectSensoryInput). The relay neurons' own
+        // population code lives in a different space: written into cortical
+        // input channels it was read as a spectrogram / a retina / a sentence,
+        // and made the auditory cortex "hear" text. It only travels the
+        // non-sensory projections (the low road to the amygdala).
+        if (regionId === 'thalamus') {
+          outgoing = outgoing.filter((c) => !DigitalBrain.SENSORY_RELAY_TARGETS.has(c.to));
+        }
         if (outgoing.length > 0) {
           this.bus.send({
-            source: regionId,
+            source: nodeId,
             targets: outgoing.map(c => c.to),
             spikes: activity.outputSpikes,
             timestamp: this.currentTime,
@@ -852,23 +1060,59 @@ export class DigitalBrain {
     this.modulators.decay(dt);
 
     // 6. Periodic consolidation ("sleep")
-    if (this.currentTime - this.lastConsolidation > this.config.memory.consolidationIntervalMs) {
+    //    Only at rest: sleeping in the middle of a perception would replay
+    //    over live activity and cut the wave short.
+    if (
+      this.currentTime - this.lastConsolidation > this.config.memory.consolidationIntervalMs &&
+      this.bus.pendingCount === 0
+    ) {
       this.sleep();
     }
   }
 
   /**
    * Consolidation process ("sleep").
-   * Replay of hippocampus memories to strengthen the cortices.
+   *
+   * Biology: during slow-wave sleep the hippocampus replays recent episodes
+   * (sharp-wave ripples) toward the neocortex, which gradually absorbs them
+   * (systems consolidation; McClelland et al., 1995). Here the strongest and
+   * most recent episodes are reactivated in CA3 and replayed along the
+   * hippocampus → prefrontal projection of the connectome, where Hebbian
+   * plasticity strengthens the synapses they drive. Afterwards the episodic
+   * index fades a little: what the cortex has learned no longer depends on it.
+   *
+   * @returns What was actually replayed and strengthened
    */
-  sleep(): void {
+  sleep(): ConsolidationStats {
     console.log(`💤 Consolidation started (t=${this.currentTime.toFixed(0)}ms)...`);
     this.lastConsolidation = this.currentTime;
 
-    // Consolidation would be delegated to the hippocampus
-    const hippocampus = this.regions.get('hippocampus');
-    if (hippocampus) {
-      const stats = this.consolidationEngine.consolidate([], this.regions);
+    const hippocampus = this.regions.get('hippocampus') as Hippocampus | undefined;
+    const cortex = this.regions.get(DigitalBrain.CONSOLIDATION_TARGET);
+    let stats: ConsolidationStats = {
+      memoriesReplayed: 0,
+      synapsesStrengthened: 0,
+      duration: 0,
+      consolidatedLabels: [],
+      prunedLabels: [],
+    };
+
+    if (hippocampus && cortex) {
+      const episodes = hippocampus.replay(DigitalBrain.SLEEP_REPLAY_EPISODES);
+      const entries: ShortTermEntry[] = episodes.map((episode) => ({
+        pattern: episode.pattern,
+        label: `episode@${episode.context.timestamp.toFixed(0)}`,
+        timestamp: episode.context.timestamp,
+        strength: episode.strength,
+        associatedRegion: DigitalBrain.CONSOLIDATION_TARGET,
+        replayCount: 0,
+      }));
+
+      stats = this.consolidationEngine.consolidate(entries, this.regions);
+      cortex.settle();
+      hippocampus.forget(DigitalBrain.SLEEP_EPISODIC_DECAY);
+      hippocampus.downscale(DigitalBrain.SLEEP_SYNAPTIC_DOWNSCALING);
+
       console.log(`   Memories replayed: ${stats.memoriesReplayed}`);
       console.log(`   Synapses strengthened: ${stats.synapsesStrengthened}`);
     }
@@ -877,8 +1121,14 @@ export class DigitalBrain {
     this.emitEvent({
       type: 'consolidation',
       timestamp: this.currentTime,
-      data: { consolidated: true },
+      data: {
+        consolidated: stats.consolidatedLabels.length,
+        memoriesReplayed: stats.memoriesReplayed,
+        synapsesStrengthened: stats.synapsesStrengthened,
+      },
     });
+
+    return stats;
   }
 
   // ================================================================
@@ -891,7 +1141,7 @@ export class DigitalBrain {
   getState(): BrainState {
     const regionsActivity: Record<string, RegionActivity> = {};
     for (const [id, region] of this.regions) {
-      regionsActivity[id] = region.getActivity();
+      regionsActivity[id] = { ...region.getActivity(), drivePeak: this.drivePeaks.get(id) ?? 0 };
     }
 
     const busTraffic: Record<string, { sent: number; received: number }> = {};
@@ -932,7 +1182,7 @@ export class DigitalBrain {
         confidence: brocaResponse.confidence,
       } : undefined,
       vocabCount: this.lexicon?.size ?? 0,
-      vocabulary: this.getVocabularyStats(),
+      vocabulary: this.getVocabularyStateSlice(),
       learning,
       learningHippocampus,
     };
@@ -947,13 +1197,61 @@ export class DigitalBrain {
    * This is what makes learning survive process restarts.
    */
   saveState(filePath: string): void {
-    this.persistence.save(filePath, this.regions, this.modulators);
+    // Everything learned that is not a weight matrix: each region's own state
+    // (episodic index, homeostasis…), the simulation clock the episodes are
+    // dated with, and the words on their way to being learned.
+    const extras: Record<string, unknown> = {
+      brain: {
+        time: this.currentTime,
+        tickCount: this.tickCount,
+        pendingVocab: Array.from(this.pendingVocab.entries()),
+      },
+    };
+    for (const [id, region] of this.regions) {
+      const extra = region.serializeExtra();
+      if (extra !== null && extra !== undefined) extras[id] = extra;
+    }
+    this.persistence.save(filePath, this.regions, this.modulators, extras);
     // The lexicon (incl. words learned from text) is not part of the binary
     // region format, so persist it as a JSON sidecar next to the .bin.
     try {
-      fs.writeFileSync(this.lexiconSidecarPath(filePath), JSON.stringify(this.lexicon.serialize()));
+      writeFileAtomic(this.lexiconSidecarPath(filePath), JSON.stringify(this.lexicon.serialize()));
     } catch (err) {
       console.error(`⚠️  Could not save lexicon: ${(err as Error).message}`);
+    }
+  }
+
+  /**
+   * Restores the simulation clock and the pending vocabulary. The clock matters:
+   * episodes are dated in simulated time, and recency (replay priority,
+   * forgetting) is measured against it — a clock restarted at 0 would make
+   * every restored episode look like it comes from the future.
+   */
+  private restoreBrainExtras(data: unknown): void {
+    if (typeof data !== 'object' || data === null) return;
+    const d = data as { time?: unknown; tickCount?: unknown; pendingVocab?: unknown };
+
+    if (typeof d.time === 'number' && Number.isFinite(d.time) && d.time >= 0) {
+      this.currentTime = d.time;
+      this.lastConsolidation = d.time;
+      for (const region of this.regions.values()) region.currentTime = d.time;
+    }
+    if (typeof d.tickCount === 'number' && Number.isInteger(d.tickCount) && d.tickCount >= 0) {
+      this.tickCount = d.tickCount;
+    }
+    if (Array.isArray(d.pendingVocab)) {
+      this.pendingVocab.clear();
+      for (const entry of d.pendingVocab.slice(-DigitalBrain.MAX_PENDING_VOCAB)) {
+        if (!Array.isArray(entry)) continue;
+        const [word, count] = entry as [unknown, unknown];
+        if (
+          typeof word === 'string' && DigitalBrain.LEARNABLE_WORD.test(word) &&
+          word.length <= DigitalBrain.MAX_WORD_LEN &&
+          typeof count === 'number' && Number.isInteger(count) && count > 0
+        ) {
+          this.pendingVocab.set(word, Math.min(count, DigitalBrain.LEARN_THRESHOLD - 1));
+        }
+      }
     }
   }
 
@@ -965,18 +1263,41 @@ export class DigitalBrain {
   /**
    * Restores the state from a previously saved file. Applies the weights
    * to each region by id; skips (without aborting) regions whose dimensions
-   * do not match the file —e.g. if neuronCount changed between versions—.
+   * do not match the file —e.g. if neuronCount changed between versions— or
+   * whose weights contain non-finite values.
    *
    * @returns Which regions were restored and which were skipped.
    */
   loadState(filePath: string): { loaded: string[]; skipped: string[] } {
-    const data = this.persistence.load(filePath);
+    // If the main file is missing or corrupted (failed CRC, truncated write),
+    // fall back to the previous snapshot instead of starting from scratch.
+    let data;
+    try {
+      data = this.persistence.load(filePath);
+    } catch (err) {
+      const backupPath = `${filePath}${BACKUP_SUFFIX}`;
+      if (!fs.existsSync(backupPath)) throw err;
+      console.warn(`⚠️  ${(err as Error).message} — restoring previous snapshot ${backupPath}`);
+      data = this.persistence.load(backupPath);
+    }
+
     const loaded: string[] = [];
     const skipped: string[] = [];
     for (const [id, region] of this.regions) {
       const rd = data.regions.get(id);
-      if (rd && rd.weights.length === region.getNetworkConfig().weights.length) {
+      if (rd && data.version < 2 && DigitalBrain.RESET_ON_LEGACY_STATE.has(id)) {
+        console.warn(`⚠️  ${id}: weights from a legacy (v${data.version}) state are not restored — starting fresh.`);
+        skipped.push(id);
+        continue;
+      }
+      if (
+        rd &&
+        rd.weights.length === region.getNetworkConfig().weights.length &&
+        rd.weights.every(Number.isFinite)
+      ) {
         region.loadWeights(rd.weights);
+        // The non-weight state belongs to these weights: restore them together.
+        if (data.extras[id] !== undefined) region.deserializeExtra(data.extras[id]);
         loaded.push(id);
       } else {
         skipped.push(id);
@@ -985,6 +1306,7 @@ export class DigitalBrain {
     if (data.modulatorState) {
       this.modulators.deserialize(data.modulatorState);
     }
+    this.restoreBrainExtras(data.extras.brain);
 
     // Restore the persisted lexicon (incl. learned words) if present and
     // dimensionally compatible; otherwise keep the freshly seeded vocabulary.

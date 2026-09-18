@@ -357,12 +357,23 @@ export class Lexicon {
     this.entries.clear();
     this.normCache.clear();
 
-    for (const entry of data.entries) {
+    // The sidecar is a plain JSON file on disk: validate every entry so a
+    // corrupted or tampered file cannot inject markup into the dashboard or
+    // NaN patterns into the similarity search.
+    const entries = Array.isArray(data?.entries) ? data.entries : [];
+    for (const entry of entries) {
+      if (typeof entry?.word !== 'string' || !Lexicon.VALID_WORD.test(entry.word)) continue;
+      if (!Array.isArray(entry.pattern) || entry.pattern.length !== this.patternSize) continue;
+      if (!entry.pattern.every((v) => typeof v === 'number' && Number.isFinite(v))) continue;
+
       this.entries.set(entry.word, {
         pattern: new Float32Array(entry.pattern),
-        frequency: entry.frequency,
-        lastUsed: entry.lastUsed,
+        frequency: Number.isFinite(entry.frequency) ? entry.frequency : 1,
+        lastUsed: Number.isFinite(entry.lastUsed) ? entry.lastUsed : 0,
       });
     }
   }
+
+  /** Letters/digits, optionally separated by single spaces, apostrophes or hyphens (≤ 40 chars). */
+  private static readonly VALID_WORD = /^[\p{L}\p{N}][\p{L}\p{N} '_-]{0,39}$/u;
 }

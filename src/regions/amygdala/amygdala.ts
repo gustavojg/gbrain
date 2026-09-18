@@ -160,6 +160,31 @@ export class Amygdala extends BrainRegion {
   private readonly emotionalInertia: number = 0.7;
 
   /**
+   * Conditioned SEMANTIC associations (word pattern → emotion), in the
+   * lexicon's representational space. Kept apart from `emotionalMemories`,
+   * which live in the space of the sensory afferents.
+   */
+  private semanticAssociations: EmotionalMemory[] = [];
+
+  /** Minimum similarity for a semantic stimulus to evoke its conditioned response. */
+  private static readonly SEMANTIC_MATCH = 0.8;
+
+  /**
+   * Inertia of a conditioned semantic appraisal. Lower than `emotionalInertia`:
+   * conditioned responses are fast (LeDoux, 1996), so a clearly emotional word
+   * moves the state more than a tick of diffuse sensory input does.
+   */
+  private static readonly APPRAISAL_INERTIA = 0.5;
+
+  /** Neurons that report the affective state (half valence, half arousal). */
+  private static readonly AFFECT_POPULATION = 20;
+  /** Amplitude of an affect spike relative to the amygdala's response gain. */
+  private static readonly AFFECT_AMPLITUDE = 0.5;
+
+  /** Arousal the affective state relaxes to when there is no stimulus (wakeful rest). */
+  private static readonly RESTING_AROUSAL = 0.1;
+
+  /**
    * Creates the amygdala.
    *
    * @param neuronCount - Number of neurons (default: 2000)
@@ -292,19 +317,22 @@ export class Amygdala extends BrainRegion {
     const dopamine = Math.max(0, valence) * 0.5 + (valence > 0.5 ? 0.2 : 0);
 
     // --- Serotonin: emotional stability, familiar positive bias ---
-    // The raphe nuclei maintain serotonergic tone modulated by safety
+    // The raphe nuclei maintain serotonergic tone modulated by safety. Negative
+    // affect does not recruit it (low mood goes with LOW serotonergic tone), so
+    // a calm-but-sad state must not read as well-being.
     const serotonin =
-      (valence > 0 ? valence * 0.3 : 0) + (1 - arousal) * 0.2;
+      valence >= 0 ? valence * 0.3 + (1 - arousal) * 0.2 : 0;
 
     // --- Norepinephrine: arousal, novelty, alertness ---
     // LC tonic and phasic firing modulated by arousal and novelty
     const norepinephrine =
       arousal * 0.4 + (valence < -0.3 ? Math.abs(valence) * 0.3 : 0);
 
-    // --- Cortisol: stress (high arousal + negative valence) ---
-    // HPA axis activation during sustained negative affect
+    // --- Cortisol: stress (negative valence, amplified by arousal) ---
+    // HPA axis activation during negative affect: strongest under threat
+    // (high arousal), but sadness (low arousal) recruits it too.
     const cortisol =
-      valence < 0 ? Math.abs(valence) * arousal * 0.5 : 0;
+      valence < 0 ? Math.abs(valence) * (0.3 + 0.7 * arousal) * 0.8 : 0;
 
     // --- Acetylcholine: focused attention (salient stimuli) ---
     // NBM activation proportional to stimulus salience
@@ -383,6 +411,80 @@ export class Amygdala extends BrainRegion {
   }
 
   // ----------------------------------------------------------------
+  // Semantic appraisal (cortex → amygdala route)
+  // ----------------------------------------------------------------
+
+  /**
+   * Conditions an emotional response to a SEMANTIC stimulus (a word's pattern
+   * in lexicon space). Re-conditioning the same word updates the association.
+   *
+   * @param pattern - Pattern of the word in lexicon space
+   * @param emotion - Emotion to associate
+   */
+  conditionSemantic(pattern: Float32Array, emotion: EmotionalState): void {
+    for (const memory of this.semanticAssociations) {
+      if (this.cosineSimilarity(pattern, memory.pattern) > 0.99) {
+        memory.emotion = {
+          valence: memory.emotion.valence * 0.5 + emotion.valence * 0.5,
+          arousal: memory.emotion.arousal * 0.5 + emotion.arousal * 0.5,
+        };
+        memory.strength = Math.min(1.0, memory.strength + 0.1);
+        return;
+      }
+    }
+    if (this.semanticAssociations.length >= this.maxEmotionalMemories) return;
+    this.semanticAssociations.push({
+      pattern: new Float32Array(pattern),
+      emotion: { ...emotion },
+      strength: 1.0,
+    });
+  }
+
+  /**
+   * Appraises a comprehended word: if its pattern matches a conditioned
+   * association, the conditioned emotion is evoked (scaled by the match) and
+   * pulls the affective state toward it.
+   *
+   * Biological basis:
+   *   Besides the fast thalamic route, the amygdala receives highly processed
+   *   input from the temporal association cortex; that is how a WORD — not
+   *   just a loud noise — can evoke fear or joy. The response is a recall of
+   *   a learned association, so it generalizes only to close variants of the
+   *   conditioned stimulus ("miedo" → "miedos"), by pattern similarity.
+   *
+   * @param pattern - Pattern of the word in lexicon space
+   * @returns The evoked emotion, or `null` if the word carries no learned affect
+   */
+  appraise(pattern: Float32Array): EmotionalState | null {
+    let bestSimilarity = 0;
+    let best: EmotionalMemory | null = null;
+    for (const memory of this.semanticAssociations) {
+      const similarity = this.cosineSimilarity(pattern, memory.pattern) * memory.strength;
+      if (similarity > bestSimilarity) {
+        bestSimilarity = similarity;
+        best = memory;
+      }
+    }
+    if (!best || bestSimilarity < Amygdala.SEMANTIC_MATCH) return null;
+
+    const evoked: EmotionalState = {
+      valence: best.emotion.valence * bestSimilarity,
+      arousal: best.emotion.arousal * bestSimilarity,
+    };
+    const inertia = Amygdala.APPRAISAL_INERTIA;
+    this.emotionalState = {
+      valence: Math.max(-1, Math.min(1, this.emotionalState.valence * inertia + evoked.valence * (1 - inertia))),
+      arousal: Math.max(0, Math.min(1, this.emotionalState.arousal * inertia + evoked.arousal * (1 - inertia))),
+    };
+    return evoked;
+  }
+
+  /** Number of conditioned semantic (word → emotion) associations */
+  get semanticAssociationCount(): number {
+    return this.semanticAssociations.length;
+  }
+
+  // ----------------------------------------------------------------
   // Main processing
   // ----------------------------------------------------------------
 
@@ -408,6 +510,27 @@ export class Amygdala extends BrainRegion {
     // Adapt dimensionality
     const adaptedInput = this.adaptInput(spikes);
 
+    // 0. No stimulus → nothing to evaluate. Silence is not a "novel stimulus":
+    // the affective state relaxes toward its resting baseline and the region
+    // stays silent (otherwise its tonic valence/arousal output re-excites the
+    // thalamus every tick and the whole brain never comes to rest).
+    let hasStimulus = false;
+    for (let i = 0; i < adaptedInput.length; i++) {
+      if (adaptedInput[i] > 0) {
+        hasStimulus = true;
+        break;
+      }
+    }
+    if (!hasStimulus) {
+      this.emotionalState = {
+        valence: this.emotionalState.valence * this.emotionalInertia,
+        arousal:
+          this.emotionalState.arousal * this.emotionalInertia +
+          Amygdala.RESTING_AROUSAL * (1 - this.emotionalInertia),
+      };
+      return new Float32Array(this.neuronCount);
+    }
+
     // 1. Evaluate the emotional content of the stimulus
     this.evaluateStimulus(adaptedInput, modulationEffects);
 
@@ -429,13 +552,21 @@ export class Amygdala extends BrainRegion {
       output[i] = adaptedInput[i] * responseGain;
     }
 
-    // Add a valence signal as modulation of the spikes
-    // Biology: CeA neurons encode valence in their firing rate
-    const valenceSignalStart = Math.min(copyLen, this.neuronCount - 100);
-    for (let i = valenceSignalStart; i < this.neuronCount; i++) {
-      // The last neurons encode valence and arousal directly
-      const t = (i - valenceSignalStart) / Math.max(1, this.neuronCount - valenceSignalStart);
-      output[i] = t < 0.5 ? (valence + 1) / 2 * arousal : arousal;
+    // Affect population: the last neurons report the affective state as a
+    // sparse "thermometer" code — the higher the arousal (or the valence), the
+    // more neurons of its half fire. It is kept small on purpose: with 100
+    // always-on graded neurons, the content-agnostic affect signal outweighed
+    // the ~30 content-bearing spikes relayed to the prefrontal cortex, which
+    // then responded almost identically to any stimulus.
+    const affectStart = this.neuronCount - Amygdala.AFFECT_POPULATION;
+    const half = Amygdala.AFFECT_POPULATION / 2;
+    const valenceUnits = Math.round(((valence + 1) / 2) * half);
+    const arousalUnits = Math.round(arousal * half);
+    for (let i = 0; i < Amygdala.AFFECT_POPULATION; i++) {
+      const fires = i < half ? i < valenceUnits : i - half < arousalUnits;
+      // Same scale as the relayed content (which arrives through the weak
+      // thalamic low road): affect colours the message, it does not shout over it.
+      output[affectStart + i] = fires ? responseGain * Amygdala.AFFECT_AMPLITUDE : 0;
     }
 
     // Apply neuromodulation gain

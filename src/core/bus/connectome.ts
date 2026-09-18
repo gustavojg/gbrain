@@ -34,6 +34,8 @@ export interface Connection {
   delay: number;
   /** Whether the connection can be modulated by neuromodulators */
   modulatable: boolean;
+  /** 'driver' (default) carries the input; 'modulator' only sets the target's gain. */
+  role?: 'driver' | 'modulator';
 }
 
 /**

@@ -15,6 +15,10 @@
  */
 
 import { DigitalBrain } from '../src/brain.js';
+import { seedRandom } from './helpers/seed.js';
+
+// Reproducible brain: weights, noise and spike encoding all draw from Math.random.
+seedRandom(101);
 
 function normalizeWords(text: string): string[] {
   return text

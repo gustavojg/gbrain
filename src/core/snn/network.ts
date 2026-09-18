@@ -294,19 +294,9 @@ export class SNNNetwork {
       }
     }
 
-    // If none of the k winners fired naturally,
-    // force the top-k to fire (activation by subthreshold current)
-    if (firingCount === 0) {
-      for (let i = 0; i < k; i++) {
-        const winnerIdx = this.sortIndices[i];
-        this.neurons[winnerIdx].fired = true;
-        this.neurons[winnerIdx].lastSpikeTime = currentTime;
-        this.neurons[winnerIdx].v = this.neurons[winnerIdx].params.c;
-        this.neurons[winnerIdx].u += this.neurons[winnerIdx].params.d;
-        firingBuffer[firingCount++] = winnerIdx;
-      }
-    }
-
+    // No forced firing: if none of the winners reached threshold, the network
+    // stays silent. Forcing the top-k to fire made the network emit exactly k
+    // spikes per step even with zero input (winners picked by the noise term).
     return firingBuffer.slice(0, firingCount);
   }
 

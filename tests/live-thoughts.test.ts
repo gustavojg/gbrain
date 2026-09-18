@@ -23,6 +23,10 @@
  */
 
 import { DigitalBrain } from '../src/brain.js';
+import { seedRandom } from './helpers/seed.js';
+
+// Reproducible brain: weights, noise and spike encoding all draw from Math.random.
+seedRandom(104);
 
 function thoughtAfterReading(brain: DigitalBrain, text: string): { words: string[]; text: string; emotion: string } {
   // Let any previous perception trace fully decay so each thought is shaped by

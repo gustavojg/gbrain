@@ -12,6 +12,13 @@
 const WS_URL = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}`;
 const API_URL = '/api';
 
+// Streaming cadence matches the server's per-client budget (see CLIENT_LIMITS
+// in server-guards.ts): faster frames would just be dropped there.
+const WEBCAM_FRAME_INTERVAL_MS = 2000;
+const MIC_FRAME_INTERVAL_MS = 1000;
+// Mean normalized magnitude below which a mic frame is considered silence.
+const MIC_SILENCE_THRESHOLD = 0.04;
+
 const REGION_COLORS = {
   thalamus:         { h: 200, s: 80, l: 60, label: 'Thalamus' },
   visualCortex:     { h: 280, s: 70, l: 65, label: 'Visual Ctx' },
@@ -92,16 +99,20 @@ function connectWebSocket() {
   };
 
   ws.onmessage = (event) => {
+    let msg;
     try {
-      const msg = JSON.parse(event.data);
-      if (msg.type === 'state' || msg.type === 'init') {
-        brainState = msg.data;
-        updateDashboard(brainState);
-      } else if (msg.type === 'thought') {
-        addThought(msg.data);
-      }
+      msg = JSON.parse(event.data);
     } catch (e) {
-      // Silently ignore parse errors
+      return; // Not JSON — ignore
+    }
+    // Rendering errors must surface (console) instead of silently freezing the UI.
+    if (msg.type === 'state' || msg.type === 'init') {
+      brainState = msg.data;
+      updateDashboard(brainState);
+    } else if (msg.type === 'thought') {
+      addThought(msg.data);
+    } else if (msg.type === 'notice' && msg.data) {
+      addLog('error', `Server: ${msg.data.message}`);
     }
   };
 
@@ -201,7 +212,7 @@ function updateVocabularyPanel(vocab, fallbackTotal) {
   // Words learned this session → chips (newest first, capped).
   const learned = vocab.learnedThisSession || [];
   const countEl = document.getElementById('vocabLearnedCount');
-  if (countEl) countEl.textContent = learned.length;
+  if (countEl) countEl.textContent = vocab.learnedCount ?? learned.length;
 
   const chips = document.getElementById('vocabLearnedChips');
   if (chips) {
@@ -779,7 +790,8 @@ function updateRegionActivity(regions) {
   // Update values. drive is scaled ×2 for the bar (typical range 0..0.3) so it is
   // visible, but the label shows the raw %. novelty already spans 0..1.
   for (const [id, data] of Object.entries(regions)) {
-    const drive = Math.max(0, Math.min(1, data.drive || 0));
+    // drivePeak: a wave crosses the early regions faster than the 2 Hz state stream.
+    const drive = Math.max(0, Math.min(1, data.drivePeak ?? data.drive ?? 0));
     const nov = Math.max(0, Math.min(1, data.novelty || 0));
 
     const driveBar = document.getElementById(`rdrive-${id}`);
@@ -972,17 +984,17 @@ function updateResponseBox(result) {
 
   let html = '';
   if (result.emotion) {
-    html += `<div style="font-size: 1.2rem; margin-bottom: 0.5rem">${result.emotion.emoji} ${result.emotion.primaryEmotion}</div>`;
-    html += `<div style="font-size: 0.75rem; color: var(--text-muted)">Valence: ${result.emotion.valence?.toFixed(2)} | Arousal: ${result.emotion.arousal?.toFixed(2)}</div>`;
+    html += `<div style="font-size: 1.2rem; margin-bottom: 0.5rem">${escapeHtml(result.emotion.emoji)} ${escapeHtml(result.emotion.primaryEmotion)}</div>`;
+    html += `<div style="font-size: 0.75rem; color: var(--text-muted)">Valence: ${Number(result.emotion.valence).toFixed(2)} | Arousal: ${Number(result.emotion.arousal).toFixed(2)}</div>`;
   }
   if (result.broca && result.broca.words) {
-    html += `<div style="font-size: 0.8rem; margin-top: 0.3rem">🗣️ ${result.broca.words.join(' ')}</div>`;
+    html += `<div style="font-size: 0.8rem; margin-top: 0.3rem">🗣️ ${escapeHtml(result.broca.words.join(' '))}</div>`;
   }
   if (result.activeRegions && result.activeRegions.length > 0) {
-    html += `<div style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 0.3rem">Active regions: ${result.activeRegions.join(', ')}</div>`;
+    html += `<div style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 0.3rem">Active regions: ${escapeHtml(result.activeRegions.join(', '))}</div>`;
   }
   if (result.processingTime) {
-    html += `<div style="font-size: 0.65rem; color: var(--text-muted); margin-top: 0.2rem">Processed in ${result.processingTime.toFixed(0)}ms</div>`;
+    html += `<div style="font-size: 0.65rem; color: var(--text-muted); margin-top: 0.2rem">Processed in ${Number(result.processingTime).toFixed(0)}ms</div>`;
   }
 
   box.innerHTML = html || '<p class="placeholder">No response</p>';
@@ -999,7 +1011,7 @@ function addLog(type, message) {
   const time = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   const entry = document.createElement('div');
   entry.className = `log-entry log-${type}`;
-  entry.innerHTML = `<span class="log-time">${time}</span> <span class="log-msg">${message}</span>`;
+  entry.innerHTML = `<span class="log-time">${time}</span> <span class="log-msg">${escapeHtml(message)}</span>`;
 
   box.insertBefore(entry, box.firstChild);
 
@@ -1030,15 +1042,16 @@ function addThought(thought) {
   if (empty) empty.remove();
 
   const time = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-  const color = thought.color || '#94a3b8';
+  // The color lands in a style attribute: accept only a plain hex color.
+  const color = /^#[0-9a-f]{3,8}$/i.test(thought.color || '') ? thought.color : '#94a3b8';
 
   const entry = document.createElement('div');
   entry.className = 'thought-entry';
   entry.innerHTML =
     `<span class="thought-time">${time}</span>` +
-    `<span class="thought-emoji">${thought.emoji || '🧠'}</span>` +
-    `<span class="thought-emotion" style="color:${color}">${(thought.emotion || '').toLowerCase()}</span>` +
-    `<span class="thought-words">${words.join(' · ')}</span>`;
+    `<span class="thought-emoji">${escapeHtml(thought.emoji || '🧠')}</span>` +
+    `<span class="thought-emotion" style="color:${color}">${escapeHtml(String(thought.emotion || '').toLowerCase())}</span>` +
+    `<span class="thought-words">${escapeHtml(words.join(' · '))}</span>`;
 
   box.insertBefore(entry, box.firstChild);
 
@@ -1093,7 +1106,7 @@ document.getElementById('toggleWebcam')?.addEventListener('click', async () => {
       if (ws && ws.readyState === 1) {
         ws.send(JSON.stringify({ type: 'input:image', data: { pixels, width: 64, height: 64 } }));
       }
-    }, 500);
+    }, WEBCAM_FRAME_INTERVAL_MS);
   } catch (err) {
     status.textContent = 'Error: ' + err.message;
     addLog('error', '📷 Webcam error: ' + err.message);
@@ -1159,16 +1172,19 @@ document.getElementById('toggleMic')?.addEventListener('click', async () => {
     }
     drawMic();
 
-    // Send spectrograms every 250ms
+    // Send spectrograms periodically — but never silence: each frame costs the
+    // server a full perception, and silence carries no information.
     micInterval = setInterval(() => {
       if (!micAnalyser) return;
       micAnalyser.getByteFrequencyData(dataArray);
       const spectrogram = Array.from(dataArray).map(v => v / 255);
+      const energy = spectrogram.reduce((sum, v) => sum + v, 0) / spectrogram.length;
+      if (energy < MIC_SILENCE_THRESHOLD) return;
 
       if (ws && ws.readyState === 1) {
-        ws.send(JSON.stringify({ type: 'input:audio', data: { spectrogram } }));
+        ws.send(JSON.stringify({ type: 'input:audio', data: { spectrogram, sampleRate: audioCtx.sampleRate } }));
       }
-    }, 250);
+    }, MIC_FRAME_INTERVAL_MS);
   } catch (err) {
     status.textContent = 'Error: ' + err.message;
     addLog('error', '🎤 Mic error: ' + err.message);
@@ -1198,7 +1214,7 @@ function updateBrocaChat(state) {
   const time = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   const msgEl = document.createElement('div');
   msgEl.className = 'broca-msg';
-  msgEl.innerHTML = `<div>${text}</div><div class="broca-time">${time}</div>`;
+  msgEl.innerHTML = `<div>${escapeHtml(text)}</div><div class="broca-time">${time}</div>`;
   chat.insertBefore(msgEl, chat.firstChild);
 
   while (chat.children.length > 20) chat.removeChild(chat.lastChild);

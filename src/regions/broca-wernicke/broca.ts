@@ -369,6 +369,10 @@ export class BrocaArea extends BrainRegion {
     for (let i = 0; i < this.neuronCount; i++) {
       if (activations[i] >= kwtaThreshold && activations[i] > ACTIVATION_FLOOR) {
         outputSpikes[i] = 1.0;
+        // LIF reset: a neuron that fires discharges its membrane. Without it
+        // the integrator keeps its winners above the floor for hundreds of
+        // ticks after the input is gone, and the region never comes to rest.
+        this.potentials[i] = 0;
       }
     }
 

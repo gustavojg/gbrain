@@ -151,14 +151,11 @@ export class ConsolidationEngine {
 
       // Cyclic replay: replay the pattern multiple times
       for (let cycle = 0; cycle < this.replayCycles; cycle++) {
-        // Feed the pattern into the region's sensory buffer
-        targetRegion.feedInput(memory.pattern);
-
-        // Run one processing step with sleep modulation
-        const activity = targetRegion.step(1, effects);
+        // Reactivate the pattern offline (no sensory buffer, no clock advance)
+        const active = targetRegion.reactivate(memory.pattern, effects);
 
         // Count strengthened synapses (neurons that fired = active synapses)
-        synapsesStrengthened += activity.activeNeurons.length;
+        synapsesStrengthened += active;
         memoriesReplayed++;
       }
 

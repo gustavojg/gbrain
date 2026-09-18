@@ -7,7 +7,7 @@
  * Endpoints:
  * - POST /api/input/text    → The brain reads text
  * - POST /api/input/image   → The brain sees an image
- * - POST /api/input/audio   → The brain hears audio
+ * - POST /api/input/audio   → The brain hears one microphone frame ({ spectrogram: FFT magnitudes, sampleRate })
  * - GET  /api/state         → Complete brain state
  * - GET  /api/feel          → Emotional state
  * - GET  /api/speak         → The brain speaks
@@ -15,16 +15,48 @@
  * - POST /api/modulator     → Inject a neuromodulator manually
  * - WS   /ws                → Real-time stream
  *
- * The WebSocket sends state updates on every brain tick.
+ * The WebSocket streams state updates at 2 Hz.
+ *
+ * Everything received from the network is untrusted: payloads are validated
+ * and bounded (server-guards.ts), inputs are rate-limited per client, and
+ * perceptions are propagated in slices (perception-scheduler.ts) so no client
+ * can block the event loop.
+ *
+ * Environment:
+ * - PORT                 HTTP port (default 3000)
+ * - BRAIN_STATE_PATH     Where the learning is persisted
+ * - BRAIN_ADMIN_TOKEN    Bearer token for /api/save and /api/tick. Without it
+ *                        those endpoints only accept loopback connections.
+ * - ALLOWED_ORIGINS      Comma-separated extra origins allowed to drive the
+ *                        brain from a browser (the dashboard's own origin is
+ *                        always allowed).
  */
 
 import http from 'http';
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, statSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { DigitalBrain, type BrainState } from './brain.js';
-import { ModulatorType } from './core/neuromodulators/modulator-system.js';
+import { DigitalBrain, type PerceptionResult } from './brain.js';
+import { DEFAULT_BRAIN_CONFIG } from './brain.config.js';
+import { BACKUP_SUFFIX } from './core/persistence/binary-protocol.js';
+import { PerceptionScheduler, SchedulerBusyError } from './perception-scheduler.js';
+import {
+  ClientLimiter,
+  HttpError,
+  MAX_BODY_BYTES,
+  MAX_WS_PAYLOAD_BYTES,
+  TokenBucket,
+  isAdminAuthorized,
+  isOriginAllowed,
+  parseAllowlist,
+  parseImageInput,
+  parseModulatorInput,
+  parseSampleRate,
+  parseSpectrogramInput,
+  parseTextInput,
+  type LimitedKind,
+} from './server-guards.js';
 
 // ================================================================
 // CONFIGURATION
@@ -38,8 +70,13 @@ const DASHBOARD_DIR = path.resolve(SERVER_DIR, 'dashboard');
 const TICK_INTERVAL_MS = 100; // 10 Hz brain tick
 const BROADCAST_INTERVAL_MS = 500; // 2 Hz dashboard update (lighter)
 const THOUGHT_INTERVAL_MS = 1200; // ~0.8 Hz live "thought" stream
-const IMAGE_THROTTLE_MS = 2000; // Max 1 frame every 2 seconds
 const AUTOSAVE_INTERVAL_MS = 5 * 60_000; // Save the learning every 5 min
+const SLEEP_INTERVAL_MS = 5 * 60_000; // Consolidate ("sleep") every 5 min of real time
+const MAX_WS_CLIENTS = 100;
+const HTTP_LIMITER_IDLE_MS = 10 * 60_000; // Forget idle HTTP clients after 10 min
+
+const ADMIN_TOKEN = process.env.BRAIN_ADMIN_TOKEN || undefined;
+const ALLOWED_ORIGINS = parseAllowlist(process.env.ALLOWED_ORIGINS);
 
 // Path of the persisted state. On Railway the FS is ephemeral unless there is a
 // mounted volume (RAILWAY_VOLUME_MOUNT_PATH); use it if it exists so that
@@ -71,11 +108,24 @@ const MIME_TYPES: Record<string, string> = {
 
 console.log(`\n🌐 Starting Digital Brain server...\n`);
 
-// Create the brain
-const brain = new DigitalBrain();
+// Create the brain. Simulated time advances `dt` ms per tick and the server
+// ticks every TICK_INTERVAL_MS, so the consolidation interval (simulated ms)
+// is scaled to make the brain sleep every SLEEP_INTERVAL_MS of REAL time —
+// unscaled, the default "5 minutes" would come around every ~8 hours.
+const brain = new DigitalBrain({
+  memory: {
+    ...DEFAULT_BRAIN_CONFIG.memory,
+    consolidationIntervalMs: (SLEEP_INTERVAL_MS / TICK_INTERVAL_MS) * DEFAULT_BRAIN_CONFIG.snn.dt,
+  },
+});
 
-// Restore previous learning if it exists
-if (existsSync(STATE_PATH)) {
+// Perceptions are propagated in slices so the event loop is never blocked.
+const scheduler = new PerceptionScheduler(() => brain.tick(), {
+  ticksPerJob: DigitalBrain.PERCEPTION_TICKS,
+});
+
+// Restore previous learning if it exists (or its backup, if a save was interrupted)
+if (existsSync(STATE_PATH) || existsSync(`${STATE_PATH}${BACKUP_SUFFIX}`)) {
   try {
     const { loaded, skipped } = brain.loadState(STATE_PATH);
     console.log(
@@ -118,14 +168,23 @@ function persist(reason: string): void {
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url || '/', `http://localhost:${PORT}`);
-  
-  // CORS headers
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  const origin = req.headers.origin;
+  const originAllowed = isOriginAllowed(origin, requestHosts(req), ALLOWED_ORIGINS);
+
+  // CORS: read-only GETs are public; anything that drives the brain must come
+  // from the dashboard's own origin or an explicitly allowed one.
+  if (origin && originAllowed) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  } else if (req.method === 'GET') {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  }
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+
   if (req.method === 'OPTIONS') {
-    res.writeHead(204);
+    res.writeHead(originAllowed ? 204 : 403);
     res.end();
     return;
   }
@@ -133,15 +192,19 @@ const server = http.createServer(async (req, res) => {
   try {
     // --- API ROUTES ---
     if (url.pathname.startsWith('/api/')) {
+      if (req.method !== 'GET' && !originAllowed) {
+        throw new HttpError(403, 'Origin not allowed');
+      }
       await handleApiRoute(url, req, res);
       return;
     }
 
     // --- STATIC FILES (Dashboard) ---
-    let filePath = url.pathname === '/' ? '/index.html' : url.pathname;
+    const filePath = url.pathname === '/' ? '/index.html' : url.pathname;
     const fullPath = path.join(DASHBOARD_DIR, filePath);
-    
-    if (existsSync(fullPath)) {
+    const insideDashboard = fullPath.startsWith(DASHBOARD_DIR + path.sep);
+
+    if (insideDashboard && existsSync(fullPath) && statSync(fullPath).isFile()) {
       const ext = path.extname(fullPath);
       const mime = MIME_TYPES[ext] || 'application/octet-stream';
       const content = readFileSync(fullPath);
@@ -152,11 +215,100 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify({ error: 'Not found', path: url.pathname }));
     }
   } catch (err) {
-    console.error('❌ Error:', err);
-    res.writeHead(500, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Internal server error' }));
+    const status =
+      err instanceof HttpError ? err.status :
+      err instanceof SchedulerBusyError ? 503 :
+      500;
+    if (status === 500) console.error('❌ Error:', err);
+    if (status === 413) {
+      // The rest of the oversized body is never read: close the connection.
+      res.setHeader('Connection', 'close');
+      res.on('finish', () => req.destroy());
+    }
+    if (!res.headersSent) {
+      res.writeHead(status, { 'Content-Type': 'application/json' });
+    }
+    res.end(JSON.stringify({ error: status === 500 ? 'Internal server error' : (err as Error).message }));
   }
 });
+
+// ----------------------------------------------------------------
+// Per-client rate limiting (HTTP clients are keyed by address)
+// ----------------------------------------------------------------
+
+const httpLimiters: Map<string, ClientLimiter> = new Map();
+/** `/api/sleep` is public (dashboard button) but global: one every 10 s. */
+const sleepBucket = new TokenBucket(1, 0.1);
+
+/** Hosts this request was addressed to (a proxy may move the public one to X-Forwarded-Host). */
+function requestHosts(req: http.IncomingMessage): Array<string | undefined> {
+  const forwardedHost = req.headers['x-forwarded-host'];
+  return [req.headers.host, typeof forwardedHost === 'string' ? forwardedHost : undefined];
+}
+
+function clientAddress(req: http.IncomingMessage): string {
+  // Behind Railway's proxy the socket address is the proxy's; the client is
+  // the first hop of X-Forwarded-For. Only trusted when actually deployed there.
+  const forwarded = req.headers['x-forwarded-for'];
+  if (process.env.RAILWAY_ENVIRONMENT && typeof forwarded === 'string') {
+    return forwarded.split(',')[0].trim();
+  }
+  return req.socket.remoteAddress ?? 'unknown';
+}
+
+function isLoopback(req: http.IncomingMessage): boolean {
+  if (req.headers['x-forwarded-for']) return false; // proxied → not local
+  const addr = req.socket.remoteAddress ?? '';
+  return addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1';
+}
+
+function enforceHttpLimit(req: http.IncomingMessage, kind: LimitedKind): void {
+  const key = clientAddress(req);
+  let limiter = httpLimiters.get(key);
+  if (!limiter) {
+    limiter = new ClientLimiter();
+    httpLimiters.set(key, limiter);
+  }
+  if (!limiter.allow(kind)) {
+    throw new HttpError(429, 'Too many requests');
+  }
+}
+
+function requireAdmin(req: http.IncomingMessage): void {
+  if (!isAdminAuthorized(req.headers.authorization, ADMIN_TOKEN, isLoopback(req))) {
+    throw new HttpError(401, 'Admin token required');
+  }
+}
+
+/** Parses a JSON body, mapping syntax errors to 400. */
+async function parseJsonBody(req: http.IncomingMessage): Promise<unknown> {
+  const body = await parseBody(req);
+  try {
+    return JSON.parse(body);
+  } catch {
+    throw new HttpError(400, 'Invalid JSON');
+  }
+}
+
+/**
+ * Queues a perception and waits for it. `client` scopes the coalescing of
+ * streaming inputs, so one client's frames never replace another's.
+ */
+function perceive(
+  inputType: PerceptionResult['inputType'],
+  inject: () => void,
+  coalesceKey?: string,
+): Promise<PerceptionResult | null> {
+  let startTime = 0;
+  return scheduler.submit({
+    coalesceKey,
+    inject: () => {
+      startTime = brain.time;
+      inject();
+    },
+    finish: () => brain.describePerception(inputType, startTime),
+  });
+}
 
 /**
  * Handles API routes.
@@ -199,43 +351,43 @@ async function handleApiRoute(url: URL, req: http.IncomingMessage, res: http.Ser
 
   // POST /api/input/text — Read text
   if (url.pathname === '/api/input/text' && req.method === 'POST') {
-    const body = await parseBody(req);
-    const { text } = JSON.parse(body) as { text: string };
-    const result = brain.read(text);
-    sendJSON(result);
+    enforceHttpLimit(req, 'text');
+    const text = parseTextInput(await parseJsonBody(req));
+    sendJSON(await perceive('text', () => brain.read(text, { propagate: false })));
     return;
   }
 
   // POST /api/input/image — See image
   if (url.pathname === '/api/input/image' && req.method === 'POST') {
-    const body = await parseBody(req);
-    const { pixels, width, height } = JSON.parse(body) as { pixels: number[]; width: number; height: number };
-    const result = brain.see(pixels, width, height);
-    sendJSON(result);
+    enforceHttpLimit(req, 'image');
+    const { pixels, width, height } = parseImageInput(await parseJsonBody(req));
+    sendJSON(await perceive('visual', () => brain.see(pixels, width, height, { propagate: false })));
     return;
   }
 
   // POST /api/input/audio — Hear audio (spectrogram)
   if (url.pathname === '/api/input/audio' && req.method === 'POST') {
-    const body = await parseBody(req);
-    const { spectrogram } = JSON.parse(body) as { spectrogram: number[] };
-    const result = brain.hearSpectrogram(spectrogram);
-    sendJSON(result);
+    enforceHttpLimit(req, 'audio');
+    // One frame of linear FFT magnitudes (+ the source's sample rate)
+    const body = await parseJsonBody(req);
+    const frame = parseSpectrogramInput(body);
+    const sampleRate = parseSampleRate(body);
+    sendJSON(await perceive('auditory', () => brain.hearFrame(frame, sampleRate, { propagate: false })));
     return;
   }
 
   // POST /api/modulator — Inject a neuromodulator
   if (url.pathname === '/api/modulator' && req.method === 'POST') {
-    const body = await parseBody(req);
-    const { type, amount } = JSON.parse(body) as { type: string; amount: number };
-    const modulatorType = type as ModulatorType;
-    brain.getModulators().release(modulatorType, amount);
+    enforceHttpLimit(req, 'modulator');
+    const { type, amount } = parseModulatorInput(await parseJsonBody(req));
+    brain.getModulators().release(type, amount);
     sendJSON({ ok: true, emotion: brain.feel() });
     return;
   }
 
-  // POST /api/tick — Run a manual tick
+  // POST /api/tick — Run a manual tick (admin)
   if (url.pathname === '/api/tick' && req.method === 'POST') {
+    requireAdmin(req);
     brain.tick();
     sendJSON({ ok: true, time: brain.time });
     return;
@@ -243,13 +395,20 @@ async function handleApiRoute(url: URL, req: http.IncomingMessage, res: http.Ser
 
   // POST /api/sleep — Manual consolidation
   if (url.pathname === '/api/sleep' && req.method === 'POST') {
-    brain.sleep();
-    sendJSON({ ok: true, memoriesReplayed: 0 });
+    if (!sleepBucket.tryTake()) throw new HttpError(429, 'The brain slept a moment ago');
+    const stats = brain.sleep();
+    sendJSON({
+      ok: true,
+      memoriesReplayed: stats.memoriesReplayed,
+      episodesConsolidated: stats.consolidatedLabels.length,
+      synapsesStrengthened: stats.synapsesStrengthened,
+    });
     return;
   }
 
-  // POST /api/save — Persist the learning state on demand
+  // POST /api/save — Persist the learning state on demand (admin)
   if (url.pathname === '/api/save' && req.method === 'POST') {
+    requireAdmin(req);
     try {
       brain.saveState(STATE_PATH);
       sendJSON({ ok: true, path: STATE_PATH });
@@ -263,13 +422,22 @@ async function handleApiRoute(url: URL, req: http.IncomingMessage, res: http.Ser
 }
 
 /**
- * Parses the body of a request.
+ * Reads the body of a request, rejecting anything over `MAX_BODY_BYTES`.
  */
 function parseBody(req: http.IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
-    let body = '';
-    req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
-    req.on('end', () => resolve(body));
+    const chunks: Buffer[] = [];
+    let size = 0;
+    req.on('data', (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > MAX_BODY_BYTES) {
+        req.pause();
+        reject(new HttpError(413, `Body exceeds ${MAX_BODY_BYTES} bytes`));
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')));
     req.on('error', reject);
   });
 }
@@ -288,19 +456,61 @@ function replacer(_key: string, value: unknown): unknown {
 // WEBSOCKET SERVER
 // ================================================================
 
-const wss = new WebSocketServer({ noServer: true });
+const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_WS_PAYLOAD_BYTES });
+const clients: Set<WebSocket> = new Set();
+let nextClientId = 1;
 
 // Handle the HTTP → WebSocket upgrade on the same port
 server.on('upgrade', (request, socket, head) => {
+  // Browsers always send Origin on WebSocket handshakes and do not apply CORS
+  // to them, so this check is what stops a third-party page from driving the brain.
+  if (!isOriginAllowed(request.headers.origin, requestHosts(request), ALLOWED_ORIGINS)) {
+    socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
+    socket.destroy();
+    return;
+  }
+  if (clients.size >= MAX_WS_CLIENTS) {
+    socket.write('HTTP/1.1 503 Service Unavailable\r\n\r\n');
+    socket.destroy();
+    return;
+  }
   wss.handleUpgrade(request, socket, head, (ws) => {
     wss.emit('connection', ws, request);
   });
 });
-const clients: Set<WebSocket> = new Set();
 
 wss.on('connection', (ws: WebSocket) => {
   clients.add(ws);
+  const clientId = nextClientId++;
+  const limiter = new ClientLimiter();
+  let lastNoticeAt = 0;
   console.log(`🔌 WebSocket client connected (total: ${clients.size})`);
+
+  /** Tells the client (at most once per second) why an input was not processed. */
+  const notify = (message: string): void => {
+    const now = Date.now();
+    if (now - lastNoticeAt < 1000 || ws.readyState !== 1) return;
+    lastNoticeAt = now;
+    ws.send(JSON.stringify({ type: 'notice', data: { message } }));
+  };
+
+  /** Rate-limits, then queues a perception; failures are reported, never thrown. */
+  const submit = (
+    kind: LimitedKind,
+    inputType: PerceptionResult['inputType'],
+    inject: () => void,
+    coalesce: boolean,
+  ): void => {
+    if (!limiter.allow(kind)) {
+      // Streaming inputs (webcam, mic) are expected to overshoot: drop quietly.
+      if (!coalesce) notify('Too many inputs — slow down');
+      return;
+    }
+    perceive(inputType, inject, coalesce ? `${kind}:${clientId}` : undefined).catch((err: Error) => {
+      if (err instanceof SchedulerBusyError) notify('The brain is busy — input dropped');
+      else console.error('❌ Perception failed:', err);
+    });
+  };
 
   // Send initial state
   ws.send(JSON.stringify({
@@ -311,35 +521,47 @@ wss.on('connection', (ws: WebSocket) => {
   // Handle messages from the client
   ws.on('message', (message: Buffer) => {
     try {
-      const msg = JSON.parse(message.toString()) as { type: string; data?: Record<string, unknown> };
+      const msg = JSON.parse(message.toString()) as { type?: unknown; data?: unknown };
 
       switch (msg.type) {
-        case 'input:text':
-          brain.read((msg.data as { text: string }).text);
+        case 'input:text': {
+          const text = parseTextInput(msg.data);
+          submit('text', 'text', () => brain.read(text, { propagate: false }), false);
           break;
-        case 'input:image':
-          const now = Date.now();
-          if (now - lastImageTime >= IMAGE_THROTTLE_MS) {
-            lastImageTime = now;
-            const imgData = msg.data as { pixels: number[]; width: number; height: number };
-            brain.see(imgData.pixels, imgData.width, imgData.height);
-          }
+        }
+        case 'input:image': {
+          const { pixels, width, height } = parseImageInput(msg.data);
+          submit('image', 'visual', () => brain.see(pixels, width, height, { propagate: false }), true);
           break;
-        case 'input:audio':
-          const audioData = msg.data as { spectrogram: number[] };
-          brain.hearSpectrogram(audioData.spectrogram);
+        }
+        case 'input:audio': {
+          const frame = parseSpectrogramInput(msg.data);
+          const sampleRate = parseSampleRate(msg.data);
+          submit('audio', 'auditory', () => brain.hearFrame(frame, sampleRate, { propagate: false }), true);
           break;
-        case 'modulator':
-          const modData = msg.data as { type: string; amount: number };
-          brain.getModulators().release(modData.type as ModulatorType, modData.amount);
+        }
+        case 'modulator': {
+          const { type, amount } = parseModulatorInput(msg.data);
+          if (limiter.allow('modulator')) brain.getModulators().release(type, amount);
+          else notify('Too many injections — slow down');
           break;
+        }
         case 'tick':
-          brain.tick();
+          if (limiter.allow('tick')) brain.tick();
           break;
       }
     } catch (err) {
-      console.error('❌ Invalid WS message:', err);
+      if (err instanceof HttpError || err instanceof SyntaxError) {
+        notify(`Invalid message: ${err.message}`);
+      } else {
+        console.error('❌ WS message failed:', err);
+      }
     }
+  });
+
+  ws.on('error', (err) => {
+    // e.g. a frame over maxPayload; ws closes the socket right after.
+    console.warn(`⚠️  WebSocket error: ${err.message}`);
   });
 
   ws.on('close', () => {
@@ -356,7 +578,7 @@ let tickTimer: ReturnType<typeof setInterval>;
 let broadcastTimer: ReturnType<typeof setInterval>;
 let thoughtTimer: ReturnType<typeof setInterval>;
 let autosaveTimer: ReturnType<typeof setInterval>;
-let lastImageTime = 0;
+let limiterSweepTimer: ReturnType<typeof setInterval>;
 
 function startBrainLoop(): void {
   // Brain tick — processes neurons (fast, no I/O)
@@ -394,6 +616,14 @@ function startBrainLoop(): void {
 
   // Autosave — learning survives restarts even without a clean shutdown
   autosaveTimer = setInterval(() => persist('autosave'), AUTOSAVE_INTERVAL_MS);
+
+  // Forget rate-limit state of HTTP clients that went away
+  limiterSweepTimer = setInterval(() => {
+    const cutoff = Date.now() - HTTP_LIMITER_IDLE_MS;
+    for (const [key, limiter] of httpLimiters) {
+      if (limiter.lastSeen < cutoff) httpLimiters.delete(key);
+    }
+  }, HTTP_LIMITER_IDLE_MS);
 }
 
 // ================================================================
@@ -422,6 +652,7 @@ function shutdown(signal: string): void {
   clearInterval(broadcastTimer);
   clearInterval(thoughtTimer);
   clearInterval(autosaveTimer);
+  clearInterval(limiterSweepTimer);
   persist(signal);
   wss.close();
   server.close();

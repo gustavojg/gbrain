@@ -56,10 +56,10 @@ Fuera: `affective-lexicon.ts`.
 
 | Mecanismo | Base | Hoy | Test |
 |---|---|---|---|
-| **Secuencias**: el oído recibe la palabra como sucesión de sonidos; la mano dibuja a trazos | Células de tiempo, precesión de fase theta, cadenas sinápticas | Toda entrada es una foto fija | Distingue "pa-ta" de "ta-pa" |
-| **Fases de codificación y recuperación** separadas (ritmo theta) en el hipocampo | Hasselmo 2002 | Umbrales ajustados a mano | Menos falsos reconocimientos con los mismos umbrales |
-| **Memoria de trabajo con compuerta** | Ganglios basales → prefrontal (O'Reilly & Frank 2006) | Lista de 7 etiquetas | Retiene lo relevante de una secuencia y suelta lo demás |
-| **Orden de palabras** | Estadísticas de secuencia, aprendizaje de transiciones | Ninguno | Dice "coche azul", no "azul coche" |
+| **Secuencias**: el oído recibe la palabra como sucesión de sonidos; la mano dibuja a trazos | Células de tiempo, precesión de fase theta, cadenas sinápticas | Hecho en el oído: el micrófono manda cuadros cada 200 ms mientras se habla y la ventana del oído (10 cuadros) guarda el orden; dos vocales en un orden y en el otro son dos sonidos. Entre perceptos: `core/memory/sequence-memory` aprende qué sigue a qué y genera una expectativa (lo esperado no sorprende). Pendiente: la mano a trazos | Distingue "pa-ta" de "ta-pa" |
+| **Fases de codificación y recuperación** separadas (ritmo theta) en el hipocampo | Hasselmo 2002 | Pendiente (umbrales ajustados a mano); se hará cuando el motor nuevo permita recalibrar sin romper los tests | Menos falsos reconocimientos con los mismos umbrales |
+| **Memoria de trabajo con compuerta** | Ganglios basales → prefrontal (O'Reilly & Frank 2006) | Hecho: entra lo que sorprende o se recompensa (|error de predicción| ≥ 0,2), con esa prioridad; lo rutinario pasa de largo y lo retenido se desvanece sin refresco | Retiene lo relevante de una secuencia y suelta lo demás |
+| **Orden de palabras** | Estadísticas de secuencia, aprendizaje de transiciones | La memoria de secuencias ya guarda transiciones entre palabras leídas; producir en orden espera a que las palabras entren por el oído | Dice "coche azul", no "azul coche" |
 
 A partir de aquí las **palabras entran por el oído** y **leer es ver**: el canal de
 texto, el léxico precargado y el flujo de pensamiento en palabras (andamios) se
@@ -90,6 +90,7 @@ retiran, y el lenguaje se reconstruye desde el sonido.
 | **Periodos críticos**: la plasticidad de una categoría baja con su edad | Estrechamiento perceptivo (Werker & Tees 1984) | Vigilancia sin edad | Un contraste no oído en los primeros meses cuesta más aprenderlo después |
 | **Poda** de lo que no se usa | Poda sináptica postnatal | Solo rebaja en el sueño | Las categorías que nunca se repiten desaparecen |
 | **Fases de sueño**: repetición (lento) y reactivación al azar (REM) | Diekelmann & Born 2010 | Solo repetición y rebaja | Generaliza mejor tras dormir |
+| **Imaginación despierta** (red por defecto): sin estímulo externo la dopamina baja y el aburrimiento sube; en vez de esperar, el cerebro reactiva recuerdos por su cuenta (repetición despierta en el hipocampo), los recombina en pistas parciales que CA3 completa, pasa el resultado por las cortezas y el léxico como imagen y palabras, y el mismo sistema de valor lo recompensa si lo imaginado es nuevo y luego resulta útil (progreso), con descuento para que no se autoestimule en bucle. Lo imaginado lleva marca de origen interno (monitorización de realidad: Johnson) y no se guarda como episodio del mundo | Red por defecto (Raichle 2001); divagación mental (Smallwood & Schooler 2015); repetición despierta (Foster & Wilson 2006); recombinación (Schacter & Addis) | Nada: sin entrada el pensamiento se vacía | Sin estímulos durante un rato, el flujo de pensamiento y la pizarra muestran combinaciones nuevas de lo aprendido; algunas aparecen después en lo que dice o dibuja; nunca las confunde con cosas vistas |
 | **Sueños**: en REM (acetilcolina alta, norepinefrina y serotonina bajas, sin control prefrontal) se mezclan fragmentos de varios episodios y CA3 los completa en quimeras que pasan por la corteza con plasticidad baja; el dashboard muestra lo que "ve" y "dice" dormido | Hoel 2021 (cerebro sobreajustado); generative replay (van de Ven 2020); Stickgold & Walker | Nada | Tras dormir dibuja o nombra algo que combina dos cosas aprendidas y nunca vio juntas, y reconoce mejor variantes nuevas de lo aprendido |
 | **Reconsolidación y olvido activo** | Nader 2000 | Ninguno | Un recuerdo reactivado se puede modificar |
 

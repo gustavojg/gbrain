@@ -109,19 +109,24 @@ export class Motivation {
    * habituates by itself; and it opens a window in which an external reward
    * is credited to it (and its absence, if one was expected, is an omission).
    */
-  perceive(key: string, tick: number): RewardEvent {
+  perceive(key: string, tick: number, expectedness: number = 0): RewardEvent {
     this.resolveOmission(tick);
     const expected = this.values.get(key) ?? this.globalValue;
     this.pending = { key, expected, untilTick: tick + this.cfg.rewardWindowTicks };
-    return this.novelty(key, tick);
+    return this.novelty(key, tick, expectedness);
   }
 
-  /** Something new (or not so new any more): the novelty bonus, habituating with every occurrence. */
-  novelty(key: string, tick: number): RewardEvent {
+  /**
+   * Something new (or not so new any more): the novelty bonus, habituating
+   * with every occurrence — and discounted by how much it was EXPECTED to
+   * come next (a thing that always follows another is no surprise).
+   */
+  novelty(key: string, tick: number, expectedness: number = 0): RewardEvent {
     const seen = (this.familiarity.get(key) ?? 0) + 1;
     this.familiarity.set(key, seen);
     const bonus = NOVELTY_BONUS / seen;
-    return this.record({ kind: 'novelty', key, reward: bonus, expected: 0, error: bonus, tick });
+    const anticipated = Math.max(0, Math.min(1, expectedness)) * bonus;
+    return this.record({ kind: 'novelty', key, reward: bonus, expected: anticipated, error: bonus - anticipated, tick });
   }
 
   /**

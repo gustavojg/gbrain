@@ -269,7 +269,7 @@ export class TokenBucket {
 export const CLIENT_LIMITS = {
   text: [5, 2],
   image: [1, 0.5],
-  audio: [2, 1],
+  audio: [12, 6],
   modulator: [10, 5],
   tick: [10, 10],
 } as const satisfies Record<string, readonly [number, number]>;

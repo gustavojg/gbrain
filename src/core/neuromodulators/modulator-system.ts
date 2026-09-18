@@ -163,11 +163,44 @@ export class NeuromodulatorSystem {
    * @param dt - Time elapsed since the last tick (ms)
    */
   decay(dt: number): void {
-    for (const [, state] of this.modulators) {
+    for (const [type, state] of this.modulators) {
       // Exponential decay toward the baseline
       const diff = state.level - state.baseline;
       state.level = state.baseline + diff * Math.exp(-state.decayRate * dt);
+      // Hedonic adaptation: the tonic baseline drifts toward the recent level
+      // (receptors desensitize under a sustained high, resensitize under a
+      // sustained low), within a band around the innate set point. A high
+      // that lasts stops feeling high; the set point itself is never lost.
+      const setPoint = NeuromodulatorSystem.SET_POINTS[type];
+      const drift =
+        (state.level - state.baseline) * NeuromodulatorSystem.ADAPTATION_RATE * dt +
+        (setPoint - state.baseline) * NeuromodulatorSystem.RESENSITIZATION_RATE * dt;
+      state.baseline = Math.max(
+        setPoint - NeuromodulatorSystem.ADAPTATION_BAND,
+        Math.min(setPoint + NeuromodulatorSystem.ADAPTATION_BAND, state.baseline + drift),
+      );
     }
+  }
+
+  /** Innate tonic set points (what the baseline adapts around). */
+  private static readonly SET_POINTS: Record<ModulatorType, number> = {
+    [ModulatorType.Dopamine]: 0.4,
+    [ModulatorType.Serotonin]: 0.5,
+    [ModulatorType.Norepinephrine]: 0.3,
+    [ModulatorType.Cortisol]: 0.3,
+    [ModulatorType.Acetylcholine]: 0.4,
+    [ModulatorType.Oxytocin]: 0.3,
+  };
+  /** Fraction of the level–baseline gap the baseline closes per ms (time constant ≈ 50 s of brain time). */
+  private static readonly ADAPTATION_RATE = 0.00002;
+  /** Fraction of the baseline's distance to its set point closed per ms once nothing pushes (time constant ≈ 100 s). */
+  private static readonly RESENSITIZATION_RATE = 0.00001;
+  /** How far the baseline may drift from its set point. */
+  private static readonly ADAPTATION_BAND = 0.15;
+
+  /** The tonic baseline a modulator currently relaxes toward. */
+  getBaseline(type: ModulatorType): number {
+    return this.modulators.get(type)?.baseline ?? 0;
   }
 
   /**

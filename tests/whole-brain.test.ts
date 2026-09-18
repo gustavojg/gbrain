@@ -284,21 +284,22 @@ const valenceAfterVoice = (v: typeof WARM_VOICE): number => {
   for (let i = 0; i < 3; i++) { brain.hearVoice(v); for (let t = 0; t < 20; t++) brain.tick(); }
   return brain.feel().valence;
 };
-const valenceAfterText = (text: string): number => {
-  const brain = newBrain();
-  quiet(() => { for (let i = 0; i < 3; i++) brain.read(text); });
-  return brain.feel().valence;
-};
 {
   const warm = valenceAfterVoice(WARM_VOICE);
   const harsh = valenceAfterVoice(HARSH_VOICE);
   check('a warm voice ≫ a harsh voice in valence', warm - harsh >= 0.5 && harsh < 0, `+${warm.toFixed(2)} vs ${harsh.toFixed(2)}`);
-  // (Reading does release a little dopamine — new words get learned — but
-  // the same for any text: nothing in the words themselves is felt yet.)
-  const positive = valenceAfterText('estoy feliz con alegria y amor');
-  const negative = valenceAfterText('tengo miedo tristeza y odio');
-  check('words carry no emotion until they have been heard alongside one: "happy" and "fear" texts feel the same',
-    Math.abs(positive - negative) < 0.1 && negative >= 0,
+  // (Reading does move the modulators — the novelty of new words is a little
+  // dopamine — but the amygdala itself, which is where a word's emotion would
+  // be, appraises nothing: no word means anything yet.)
+  const amygdalaValenceAfter = (text: string): number => {
+    const brain = newBrain();
+    quiet(() => { for (let i = 0; i < 3; i++) brain.read(text); });
+    return (brain.getRegion('amygdala') as unknown as { getEmotionalState(): { valence: number } }).getEmotionalState().valence;
+  };
+  const positive = amygdalaValenceAfter('estoy feliz con alegria y amor');
+  const negative = amygdalaValenceAfter('tengo miedo tristeza y odio');
+  check('words carry no emotion until they have been heard alongside one: the amygdala appraises "happy" and "fear" texts alike',
+    Math.abs(positive) < 0.1 && Math.abs(negative) < 0.1 && Math.abs(positive - negative) < 0.05,
     `${positive.toFixed(2)} vs ${negative.toFixed(2)}`);
 }
 

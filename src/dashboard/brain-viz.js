@@ -211,6 +211,7 @@ function updateDashboard(state) {
   updatePerceptionPanel(state.recognition);
   updateRecallRow(state.association);
   updateInnateRow(state.innate);
+  updateMotivationRow(state.motivation);
 
   // Learning curve (growth of vocabulary + episodic memories over time)
   updateLearningCurve(state);
@@ -267,7 +268,37 @@ function updateInnateRow(innate) {
   }
 }
 
+let lastDopamineShown = 0;
+
+function updateMotivationRow(m) {
+  const what = document.querySelector('#perceptDrives .percept-what');
+  if (!what || !m) return;
+  const pct = (x) => `${Math.round(Number(x) * 100)}%`;
+  const e = m.lastEvent;
+  let last = '';
+  if (e) {
+    const sign = e.error >= 0 ? '+' : '−';
+    const what = { novelty: 'new', progress: 'learning', external: e.reward >= 0 ? 'praise' : 'reprimand', omission: 'expected, nothing came' }[e.kind] || e.kind;
+    last = ` · last: ${what}${e.key ? ` (${escapeHtml(e.key.replace(/^(visual|auditory|word|activity):/, ''))})` : ''} dopamine ${sign}${Math.abs(e.error).toFixed(2)}`;
+  }
+  what.classList.remove('percept-empty');
+  what.innerHTML =
+    `curious ${pct(m.drives.curiosity)} · bored ${pct(m.drives.boredom)} · lonely ${pct(m.drives.contact)}` +
+    `<span class="percept-total">babble ${Number(m.activityValues.babble).toFixed(2)} · scribble ${Number(m.activityValues.scribble).toFixed(2)} (worth of each activity)${escapeHtml(last)}</span>`;
+}
+
 function showAffect(d) {
+  if (d.kind === 'dopamine' && d.event) {
+    const e = d.event;
+    if (Math.abs(Number(e.error)) < 0.15 || e.kind === 'progress' && e.key && e.key.startsWith('activity:')) return;
+    const name = e.key ? escapeHtml(String(e.key).replace(/^(visual|auditory|word|activity):/, '')) : 'that';
+    const line = e.kind === 'novelty' ? `✨ ${name} is new to it` :
+      e.kind === 'progress' ? `📈 It is getting better at ${name}` :
+      e.kind === 'omission' ? `😕 It expected praise for ${name} and nothing came` :
+      Number(e.error) > 0 ? `🎁 Better than it expected for ${name}` : `😞 Worse than it expected for ${name}`;
+    addLog('emotion', `${line} (dopamine ${Number(e.error) >= 0 ? '+' : ''}${Number(e.error).toFixed(2)})`);
+    return;
+  }
   if (d.kind === 'startle') addLog('emotion', '😳 Startled by a sudden loud sound');
   else if (d.kind === 'looming') addLog('emotion', '😨 Something is coming closer fast');
   else if (d.kind === 'face') addLog('emotion', `🙂 That looks like a face (${Math.round(Number(d.match) * 100)}%)`);
@@ -1486,7 +1517,7 @@ function playVocalization(v) {
 
   const status = document.getElementById('voiceStatus');
   if (status) {
-    const what = { imitation: 'Repeating what it heard', naming: 'Saying what this reminds it of', babble: 'Babbling' }[v.source] || 'Vocalizing';
+    const what = { imitation: 'Repeating what it heard', naming: 'Saying what this reminds it of', babble: 'Babbling', call: 'Calling — nobody has talked to it for a while' }[v.source] || 'Vocalizing';
     status.textContent = `${what} — F1 ${f1.toFixed(0)} Hz · F2 ${f2.toFixed(0)} Hz`;
   }
   if (v.source === 'imitation') {

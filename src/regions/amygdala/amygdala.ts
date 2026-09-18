@@ -341,9 +341,11 @@ export class Amygdala extends BrainRegion {
   produceNeuromodulators(): NeuromodulatorRelease {
     const { valence, arousal } = this.emotionalState;
 
-    // --- Dopamine: positive valence ---
-    // VTA dopamine neurons fire in response to reward prediction errors
-    const dopamine = Math.max(0, valence) * 0.5 + (valence > 0.5 ? 0.2 : 0);
+    // --- Dopamine: not from here ---
+    // VTA dopamine neurons fire to reward PREDICTION ERRORS, not to pleasant
+    // states: the brain's motivation system computes them (core/motivation).
+    // A pleasant state that was expected releases no dopamine at all.
+    const dopamine = 0;
 
     // --- Serotonin: emotional stability, familiar positive bias ---
     // The raphe nuclei maintain serotonergic tone modulated by safety. Negative

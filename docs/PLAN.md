@@ -45,11 +45,12 @@ Fuera: `affective-lexicon.ts`.
 
 | Mecanismo | Base | Hoy | Test |
 |---|---|---|---|
-| **Error de predicción de recompensa**: la dopamina es recompensa recibida menos esperada; cada categoría, palabra y asociación lleva un valor aprendido | Schultz 1997 | La dopamina sube siempre igual por el mismo estímulo | Enseñar lo mismo diez veces: el pulso de dopamina cae hacia cero; algo nuevo lo devuelve |
-| **Curiosidad** como recompensa intrínseca: bono por novedad y por progreso de aprendizaje | Kakade & Dayan 2002; Oudeyer | Ninguna | Prefiere lo que le está enseñando algo y abandona lo que ya domina |
-| **Adaptación hedónica**: la línea base de cada neuromodulador se desplaza hacia su media reciente | Desensibilización de receptores | Línea base fija | Un estado alto sostenido se normaliza |
-| **Selección de acción** al estilo de los ganglios basales: balbucear, imitar o callar; garabatear, copiar o dibujar de memoria; dormir | Actor-crítico en estriado | Temporizadores | Con dos actividades disponibles, dedica más tiempo a la que le hace progresar |
-| **Impulsos**: aburrimiento, cansancio, contacto | Alostasis (Damasio, Sterling) | Ninguno | Sin interacción busca estímulos; con ella aprende más de esa sesión |
+| **Error de predicción de recompensa**: la dopamina es recompensa recibida menos esperada; cada categoría, palabra y asociación lleva un valor aprendido | Schultz 1997 | Hecho (`core/motivation`): cada cosa lleva lo que suele traer; la omisión de lo esperado es una bajada | Enseñar lo mismo diez veces: el pulso de dopamina cae hacia cero; algo nuevo lo devuelve |
+| **Curiosidad** como recompensa intrínseca: bono por novedad y por progreso de aprendizaje | Kakade & Dayan 2002; Oudeyer | Hecho: bono de novedad que se habitúa; progreso al recordar mejor; progreso de los mapas motores (crecimiento de lo que saben) | Prefiere lo que le está enseñando algo y abandona lo que ya domina |
+| **Adaptación hedónica**: la línea base de cada neuromodulador se desplaza hacia su media reciente | Desensibilización de receptores | Hecho: deriva hacia el nivel reciente dentro de una banda y vuelve al punto de ajuste | Un estado alto sostenido se normaliza |
+| **Selección de acción** al estilo de los ganglios basales: balbucear, imitar o callar; garabatear, copiar o dibujar de memoria; dormir | Actor-crítico en estriado | Hecho para balbucear/garabatear: cada actividad vale el progreso que trae, elección softmax | Con dos actividades disponibles, dedica más tiempo a la que le hace progresar |
+| **Impulsos**: aburrimiento, cansancio, contacto | Alostasis (Damasio, Sterling) | Hecho: aburrimiento acorta la pausa, soledad → llamada, presión de sueño | Sin interacción busca estímulos; con ella aprende más de esa sesión |
+| **Hábitos**: lo repetido pasa de dirigido a objetivo (valor) a estímulo-respuesta (estriado), más rápido y sin atención | Dickinson: devaluación de la recompensa; Yin & Knowlton 2006 | La asociación sube de confianza, pero nada cambia de sistema | Una respuesta muy practicada sigue ejecutándose aunque su recompensa ya no valga; una poco practicada se detiene |
 
 ## Bloque 2 — El tiempo
 
@@ -89,6 +90,7 @@ retiran, y el lenguaje se reconstruye desde el sonido.
 | **Periodos críticos**: la plasticidad de una categoría baja con su edad | Estrechamiento perceptivo (Werker & Tees 1984) | Vigilancia sin edad | Un contraste no oído en los primeros meses cuesta más aprenderlo después |
 | **Poda** de lo que no se usa | Poda sináptica postnatal | Solo rebaja en el sueño | Las categorías que nunca se repiten desaparecen |
 | **Fases de sueño**: repetición (lento) y reactivación al azar (REM) | Diekelmann & Born 2010 | Solo repetición y rebaja | Generaliza mejor tras dormir |
+| **Sueños**: en REM (acetilcolina alta, norepinefrina y serotonina bajas, sin control prefrontal) se mezclan fragmentos de varios episodios y CA3 los completa en quimeras que pasan por la corteza con plasticidad baja; el dashboard muestra lo que "ve" y "dice" dormido | Hoel 2021 (cerebro sobreajustado); generative replay (van de Ven 2020); Stickgold & Walker | Nada | Tras dormir dibuja o nombra algo que combina dos cosas aprendidas y nunca vio juntas, y reconoce mejor variantes nuevas de lo aprendido |
 | **Reconsolidación y olvido activo** | Nader 2000 | Ninguno | Un recuerdo reactivado se puede modificar |
 
 ## Después: el motor en C++ (CPU y CUDA)

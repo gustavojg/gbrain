@@ -44,6 +44,7 @@ import { AuditoryCortex } from './regions/auditory-cortex/auditory-cortex.js';
 import { Hippocampus } from './regions/hippocampus/hippocampus.js';
 import { Amygdala } from './regions/amygdala/amygdala.js';
 import { appraiseProsody, type ProsodyAppraisal, type VoiceContour } from './regions/amygdala/prosody.js';
+import { Motivation, type ActivityKind, type Drives, type RewardEvent } from './core/motivation/motivation.js';
 import { PrefrontalCortex } from './regions/prefrontal-cortex/prefrontal-cortex.js';
 import { BrocaArea, type LanguageResponse } from './regions/broca-wernicke/broca.js';
 import { WernickeArea } from './regions/broca-wernicke/wernicke.js';
@@ -74,6 +75,8 @@ export interface BrainState {
   memoriesCount: number;
   /** What the innate layer has reacted to (tone of voice, startles, faces…) */
   innate?: InnateState;
+  /** Why it acts: drives, the value of its activities, the last dopamine event */
+  motivation?: MotivationState;
   /** Spike bus traffic */
   busTraffic: Record<string, { sent: number; received: number }>;
   /** Total ticks processed */
@@ -182,7 +185,7 @@ export interface Vocalization {
    * Spontaneous exploration, an attempt to repeat a sound it heard, or saying
    * the sound that what it perceives brings to mind.
    */
-  source: 'babble' | 'imitation' | 'naming';
+  source: 'babble' | 'imitation' | 'naming' | 'call';
   /** For an imitation: how well the heard sound was known to the motor map (0–1). */
   confidence: number;
   /** How long the sound lasts when rendered (ms of real time). */
@@ -234,6 +237,20 @@ export interface InnateState {
   sleepPressure: number;
 }
 
+/** State of the motivation system (see core/motivation). */
+export interface MotivationState {
+  drives: Drives;
+  /** Expected learning progress of each activity (what makes it choose). */
+  activityValues: Record<ActivityKind, number>;
+  /** The last reward prediction error and what caused it, and the few before it. */
+  lastEvent: RewardEvent | null;
+  recentEvents: RewardEvent[];
+  events: number;
+  /** Spontaneous activities taken so far, by kind. */
+  chosen: Record<ActivityKind, number>;
+  calls: number;
+}
+
 /** Sensory channels of the thalamic relay. */
 type SensoryModality = 'visual' | 'auditory' | 'linguistic';
 
@@ -282,10 +299,9 @@ export class DigitalBrain {
   private babbling = false;
   private lastVocalization: Vocalization | null = null;
   private vocalizationSerial = 0;
-  private ticksSinceVocalization = 0;
-  /** Pause between spontaneous babbles (real ms): the utterance, its echo in the brain, a breath. */
-  private static readonly BABBLE_INTERVAL_MS = 7000;
-  private readonly babbleIntervalTicks: number;
+  /** Vocalizations counted as calls for contact. */
+  private calls = 0;
+  private lastCallTick = Number.MIN_SAFE_INTEGER;
   /** Rendered length of a vocalization (ms of real time). */
   private static readonly VOCALIZATION_MS = 350;
 
@@ -293,10 +309,23 @@ export class DigitalBrain {
   private scribbling = false;
   private lastDrawing: HandDrawing | null = null;
   private drawingSerial = 0;
-  private ticksSinceDrawing = 0;
-  /** Pause between spontaneous scribbles (real ms). */
-  private static readonly SCRIBBLE_INTERVAL_MS = 7500;
-  private readonly scribbleIntervalTicks: number;
+
+  // ── Motivation (why it does anything on its own) ──
+  private motivation!: Motivation;
+  /** Pause between spontaneous activities (real ms) when nothing pushes: an utterance or a scribble, its way back, a breath. */
+  private static readonly EXPLORATION_INTERVAL_MS = 7000;
+  private readonly explorationIntervalTicks: number;
+  private ticksSinceExploration = 0;
+  /** How much boredom shortens the pause (at full boredom the pause halves). */
+  private static readonly BOREDOM_URGE = 0.5;
+  /** Need for contact from which a babble becomes a call, and the least time between calls. */
+  private static readonly CALL_CONTACT = 0.7;
+  private static readonly CALL_INTERVAL_MS = 60_000;
+  /** Dopamine released per unit of positive prediction error, and per unit of negative (the dip). */
+  private static readonly DOPAMINE_BURST_GAIN = 0.5;
+  private static readonly DOPAMINE_DIP_GAIN = 0.4;
+  private chosen: Record<ActivityKind, number> = { babble: 0, scribble: 0 };
+  private motorLearnings = { babble: 0, scribble: 0 };
 
   // ── Cross-modal association (learning what goes with what) ──
   private associations = new AssociationMemory();
@@ -564,8 +593,12 @@ export class DigitalBrain {
     this.presentationTicks = this.ticksFor(DigitalBrain.PRESENTATION_MS);
     this.perceptionTicks = this.ticksFor(DigitalBrain.PERCEPTION_MS);
     this.associationWindowTicks = this.ticksFor(DigitalBrain.ASSOCIATION_WINDOW_MS);
-    this.babbleIntervalTicks = this.ticksFor(DigitalBrain.BABBLE_INTERVAL_MS);
-    this.scribbleIntervalTicks = this.ticksFor(DigitalBrain.SCRIBBLE_INTERVAL_MS);
+    this.explorationIntervalTicks = this.ticksFor(DigitalBrain.EXPLORATION_INTERVAL_MS);
+    this.motivation = new Motivation({
+      rewardWindowTicks: this.ticksFor(DigitalBrain.VERDICT_WINDOW_MS),
+      boredomTicks: this.ticksFor(60_000),
+      contactTicks: this.ticksFor(300_000),
+    });
     this.thoughtTraceTicks = this.ticksFor(DigitalBrain.THOUGHT_TRACE_MS);
     this.drivePeakDecay = Math.pow(0.9, this.msPerTick / 100);
     this.conditioningWindowTicks = this.ticksFor(DigitalBrain.CONDITIONING_WINDOW_MS);
@@ -974,8 +1007,9 @@ export class DigitalBrain {
         if (this.learnedThisSession.length > DigitalBrain.MAX_LEARNED_HISTORY) {
           this.learnedThisSession.shift();
         }
-        // Reward + attention consolidation of the new engram.
-        this.modulators.release(ModulatorType.Dopamine, 0.1);
+        // A new word is a novelty (its dopamine is a prediction error, see
+        // reward()); attention consolidates the new engram.
+        this.reward(this.motivation.novelty(`word:${word}`, this.tickCount));
         this.modulators.release(ModulatorType.Acetylcholine, 0.05);
         console.log(`  💡 Learned new word: "${word}" (lexicon: ${this.lexicon.size} words)`);
       } else {
@@ -1026,21 +1060,48 @@ export class DigitalBrain {
   private driveVoice(): void {
     const motor = this.regions.get('motorCortex') as MotorCortex | undefined;
     if (!motor) return;
-    this.ticksSinceVocalization++;
-
     const imitation = motor.takeCommand();
-    if (imitation) {
-      this.vocalize(imitation);
+    if (imitation) this.vocalize(imitation);
+  }
+
+  /**
+   * Spontaneous activity — what it does when nothing is asked of it. Which
+   * activity (babbling, scribbling) is chosen by its learned value: the
+   * learning progress it has been bringing (see core/motivation). Boredom
+   * shortens the pause between activities; the need for contact turns a
+   * babble into a call.
+   */
+  private driveExploration(): void {
+    this.ticksSinceExploration++;
+    const motor = this.regions.get('motorCortex') as MotorCortex | undefined;
+    const hand = this.regions.get('handMotorCortex') as HandMotorCortex | undefined;
+    const available: ActivityKind[] = [];
+    if (this.babbling && motor && !motor.vocalizing && !this.presentations.has('auditory')) available.push('babble');
+    if (this.scribbling && hand && !hand.drawing && !this.presentations.has('visual')) available.push('scribble');
+    if (available.length === 0) return;
+
+    const drives = this.motivation.drives(this.tickCount);
+    // Alone for a while: a babble goes out as a call.
+    if (
+      motor && available.includes('babble') &&
+      drives.contact >= DigitalBrain.CALL_CONTACT &&
+      this.tickCount - this.lastCallTick >= this.ticksFor(DigitalBrain.CALL_INTERVAL_MS)
+    ) {
+      this.lastCallTick = this.tickCount;
+      this.calls++;
+      this.ticksSinceExploration = 0;
+      this.vocalize({ ...motor.babble(), source: 'call' });
       return;
     }
-    if (
-      this.babbling &&
-      !motor.vocalizing &&
-      !this.presentations.has('auditory') &&
-      this.ticksSinceVocalization >= this.babbleIntervalTicks
-    ) {
-      this.vocalize(motor.babble());
-    }
+
+    const pause = Math.max(1, Math.round(this.explorationIntervalTicks * (1 - DigitalBrain.BOREDOM_URGE * drives.boredom)));
+    if (this.ticksSinceExploration < pause) return;
+    const kind = this.motivation.choose(available);
+    if (!kind) return;
+    this.ticksSinceExploration = 0;
+    this.chosen[kind]++;
+    if (kind === 'babble' && motor) this.vocalize(motor.babble());
+    else if (kind === 'scribble' && hand) this.draw(hand.scribble());
   }
 
   /**
@@ -1059,7 +1120,6 @@ export class DigitalBrain {
       serial: ++this.vocalizationSerial,
     };
     this.lastVocalization = vocalization;
-    this.ticksSinceVocalization = 0;
 
     // Its own voice is not a sound of the world: the auditory cortex learns
     // from it (that is how the motor map is built) but it founds no category
@@ -1113,21 +1173,8 @@ export class DigitalBrain {
   private driveHand(): void {
     const hand = this.regions.get('handMotorCortex') as HandMotorCortex | undefined;
     if (!hand) return;
-    this.ticksSinceDrawing++;
-
     const copy = hand.takeCommand();
-    if (copy) {
-      this.draw(copy);
-      return;
-    }
-    if (
-      this.scribbling &&
-      !hand.drawing &&
-      !this.presentations.has('visual') &&
-      this.ticksSinceDrawing >= this.scribbleIntervalTicks
-    ) {
-      this.draw(hand.scribble());
-    }
+    if (copy) this.draw(copy);
   }
 
   /**
@@ -1146,7 +1193,6 @@ export class DigitalBrain {
       serial: ++this.drawingSerial,
     };
     this.lastDrawing = drawing;
-    this.ticksSinceDrawing = 0;
 
     // Its own drawing is not an object of the world (see `vocalize`): the hand
     // learns from it, but it founds no category and is not bound to anything.
@@ -1207,7 +1253,10 @@ export class DigitalBrain {
     if (code.indices.length === 0) return;
 
     this.recallFrom(modality, code, label);
-    if (modality === 'visual' || modality === 'auditory') this.appraiseCue(modality, code.indices, label);
+    if (modality === 'visual' || modality === 'auditory') {
+      this.appraiseCue(modality, code.indices, label);
+      this.reward(this.motivation.perceive(`${modality}:${label}`, this.tickCount));
+    }
 
     const serial = ++this.perceptSerial;
     const percept = { code, label, tick: this.tickCount, serial, boundWith: new Set<number>() };
@@ -1240,6 +1289,8 @@ export class DigitalBrain {
     if (!result || result.match < DigitalBrain.MIN_RECALL_MATCH) return;
 
     const confident = result.match >= DigitalBrain.RECALL_CONFIDENCE;
+    // Getting better at recalling this is learning progress: rewarding in itself.
+    this.reward(this.motivation.progress(`${modality}:${label}`, result.match, this.tickCount));
     const recall: AssociationRecall = {
       cue: { modality, label },
       confidence: result.match,
@@ -1324,12 +1375,13 @@ export class DigitalBrain {
    */
   giveFeedback(positive: boolean): boolean {
     if (positive) {
-      this.modulators.release(ModulatorType.Dopamine, 0.25);
       this.modulators.release(ModulatorType.Serotonin, 0.05);
     } else {
       this.modulators.release(ModulatorType.Cortisol, 0.12);
       this.modulators.release(ModulatorType.Norepinephrine, 0.08);
     }
+    // The dopamine of a 👍 is a prediction error too: expected praise moves nothing.
+    this.reward(this.motivation.external(positive ? 0.6 : -0.6, this.tickCount));
     this.markInnateAffect(positive ? { valence: 0.6, arousal: 0.5 } : { valence: -0.6, arousal: 0.6 });
     if (this.lastRecallUnits.length === 0 || this.lastRecall === null) return false;
     this.associations.reinforce(this.lastRecallUnits, positive ? 0.6 : -0.8);
@@ -1754,10 +1806,16 @@ export class DigitalBrain {
       }
     }
 
-    //    Voice: an imitation the motor cortex has just decided on, or a babble.
+    //    Voice: an imitation the motor cortex has just decided on.
     this.driveVoice();
-    //    Hand: a copy the hand motor cortex has just decided on, or a scribble.
+    //    Hand: a copy the hand motor cortex has just decided on.
     this.driveHand();
+    //    Otherwise: whatever it feels like doing (motivation).
+    this.driveExploration();
+    //    Expected reward that did not come: a dopamine dip.
+    this.reward(this.motivation.resolveOmission(this.tickCount));
+    //    A motor map that has just learned: is the activity still teaching it something?
+    this.creditActivityProgress();
 
     //    Percepts completed by the sensory cortices this tick → association.
     this.collectPercepts();
@@ -1826,6 +1884,10 @@ export class DigitalBrain {
     }
     // A voice is contact: oxytocin, more so for a warm one.
     this.modulators.release(ModulatorType.Oxytocin, 0.03 + 0.05 * Math.max(0, valence));
+    this.motivation.heardVoice(this.tickCount);
+    // Its warmth or harshness is a reward or a punishment — for what was just
+    // perceived, and against what that thing had led to expect.
+    if (Math.abs(valence) >= 0.25) this.reward(this.motivation.external(valence, this.tickCount));
     if (appraisal.startle) this.startle('voice');
 
     // The voice as a verdict on what was just recalled.
@@ -1864,9 +1926,8 @@ export class DigitalBrain {
     this.modulators.release(ModulatorType.Acetylcholine, 0.08);
     const evoked = { valence: -0.4, arousal: 0.9 };
     (this.regions.get('amygdala') as Amygdala | undefined)?.appraiseInnate(evoked);
-    // Freezing: spontaneous babbling and scribbling wait a full interval again.
-    this.ticksSinceVocalization = 0;
-    this.ticksSinceDrawing = 0;
+    // Freezing: spontaneous activity waits a full pause again.
+    this.ticksSinceExploration = 0;
     this.markInnateAffect(evoked);
     this.emitEvent({ type: 'affect', timestamp: this.currentTime, data: { kind: 'startle', source, startles: this.startles } });
   }
@@ -1990,6 +2051,55 @@ export class DigitalBrain {
     this.emitEvent({ type: 'affect', timestamp: this.currentTime, data: { kind: 'looming', coverage, loomings: this.loomings } });
   }
 
+  // ================================================================
+  // MOTIVATION — dopamine as prediction error, curiosity, drives
+  // ================================================================
+
+  /**
+   * Turns a reward prediction error into dopamine: a burst for more than
+   * expected, a dip for less (Schultz). What was expected releases nothing.
+   */
+  private reward(event: RewardEvent | null): void {
+    if (!event) return;
+    if (event.error > 0) this.modulators.release(ModulatorType.Dopamine, DigitalBrain.DOPAMINE_BURST_GAIN * event.error);
+    else if (event.error < 0) this.modulators.release(ModulatorType.Dopamine, DigitalBrain.DOPAMINE_DIP_GAIN * event.error);
+    if (Math.abs(event.error) >= 0.05) {
+      this.emitEvent({ type: 'affect', timestamp: this.currentTime, data: { kind: 'dopamine', event } });
+    }
+  }
+
+  /** The motor maps learned from their last activity: credit its progress to that activity. */
+  private creditActivityProgress(): void {
+    const motor = this.regions.get('motorCortex') as MotorCortex | undefined;
+    if (motor && motor.learnings !== this.motorLearnings.babble) {
+      this.motorLearnings.babble = motor.learnings;
+      this.reward(this.motivation.activityLearned('babble', motor.knowledge, this.tickCount));
+    }
+    const hand = this.regions.get('handMotorCortex') as HandMotorCortex | undefined;
+    if (hand && hand.learnings !== this.motorLearnings.scribble) {
+      this.motorLearnings.scribble = hand.learnings;
+      this.reward(this.motivation.activityLearned('scribble', hand.knowledge, this.tickCount));
+    }
+  }
+
+  /** The motivation system's state, for the dashboard and tests. */
+  getMotivation(): MotivationState {
+    return {
+      drives: this.motivation.drives(this.tickCount),
+      activityValues: { ...this.motivation.activityValues },
+      lastEvent: this.motivation.lastEvent,
+      recentEvents: [...this.motivation.recentEvents],
+      events: this.motivation.events,
+      chosen: { ...this.chosen },
+      calls: this.calls,
+    };
+  }
+
+  /** What a cue leads the brain to expect, and how many times it has seen it (for tests). */
+  expectationOf(key: string): { expected: number; seen: number } {
+    return { expected: this.motivation.expectation(key), seen: this.motivation.seen(key) };
+  }
+
   /** The innate layer's state, for the dashboard and tests. */
   getInnate(): InnateState {
     const amygdala = this.regions.get('amygdala') as Amygdala | undefined;
@@ -2024,6 +2134,7 @@ export class DigitalBrain {
     console.log(`💤 Consolidation started (t=${this.currentTime.toFixed(0)}ms)...`);
     this.lastConsolidation = this.currentTime;
     this.sleepPressure = 0;
+    this.motivation.sleep();
 
     const hippocampus = this.regions.get('hippocampus') as Hippocampus | undefined;
     const cortex = this.regions.get(DigitalBrain.CONSOLIDATION_TARGET);
@@ -2113,6 +2224,7 @@ export class DigitalBrain {
       emotion: this.feel(),
       memoriesCount: learningHippocampus?.memoryCount ?? 0,
       innate: this.getInnate(),
+      motivation: this.getMotivation(),
       busTraffic,
       tickCount: this.tickCount,
       broca: brocaResponse ? {
@@ -2161,6 +2273,7 @@ export class DigitalBrain {
         speakerPitchHz: this.speakerPitchHz,
       },
       association: this.associations.serialize(),
+      motivation: this.motivation.serialize(),
     };
     for (const [id, region] of this.regions) {
       const extra = region.serializeExtra();
@@ -2266,6 +2379,7 @@ export class DigitalBrain {
     }
     this.restoreBrainExtras(data.extras.brain);
     this.associations.deserialize(data.extras.association);
+    this.motivation.deserialize(data.extras.motivation);
 
     // Restore the persisted lexicon (incl. learned words) if present and
     // dimensionally compatible; otherwise keep the freshly seeded vocabulary.

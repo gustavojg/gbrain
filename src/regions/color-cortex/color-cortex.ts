@@ -142,6 +142,15 @@ export class ColorCortex extends BrainRegion {
     const mean = new Float32Array(this.inputCount);
     for (let i = 0; i < mean.length; i++) mean[i] = this.presentationInput[i] / this.presentationTicks;
     this.resetPresentation();
+    // Surprise: 1 − cosine between the colour seen and what the engram's neurons expect, before they learn.
+    let dot = 0, na = 0, nb = 0;
+    for (let i = 0; i < this.inputCount; i++) {
+      let w = 0;
+      for (let k = 0; k < engram.length; k++) w += this.weights[engram[k] * this.inputCount + i];
+      w /= Math.max(1, engram.length);
+      dot += mean[i] * w; na += mean[i] * mean[i]; nb += w * w;
+    }
+    const surprise = na > 0 && nb > 0 ? Math.max(0, Math.min(1, 1 - dot / Math.sqrt(na * nb))) : 1;
 
     const lr = Math.min(1, this.cfg.learningRate * (effects.learningRateMultiplier ?? 1));
     for (let k = 0; k < engram.length; k++) {
@@ -161,6 +170,7 @@ export class ColorCortex extends BrainRegion {
     }
     const recognition = this.prototypes.observe(engram, this.currentTime);
     if (recognition) {
+      recognition.surprise = surprise;
       this.lastRecognition = recognition;
       this.lastEngram = engram;
       this.perceptCount++;

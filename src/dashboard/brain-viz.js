@@ -346,6 +346,8 @@ function showAffect(d) {
     addLog('emotion', `${line} (dopamine ${Number(e.error) >= 0 ? '+' : ''}${Number(e.error).toFixed(2)})`);
     return;
   }
+  if (d.kind === 'question-learned') { addLog('info', `❓ “${escapeHtml(String(d.question).replace(/^lexical:/, ''))}” asks for the ${escapeHtml(String(d.modality))} of things (${Number(d.known)} questions known)`); return; }
+  if (d.kind === 'answer') return; // the writing line says it
   if (d.kind === 'startle') addLog('emotion', '😳 Startled by a sudden loud sound');
   else if (d.kind === 'looming') addLog('emotion', '😨 Something is coming closer fast');
   else if (d.kind === 'face') addLog('emotion', `🙂 That looks like a face (${Math.round(Number(d.match) * 100)}%)`);
@@ -382,9 +384,10 @@ function renderPercept(rowId, sense, r, categories, verb) {
   const what = document.querySelector(`#${rowId} .percept-what`);
   if (!what || !r) return;
 
+  const surprise = typeof r.surprise === 'number' ? ` · surprise ${Math.round(Number(r.surprise) * 100)}%` : '';
   const badge = r.isNew
-    ? `<span class="percept-badge is-new">new</span>`
-    : `<span class="percept-badge is-known">${verb} ×${Number(r.exposures)} · ${Math.round(Number(r.familiarity) * 100)}% match</span>`;
+    ? `<span class="percept-badge is-new">new${surprise}</span>`
+    : `<span class="percept-badge is-known">${verb} ×${Number(r.exposures)} · ${Math.round(Number(r.familiarity) * 100)}% match${surprise}</span>`;
   what.classList.remove('percept-empty');
   what.innerHTML =
     `<span class="percept-label">${escapeHtml(r.label)}</span>${badge}` +
@@ -1767,7 +1770,10 @@ function showBrainWriting(w) {
   area.value = (area.value ? area.value + ' ' : '') + w.text.slice(0, 40);
   if (area.value.length > 400) area.value = area.value.slice(-400);
   area.scrollTop = area.scrollHeight;
-  addLog('info', `✍️ Writes “${w.text.slice(0, 40)}” on seeing ${String(w.cue).slice(0, 40)}`);
+  const cue = String(w.cue);
+  addLog('info', cue.startsWith('answer:')
+    ? `❓ Answers “${w.text.slice(0, 40)}” (the ${cue.slice(7)} of what is in front)`
+    : `✍️ Writes “${w.text.slice(0, 40)}” on seeing ${cue.slice(0, 40)}`);
 }
 
 // ================================================================

@@ -47,6 +47,7 @@ import { appraiseProsody, type ProsodyAppraisal, type VoiceContour } from './reg
 import { Motivation, type ActivityKind, type Drives, type RewardEvent } from './core/motivation/motivation.js';
 import { SequenceMemory, type Prediction } from './core/memory/sequence-memory.js';
 import { ColorCortex } from './regions/color-cortex/color-cortex.js';
+import { QuestionMemory } from './core/memory/question-memory.js';
 import { PrefrontalCortex } from './regions/prefrontal-cortex/prefrontal-cortex.js';
 import { BrocaArea, type LanguageResponse } from './regions/broca-wernicke/broca.js';
 import { WernickeArea } from './regions/broca-wernicke/wernicke.js';
@@ -82,6 +83,8 @@ export interface BrainState {
   /** What it expects to come next, and what it holds in mind */
   sequence?: { expectation: Prediction | null; transitions: number; lastTransition: { from: string; to: string } | null };
   workingMemory?: Array<{ label: string; priority: number; age: number }>;
+  /** Questions it has learned to answer, and the last answer it gave */
+  questions?: { known: number; lastAnswer: { question: string; modality: string; word: string; timestamp: number } | null };
   /** Spike bus traffic */
   busTraffic: Record<string, { sent: number; received: number }>;
   /** Total ticks processed */
@@ -337,6 +340,30 @@ export class DigitalBrain {
   private static readonly DOPAMINE_DIP_GAIN = 0.4;
   private chosen: Record<ActivityKind, number> = { babble: 0, scribble: 0 };
   private motorLearnings = { babble: 0, scribble: 0 };
+
+  // ── Questions: what a question asks for, and answering it ──
+  private questions = new QuestionMemory();
+  /** The last text read, in case the next one answers it. */
+  private pendingQuestion: { key: string; tick: number } | null = null;
+  /** Real ms within which a text read after another counts as its answer. */
+  private static readonly QUESTION_WINDOW_MS = 8000;
+  /** Real ms within which what a dimension of the thing in front brought to mind can be given as the answer. */
+  private static readonly ANSWER_WINDOW_MS = 20_000;
+  /** The last recall from each modality's percept (what each dimension of the thing in front brought to mind). */
+  private recallsByModality: Map<AssociationModality, { recall: AssociationRecall; tick: number }> = new Map();
+  private lastAnswer: { question: string; modality: string; word: string; timestamp: number } | null = null;
+  /**
+   * Cross-situational word–referent statistics (Smith & Yu 2008): how often
+   * each word has been read while each category (a colour, a shape, a sound)
+   * was in view. A word that goes with one colour and no other is that
+   * colour's name; a word that goes with everything ("de", "que") is nobody's.
+   * word → modality:label → count
+   */
+  private wordReferents: Map<string, Map<string, number>> = new Map();
+  private static readonly MAX_WORD_REFERENTS = 5000;
+  /** Co-occurrences a word needs with a referent, and how specific it must be, to be its name. */
+  private static readonly REFERENT_MIN_COUNT = 2;
+  private static readonly REFERENT_MIN_SPECIFICITY = 0.6;
 
   // ── Time: what follows what, and what is held in mind ──
   private sequences!: SequenceMemory;
@@ -948,7 +975,10 @@ export class DigitalBrain {
 
     // What was read is a percept too: it can recall, and be bound to, what is
     // seen or heard around the same time.
-    this.onPercept('lexical', DigitalBrain.denseToCode(spikes, 0.1), text.trim().slice(0, 40));
+    const lexicalCode = DigitalBrain.denseToCode(spikes, 0.1);
+    this.onPercept('lexical', lexicalCode, text.trim().slice(0, 40));
+    this.noteWordReferents(text);
+    this.considerQuestion(`lexical:${text.trim().slice(0, 40)}`, lexicalCode);
 
     // Send to the thalamus (linguistic route)
     this.injectSensoryInput('linguistic', spikes);
@@ -1264,19 +1294,19 @@ export class DigitalBrain {
     if (visual && visual.percepts !== this.handledPercepts.visual) {
       this.handledPercepts.visual = visual.percepts;
       const units = Array.from(visual.getLastEngram());
-      this.onPercept('visual', { indices: units, values: units.map(() => 1) }, visual.getRecognition()?.label ?? 'visual');
+      this.onPercept('visual', { indices: units, values: units.map(() => 1) }, visual.getRecognition()?.label ?? 'visual', visual.getRecognition()?.surprise ?? 1);
     }
     const auditory = this.regions.get('auditoryCortex') as AuditoryCortex | undefined;
     if (auditory && auditory.percepts !== this.handledPercepts.auditory) {
       this.handledPercepts.auditory = auditory.percepts;
       const units = Array.from(auditory.getLastEngram());
-      this.onPercept('auditory', { indices: units, values: units.map(() => 1) }, auditory.getRecognition()?.label ?? 'sound');
+      this.onPercept('auditory', { indices: units, values: units.map(() => 1) }, auditory.getRecognition()?.label ?? 'sound', auditory.getRecognition()?.surprise ?? 1);
     }
     const colour = this.regions.get('colorCortex') as ColorCortex | undefined;
     if (colour && colour.percepts !== this.handledPercepts.colour) {
       this.handledPercepts.colour = colour.percepts;
       const units = Array.from(colour.getLastEngram());
-      this.onPercept('colour', { indices: units, values: units.map(() => 1) }, colour.getRecognition()?.label ?? 'colour');
+      this.onPercept('colour', { indices: units, values: units.map(() => 1) }, colour.getRecognition()?.label ?? 'colour', colour.getRecognition()?.surprise ?? 1);
     }
   }
 
@@ -1292,7 +1322,7 @@ export class DigitalBrain {
    * Recall comes first so that it reflects what had been learned BEFORE this
    * experience.
    */
-  private onPercept(modality: AssociationModality, code: ModalCode, label: string): void {
+  private onPercept(modality: AssociationModality, code: ModalCode, label: string, surprise: number = 1): void {
     if (code.indices.length === 0) return;
 
     this.recallFrom(modality, code, label);
@@ -1307,9 +1337,15 @@ export class DigitalBrain {
     }
     if (modality === 'visual' || modality === 'auditory' || modality === 'colour') {
       if (modality !== 'colour') this.appraiseCue(modality, code.indices, label);
-      const novelty = this.motivation.perceive(key, this.tickCount, expectedness);
+      const novelty = this.motivation.perceive(key, this.tickCount, expectedness, surprise);
       this.reward(novelty);
       this.gateIntoWorkingMemory(label, novelty.error);
+      // Surprise — the cortex's own prediction error — is what attention runs on:
+      // an input the category did not predict well recruits alertness and focus.
+      if (surprise >= 0.3) {
+        this.modulators.release(ModulatorType.Norepinephrine, 0.1 * surprise);
+        this.modulators.release(ModulatorType.Acetylcholine, 0.05 * surprise);
+      }
     }
 
     const serial = ++this.perceptSerial;
@@ -1362,7 +1398,7 @@ export class DigitalBrain {
       lexicalPattern = new Float32Array(this.lexicon.dimensions);
       for (const [channel, value] of lexical.pattern) if (channel < lexicalPattern.length) lexicalPattern[channel] = value;
       const contained = this.lexicon
-        .findContained(lexicalPattern, 6)
+        .findContained(lexicalPattern, 10)
         // Only words the reinstated pattern really spells out. While a word is
         // still unknown to the lexicon, its pattern merely resembles a few
         // known words (~0.35): better to stay silent than to say those.
@@ -1370,8 +1406,9 @@ export class DigitalBrain {
       // A word that is a piece of a better-matching word ("ver" in "verde",
       // "o" in "coche") is that word's shadow in the pattern, not a word recalled.
       recall.words = contained
+        .filter((m) => m.word.length >= 3)
         .filter((m, i) => !contained.some((other, j) => j !== i && other.word !== m.word && other.word.includes(m.word)))
-        .slice(0, 3)
+        .slice(0, 6)
         .map((m) => ({ word: m.word, similarity: m.similarity }));
     }
 
@@ -1416,6 +1453,7 @@ export class DigitalBrain {
     // back is not in the lexicon yet): something does come to mind.
     this.lastRecall = recall;
     this.lastRecallTick = this.tickCount;
+    this.recallsByModality.set(modality, { recall, tick: this.tickCount });
     if (confident && lexicalPattern && recall.words.length > 0) {
       this.recalledLexicalPattern = lexicalPattern;
       this.ticksSinceRecall = 0;
@@ -2190,6 +2228,166 @@ export class DigitalBrain {
     return { expected: this.motivation.expectation(key), seen: this.motivation.seen(key) };
   }
 
+  // ================================================================
+  // QUESTIONS — a question is a signal for a dimension of what is in front
+  // ================================================================
+
+  /**
+   * A text has just been read. If the text before it (a question) is still
+   * fresh and this one is a word bound to some dimension of things (a colour,
+   * a shape, a sound), the question is learned to ask for that dimension.
+   * And if this text is a question already learned, it is answered with what
+   * that dimension of the thing in front has just brought to mind.
+   */
+  private considerQuestion(key: string, code: ModalCode): void {
+    const questionWindow = this.ticksFor(DigitalBrain.QUESTION_WINDOW_MS);
+    if (this.pendingQuestion && this.pendingQuestion.key !== key && this.tickCount - this.pendingQuestion.tick <= questionWindow) {
+      const modality = this.modalityOfAnswer(key.slice('lexical:'.length)) ?? this.modalityOfWord(code);
+      if (modality) {
+        this.questions.observe(this.pendingQuestion.key, modality);
+        this.emitEvent({ type: 'affect', timestamp: this.currentTime, data: { kind: 'question-learned', question: this.pendingQuestion.key, modality, known: this.questions.size } });
+      }
+    }
+    this.pendingQuestion = { key, tick: this.tickCount };
+    const target = this.questions.refersTo(key);
+    if (target) this.answer(key, target.modality as AssociationModality);
+  }
+
+  private restoreWordReferents(data: unknown): void {
+    if (!Array.isArray(data)) return;
+    this.wordReferents = new Map();
+    for (const entry of data.slice(0, DigitalBrain.MAX_WORD_REFERENTS)) {
+      if (!Array.isArray(entry) || entry.length !== 2 || typeof entry[0] !== 'string' || !Array.isArray(entry[1])) continue;
+      const byReferent = new Map<string, number>();
+      for (const pair of entry[1].slice(0, 500)) {
+        if (!Array.isArray(pair) || typeof pair[0] !== 'string' || !Number.isInteger(pair[1]) || pair[1] <= 0) continue;
+        byReferent.set(String(pair[0]).slice(0, 80), Math.min(1e6, pair[1] as number));
+      }
+      if (byReferent.size > 0) this.wordReferents.set(entry[0].slice(0, 80), byReferent);
+    }
+  }
+
+  /** Each word of the text read goes on record with every category in view right now. */
+  private noteWordReferents(text: string): void {
+    const words = text.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\w\s]/g, '').split(/\s+/).filter((w) => w.length >= 2);
+    if (words.length === 0) return;
+    const referents: string[] = [];
+    for (const [modality, recent] of this.recentPercepts) {
+      if (modality === 'lexical' || this.tickCount - recent.tick > this.associationWindowTicks) continue;
+      referents.push(`${modality}:${recent.label}`);
+    }
+    if (referents.length === 0) return;
+    for (const word of new Set(words.slice(0, DigitalBrain.MAX_WORDS_PER_READ))) {
+      let byReferent = this.wordReferents.get(word);
+      if (!byReferent) {
+        if (this.wordReferents.size >= DigitalBrain.MAX_WORD_REFERENTS) break;
+        byReferent = new Map();
+        this.wordReferents.set(word, byReferent);
+      }
+      for (const referent of referents) byReferent.set(referent, (byReferent.get(referent) ?? 0) + 1);
+    }
+  }
+
+  /**
+   * The name of a category: the word that has gone with it most specifically —
+   * often enough, and mostly with it rather than with everything.
+   */
+  private nameOf(referent: string, exclude: (word: string) => boolean): { word: string; specificity: number } | null {
+    const modality = referent.slice(0, referent.indexOf(':'));
+    let best: { word: string; specificity: number; count: number } | null = null;
+    for (const [word, byReferent] of this.wordReferents) {
+      const count = byReferent.get(referent) ?? 0;
+      if (count < DigitalBrain.REFERENT_MIN_COUNT || exclude(word)) continue;
+      let total = 0;
+      for (const [other, n] of byReferent) if (other.startsWith(`${modality}:`)) total += n;
+      const specificity = count / Math.max(1, total);
+      if (specificity < DigitalBrain.REFERENT_MIN_SPECIFICITY) continue;
+      if (!best || specificity > best.specificity || (specificity === best.specificity && count > best.count)) best = { word, specificity, count };
+    }
+    return best ? { word: best.word, specificity: best.specificity } : null;
+  }
+
+  /**
+   * The dimension an answer belongs to, from the word–referent record: the
+   * modality in which its words are most specific (a colour word goes with
+   * one colour and many shapes). A word equally specific to two dimensions
+   * says nothing yet.
+   */
+  private modalityOfAnswer(text: string): AssociationModality | null {
+    const words = text.toLowerCase().split(/\s+/).filter((w) => w.length >= 2);
+    const votes = new Map<string, number>();
+    for (const word of words) {
+      const byReferent = this.wordReferents.get(word);
+      if (!byReferent) continue;
+      const perModality = new Map<string, { best: number; total: number }>();
+      for (const [referent, count] of byReferent) {
+        const modality = referent.slice(0, referent.indexOf(':'));
+        const stat = perModality.get(modality) ?? { best: 0, total: 0 };
+        stat.total += count;
+        if (count > stat.best) stat.best = count;
+        perModality.set(modality, stat);
+      }
+      let top: [string, number] | null = null;
+      let tie = false;
+      for (const [modality, stat] of perModality) {
+        if (stat.best < DigitalBrain.REFERENT_MIN_COUNT) continue;
+        const specificity = stat.best / stat.total;
+        if (!top || specificity > top[1]) { top = [modality, specificity]; tie = false; }
+        else if (specificity === top[1]) tie = true;
+      }
+      if (top && !tie && top[1] >= DigitalBrain.REFERENT_MIN_SPECIFICITY) votes.set(top[0], (votes.get(top[0]) ?? 0) + 1);
+    }
+    let best: [string, number] | null = null;
+    for (const entry of votes) if (!best || entry[1] > best[1]) best = entry;
+    return best ? (best[0] as AssociationModality) : null;
+  }
+
+  /** The dimension a word belongs to: the modality its association memory binds it to most. */
+  private modalityOfWord(code: ModalCode): AssociationModality | null {
+    const result = this.associations.recall('lexical', code);
+    if (!result || result.match < DigitalBrain.MIN_RECALL_MATCH) return null;
+    // Compared by the strength of what comes back, not by how many channels a
+    // modality has (a colour code is 6 units, a shape 20).
+    let best: AssociationModality | null = null;
+    let bestStrength = 0;
+    for (const [modality, recalled] of Object.entries(result.recalled)) {
+      if (modality === 'lexical') continue;
+      const top = [...recalled.pattern.values()].sort((x, y) => y - x).slice(0, 6);
+      const strength = top.reduce((sum, v) => sum + v, 0) / Math.max(1, top.length);
+      if (strength > bestStrength) {
+        bestStrength = strength;
+        best = modality as AssociationModality;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * Answers a question: attention turns to the dimension it asks for, and
+   * what that dimension of the thing in front brought to mind — its colour
+   * word, its name — is written and said.
+   */
+  private answer(question: string, modality: AssociationModality): void {
+    // The thing in front, in that dimension: the category last perceived there.
+    const region = { visual: 'visualCortex', colour: 'colorCortex', auditory: 'auditoryCortex', lexical: '' }[modality];
+    const cortex = region ? (this.regions.get(region) as { getRecognition(): Recognition | null } | undefined) : undefined;
+    const seen = cortex?.getRecognition() ?? null;
+    if (!seen || (this.currentTime - seen.timestamp) / this.config.snn.dt > this.ticksFor(DigitalBrain.ANSWER_WINDOW_MS)) return;
+    // Its name: the word that has gone with this colour (this shape, this
+    // sound) and not with the others. Not a word of the question itself,
+    // which goes with everything it is asked about. Failing a record, what the
+    // association memory brought back for it.
+    const held = this.recallsByModality.get(modality);
+    const name = this.nameOf(`${modality}:${seen.label}`, (w) => question.includes(w));
+    const word = name?.word ?? held?.recall.words.map((w) => w.word).find((w) => !question.includes(w));
+    if (!word) return;
+    this.lastAnswer = { question, modality, word, timestamp: this.currentTime };
+    this.recalledLexicalPattern = wordToPattern(word, this.lexicon.dimensions);
+    this.ticksSinceRecall = 0;
+    this.emitEvent({ type: 'response', timestamp: this.currentTime, data: { kind: 'writing', text: word, cue: `answer:${modality}`, confidence: held?.recall.confidence ?? name?.specificity ?? 0 } });
+    this.emitEvent({ type: 'affect', timestamp: this.currentTime, data: { kind: 'answer', question, modality, word } });
+  }
+
   /** The innate layer's state, for the dashboard and tests. */
   getInnate(): InnateState {
     const amygdala = this.regions.get('amygdala') as Amygdala | undefined;
@@ -2318,6 +2516,7 @@ export class DigitalBrain {
       sequence: { expectation: this.sequences.expectation, transitions: this.sequences.size, lastTransition: this.lastTransition },
       workingMemory: ((this.regions.get('prefrontalCortex') as PrefrontalCortex | undefined)?.getWorkingMemory() ?? [])
         .map((slot) => ({ label: slot.label, priority: slot.priority, age: slot.age })),
+      questions: { known: this.questions.size, lastAnswer: this.lastAnswer },
       busTraffic,
       tickCount: this.tickCount,
       broca: brocaResponse ? {
@@ -2368,6 +2567,8 @@ export class DigitalBrain {
       association: this.associations.serialize(),
       motivation: this.motivation.serialize(),
       sequence: this.sequences.serialize(),
+      questions: this.questions.serialize(),
+      wordReferents: Array.from(this.wordReferents.entries()).map(([w, m]) => [w, Array.from(m.entries())]),
     };
     for (const [id, region] of this.regions) {
       const extra = region.serializeExtra();
@@ -2475,6 +2676,8 @@ export class DigitalBrain {
     this.associations.deserialize(data.extras.association);
     this.motivation.deserialize(data.extras.motivation);
     this.sequences.deserialize(data.extras.sequence);
+    this.questions.deserialize(data.extras.questions);
+    this.restoreWordReferents(data.extras.wordReferents);
 
     // Restore the persisted lexicon (incl. learned words) if present and
     // dimensionally compatible; otherwise keep the freshly seeded vocabulary.

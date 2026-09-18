@@ -100,6 +100,12 @@ export class VisualEncoder {
       normalized = this.median3(normalized, width, height);
     }
 
+    // 1c. Something small is looked at more closely: the eye brings a small
+    // object into the fovea and the cortex sees it at the same scale as a
+    // large one (size invariance at the front end; the innate detectors keep
+    // the raw view, see encodeIntensity).
+    normalized = this.zoomIfSmall(normalized, width, height);
+
     // 2. Resize to processing resolution
     let processed = this.resize(normalized, width, height, this.config.processWidth, this.config.processHeight);
 
@@ -182,6 +188,38 @@ export class VisualEncoder {
       const gain = Math.min(1 / peak, 1.25);
       for (let i = 0; i < out.length; i++) out[i] = Math.min(1, out[i] * gain);
     }
+    return out;
+  }
+
+  /** Content smaller than this fraction of the image is zoomed to ZOOM_TARGET of it. */
+  private static readonly ZOOM_BELOW = 0.5;
+  private static readonly ZOOM_TARGET = 0.75;
+
+  /** Crops the content's bounding box (with a margin) and enlarges it to fill ZOOM_TARGET of the image. */
+  private zoomIfSmall(img: Float32Array, w: number, h: number): Float32Array {
+    let background = Infinity;
+    for (let i = 0; i < img.length; i++) if (img[i] < background) background = img[i];
+    const lit = background + 0.2;
+    let minX = w, maxX = -1, minY = h, maxY = -1;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        if (img[y * w + x] < lit) continue;
+        if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y;
+      }
+    }
+    if (maxX < 0) return img;
+    const bw = maxX - minX + 1, bh = maxY - minY + 1;
+    const extent = Math.max(bw, bh);
+    if (extent < 4 || extent >= VisualEncoder.ZOOM_BELOW * Math.min(w, h)) return img;
+    const scale = (VisualEncoder.ZOOM_TARGET * Math.min(w, h)) / extent;
+    const outW = Math.min(w, Math.round(bw * scale)), outH = Math.min(h, Math.round(bh * scale));
+    // Crop and enlarge (bilinear), then paste centred on the background.
+    const crop = new Float32Array(bw * bh);
+    for (let y = 0; y < bh; y++) for (let x = 0; x < bw; x++) crop[y * bw + x] = img[(minY + y) * w + minX + x];
+    const enlarged = this.resize(crop, bw, bh, outW, outH);
+    const out = new Float32Array(w * h).fill(background);
+    const ox = Math.floor((w - outW) / 2), oy = Math.floor((h - outH) / 2);
+    for (let y = 0; y < outH; y++) for (let x = 0; x < outW; x++) out[(oy + y) * w + ox + x] = enlarged[y * outW + x];
     return out;
   }
 

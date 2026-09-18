@@ -10,7 +10,10 @@
  *                    green card is another; the achromatic car has no colour.
  *   2. WORDS       — "azul" attaches to the colour, "coche" to the shape.
  *   3. COMPOSITION — the blue car, never seen, is "coche" and "azul".
- *   4. PERSISTENCE — colour categories survive a restart.
+ *   4. QUESTIONS   — asked and answered a few times, "¿de qué color es?" comes
+ *                    to ask for the colour and "¿qué es?" for the shape of what
+ *                    is in front, and it answers.
+ *   5. PERSISTENCE — colour categories survive a restart.
  */
 import { existsSync, rmSync } from 'fs';
 import { DigitalBrain, type BrainEvent } from '../src/brain.js';
@@ -133,8 +136,47 @@ console.log('\n3. COMPOSITION');
   check('…and not "verde"', !written.includes('verde'), said || 'nothing written');
 }
 
-// ── 4. PERSISTENCE ──────────────────────────────────────────────────────────
-console.log('\n4. PERSISTENCE');
+// ── 4. QUESTIONS ────────────────────────────────────────────────────────────
+console.log('\n4. QUESTIONS');
+{
+  // The way a child learns what "¿de qué color es?" asks for: the adult asks
+  // and answers, a few times, with the thing in front.
+  const ask = (p: Picture, question: string, answer: string): void => {
+    show(brain, p);
+    quiet(() => brain.read(question, { propagate: false }));
+    wait(brain, 30);
+    quiet(() => brain.read(answer, { propagate: false }));
+    wait(brain, 180);
+  };
+  // Asked about several things: a question that always came with the blue
+  // card would name blue as much as "azul" does.
+  for (let i = 0; i < 2; i++) {
+    ask(BLUE_CARD, 'de que color es', 'azul');
+    ask(GREEN_CARD, 'de que color es', 'verde');
+    ask(GREEN_CAR, 'de que color es', 'verde');
+    ask(WHITE_CAR, 'que es', 'coche');
+    ask(GREEN_CAR, 'que es', 'coche');
+  }
+  check('it learns what each question asks for', (brain.getState().questions?.known ?? 0) >= 2,
+    `${brain.getState().questions?.known ?? 0} questions known`);
+
+  const answerTo = (p: Picture, question: string): string | null => {
+    show(brain, p);
+    written.length = 0;
+    quiet(() => brain.read(question, { propagate: false }));
+    wait(brain, 30);
+    const answer = brain.getState().questions?.lastAnswer;
+    const fresh = answer && written.includes(answer.word) ? answer.word : null;
+    wait(brain, 180);
+    return fresh;
+  };
+  check('"¿de qué color es?" on the green card: "verde"', answerTo(GREEN_CARD, 'de que color es') === 'verde', written.join(' ') || 'no answer');
+  check('"¿qué es?" on the blue car: "coche"', answerTo(BLUE_CAR, 'que es') === 'coche', written.join(' ') || 'no answer');
+  check('"¿de qué color es?" on the blue car: "azul"', answerTo(BLUE_CAR, 'de que color es') === 'azul', written.join(' ') || 'no answer');
+}
+
+// ── 5. PERSISTENCE ──────────────────────────────────────────────────────────
+console.log('\n5. PERSISTENCE');
 {
   const path = `/tmp/gbrain-colour-${process.pid}.bin`;
   quiet(() => brain.saveState(path));

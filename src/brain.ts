@@ -45,6 +45,7 @@ import { Hippocampus } from './regions/hippocampus/hippocampus.js';
 import { Amygdala } from './regions/amygdala/amygdala.js';
 import { appraiseProsody, type ProsodyAppraisal, type VoiceContour } from './regions/amygdala/prosody.js';
 import { Motivation, type ActivityKind, type Drives, type RewardEvent } from './core/motivation/motivation.js';
+import { HabitSystem, type Habit } from './core/motivation/habits.js';
 import { ImaginationMemory, mixUnits, type ImaginationOrigin, type ImaginedCombination } from './core/imagination/imagination.js';
 import type { CategoryView } from './core/memory/prototype-memory.js';
 import { mulberry32 } from './core/random.js';
@@ -91,6 +92,8 @@ export interface BrainState {
   questions?: { known: number; lastAnswer: { question: string; modality: string; word: string; timestamp: number } | null };
   /** What it has imagined, awake and asleep. */
   imagination?: ImaginationState;
+  /** Stimulus–response links stamped in by practice (see core/motivation/habits). */
+  habits?: { count: number; links: Habit[]; lastHabit: { cue: string; response: string; timestamp: number } | null };
   /** Spike bus traffic */
   busTraffic: Record<string, { sent: number; received: number }>;
   /** Total ticks processed */
@@ -412,6 +415,16 @@ export class DigitalBrain {
   private static readonly PRUNE_MIN_EXPOSURES = 2;
   private static readonly PRUNE_AFTER_SLEEPS = 2;
   private readonly imagination = new ImaginationMemory();
+
+  // ── Habits ──
+  /**
+   * Expected outcome below which the goal-directed system withholds a
+   * response (devaluation): a cue that has come to predict reprimand is not
+   * answered — unless a habit answers it regardless.
+   */
+  private static readonly DEVALUED = -0.3;
+  private readonly habits = new HabitSystem();
+  private lastHabit: { cue: string; response: string; timestamp: number } | null = null;
   /** Imagination and dreams draw from their own random source: they leave every other trajectory untouched. */
   private readonly imaginationRandom = mulberry32(0x1ac1e);
   private lastImagined: Imagined | null = null;
@@ -1729,6 +1742,10 @@ export class DigitalBrain {
 
     this.recallFrom(modality, code, label);
     const key = `${modality}:${label}`;
+    // A stamped-in habit answers the cue directly — faster, without attention,
+    // and whether or not the recall behind it still holds.
+    const habit = this.habits.habitFor(key);
+    if (habit) this.respondByHabit(habit, label);
     // Order: was this expected to follow what came before? Then learn the
     // transition, and expect what usually follows this.
     const expectedness = this.sequences.expectedness(key, this.tickCount);
@@ -1877,16 +1894,46 @@ export class DigitalBrain {
     this.lastRecall = recall;
     this.lastRecallTick = this.tickCount;
     this.recallsByModality.set(modality, { recall, tick: this.tickCount });
-    if (confident && lexicalPattern && recall.words.length > 0) {
+    // Goal-directed: it writes the word that came to mind — if that is worth
+    // doing (a cue that has come to predict reprimand is left unanswered:
+    // outcome devaluation) and no habit answers this cue already (a habit,
+    // once stamped in, takes over; see `onPercept`).
+    const cueKey = `${modality}:${label}`;
+    if (
+      confident && lexicalPattern && recall.words.length > 0 &&
+      this.habits.habitFor(cueKey) === null && this.motivation.expectation(cueKey) >= DigitalBrain.DEVALUED
+    ) {
       this.recalledLexicalPattern = lexicalPattern;
       this.ticksSinceRecall = 0;
+      const word = recall.words[0].word;
+      // Every execution stamps the stimulus–response link in a little.
+      this.habits.practice(cueKey, word);
       // It WRITES the word that came to mind (the dashboard has a text area for it).
       this.emitEvent({
         type: 'response',
         timestamp: this.currentTime,
-        data: { kind: 'writing', text: recall.words[0].word, cue: label, confidence: result.match },
+        data: { kind: 'writing', text: word, cue: label, confidence: result.match, habit: false },
       });
     }
+  }
+
+  /**
+   * A habit answers the cue: the response runs off the stimulus itself,
+   * whatever the memory behind it now says and whatever the outcome is now
+   * worth (Dickinson; Yin & Knowlton). It is still judged — praise stamps it
+   * in, reprimand wears it down, slowly.
+   */
+  private respondByHabit(habit: Habit, label: string): void {
+    this.habits.practice(habit.cue, habit.response);
+    this.recalledLexicalPattern = wordToPattern(habit.response, this.lexicon.dimensions);
+    this.ticksSinceRecall = 0;
+    this.lastRecallTick = this.tickCount;
+    this.lastHabit = { cue: habit.cue, response: habit.response, timestamp: this.currentTime };
+    this.emitEvent({
+      type: 'response',
+      timestamp: this.currentTime,
+      data: { kind: 'writing', text: habit.response, cue: label, confidence: habit.strength, habit: true },
+    });
   }
 
   /**
@@ -1910,6 +1957,8 @@ export class DigitalBrain {
     // The dopamine of a 👍 is a prediction error too: expected praise moves nothing.
     this.reward(this.motivation.external(positive ? 0.6 : -0.6, this.tickCount));
     this.markInnateAffect(positive ? { valence: 0.6, arousal: 0.5 } : { valence: -0.6, arousal: 0.6 });
+    // The verdict is on the last response, whenever it was (the button, unlike a voice, is explicit).
+    this.habits.credit(positive ? 0.6 : -0.6);
     if (this.lastRecallUnits.length === 0 || this.lastRecall === null) return false;
     this.associations.reinforce(this.lastRecallUnits, positive ? 0.6 : -0.8);
     return true;
@@ -2425,6 +2474,7 @@ export class DigitalBrain {
 
     // The voice as a verdict on what was just recalled.
     let judged = false;
+    if (Math.abs(valence) >= 0.3 && this.tickCount - this.lastRecallTick <= this.verdictWindowTicks) this.habits.credit(valence);
     if (Math.abs(valence) >= 0.3 && this.tickCount - this.lastRecallTick <= this.verdictWindowTicks && this.lastRecallUnits.length > 0 && this.lastRecall) {
       this.associations.reinforce(this.lastRecallUnits, valence > 0 ? 0.6 * valence : -0.8 * -valence);
       judged = true;
@@ -2994,6 +3044,7 @@ export class DigitalBrain {
         .map((slot) => ({ label: slot.label, priority: slot.priority, age: slot.age })),
       questions: { known: this.questions.size, lastAnswer: this.lastAnswer },
       imagination: this.getImagination(),
+      habits: { count: this.habits.size, links: this.habits.list().slice(0, 6), lastHabit: this.lastHabit },
       busTraffic,
       tickCount: this.tickCount,
       broca: brocaResponse ? {
@@ -3047,6 +3098,7 @@ export class DigitalBrain {
       questions: this.questions.serialize(),
       wordReferents: Array.from(this.wordReferents.entries()).map(([w, m]) => [w, Array.from(m.entries())]),
       imagination: { combinations: this.imagination.serialize(), daydreams: this.daydreams, dreams: this.dreams, foreseen: this.foreseen },
+      habits: this.habits.serialize(),
     };
     for (const [id, region] of this.regions) {
       const extra = region.serializeExtra();
@@ -3167,6 +3219,7 @@ export class DigitalBrain {
     this.questions.deserialize(data.extras.questions);
     this.restoreWordReferents(data.extras.wordReferents);
     this.restoreImagination(data.extras.imagination);
+    this.habits.deserialize(data.extras.habits);
 
     // Restore the persisted lexicon (incl. learned words) if present and
     // dimensionally compatible; otherwise keep the freshly seeded vocabulary.

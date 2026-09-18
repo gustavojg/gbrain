@@ -123,6 +123,10 @@ function connectWebSocket() {
       showBrainDrawing(msg.data);
     } else if (msg.type === 'writing' && msg.data) {
       showBrainWriting(msg.data);
+    } else if (msg.type === 'lesson' && msg.data) {
+      showLessonProgress(msg.data);
+    } else if (msg.type === 'practice' && msg.data) {
+      showPracticeProgress(msg.data);
     } else if (msg.type === 'notice' && msg.data) {
       addLog('error', `Server: ${msg.data.message}`);
     }
@@ -1357,6 +1361,97 @@ function playVocalization(v) {
   source.onended = () => out.disconnect();
 
   ownVoiceUntil = performance.now() + seconds * 1000 + 300;
+}
+
+// ================================================================
+// TEACH — lessons, tests and practice
+// ================================================================
+
+/** The whiteboard drawing as the brain sees it (grayscale 64×64). */
+function currentDrawingPixels() {
+  const imageData = drawCtx.getImageData(0, 0, 64, 64);
+  const pixels = [];
+  for (let i = 0; i < imageData.data.length; i += 4) {
+    pixels.push(Math.round((imageData.data[i] + imageData.data[i + 1] + imageData.data[i + 2]) / 3));
+  }
+  return pixels;
+}
+
+let lessonCurve = [];
+
+document.getElementById('teachBtn')?.addEventListener('click', () => {
+  const lesson = { repetitions: Math.min(10, Math.max(1, Number(document.getElementById('lessonReps').value) || 4)) };
+  if (document.getElementById('lessonUseDrawing').checked) {
+    lesson.image = { pixels: currentDrawingPixels(), width: 64, height: 64 };
+  }
+  const text = document.getElementById('lessonText').value.trim();
+  if (text) lesson.text = text;
+  const vowel = document.getElementById('lessonVowel').value;
+  if (vowel) lesson.vowel = vowel;
+
+  const parts = [lesson.image ? 'the drawing' : null, lesson.text ? `“${lesson.text}”` : null, lesson.vowel ? `/${lesson.vowel}/` : null].filter(Boolean);
+  if (parts.length < 2) {
+    document.getElementById('lessonProgress').textContent = 'A lesson pairs at least two things: the drawing, a name, a sound.';
+    return;
+  }
+  lessonCurve = [];
+  document.getElementById('lessonProgress').textContent = `Teaching ${parts.join(' + ')} × ${lesson.repetitions}…`;
+  addLog('input', `🎓 Lesson: ${parts.join(' + ')} × ${lesson.repetitions}`);
+  sendControl('lesson', lesson, 'lesson');
+});
+
+document.getElementById('testBtn')?.addEventListener('click', () => {
+  addLog('input', '🔍 Test: showing the drawing alone');
+  document.getElementById('lessonProgress').textContent = 'Test: showing the drawing alone — watch Perception → Recalls, the voice and the hand.';
+  sendControl('input:image', { pixels: currentDrawingPixels(), width: 64, height: 64 }, 'input/image');
+});
+
+function showLessonProgress(d) {
+  const box = document.getElementById('lessonProgress');
+  if (!box) return;
+  if (d.done) {
+    const last = lessonCurve[lessonCurve.length - 1];
+    box.innerHTML = `${escapeHtml(d.label)} — done. ` +
+      (last !== undefined ? `Last recall before repeating: ${Math.round(last * 100)}%${last >= 0.4 ? ' — confident' : ' — needs more repetitions'}.` : '') +
+      ` <span class="percept-total">${Number(d.bindings)} shared experiences</span>` + curveHtml();
+    addLog('info', `🎓 Lesson done: ${d.label}`);
+    return;
+  }
+  lessonCurve.push(Number(d.confidence) || 0);
+  const recalled = d.recalled
+    ? [d.recalled.words && d.recalled.words.length ? `“${d.recalled.words.join(' ')}”` : null, d.recalled.visual, d.recalled.auditory].filter(Boolean).map(escapeHtml).join(' + ')
+    : '';
+  box.innerHTML = `${escapeHtml(d.label)} — repetition ${d.repetition}/${d.of}: ` +
+    (d.repetition === 1 ? 'first time, nothing to recall yet' : `recalled ${recalled || 'something'} at ${Math.round(d.confidence * 100)}%${d.confident ? ' ✓' : ''}`) +
+    curveHtml();
+}
+
+function curveHtml() {
+  return `<div class="teach-curve" title="recall confidence before each repetition">` +
+    lessonCurve.map((c) => `<div class="teach-bar" style="height:${Math.max(2, Math.round(c * 28))}px" title="${Math.round(c * 100)}%"></div>`).join('') +
+    `</div>`;
+}
+
+document.getElementById('practiceVoice')?.addEventListener('click', () => {
+  document.getElementById('practiceStatus').textContent = 'babbling ×100…';
+  addLog('input', '🗣️ Practice: 100 babbles');
+  sendControl('practice', { voice: 100 }, 'practice');
+});
+document.getElementById('practiceHand')?.addEventListener('click', () => {
+  document.getElementById('practiceStatus').textContent = 'scribbling ×100…';
+  addLog('input', '✍️ Practice: 100 scribbles');
+  sendControl('practice', { hand: 100 }, 'practice');
+});
+
+function showPracticeProgress(d) {
+  const status = document.getElementById('practiceStatus');
+  if (!status) return;
+  if (d.done) {
+    status.textContent = `done — ${Number(d.voice)} babbles, ${Number(d.hand)} scribbles in total`;
+    addLog('info', `🎓 Practice done (${Number(d.voice)} babbles, ${Number(d.hand)} scribbles so far)`);
+  } else {
+    status.textContent = `${d.kind === 'voice' ? 'babbling' : 'scribbling'} ${Number(d.done)}/${Number(d.of)}…`;
+  }
 }
 
 // ================================================================

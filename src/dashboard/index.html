@@ -203,6 +203,35 @@
         </div>
       </div>
 
+      <!-- Teach -->
+      <div class="io-section">
+        <label class="io-label">🎓 Teach <span class="io-hint">— show it something and name it, a few times; then test it</span></label>
+        <div class="teach-panel">
+          <label class="teach-row"><input type="checkbox" id="lessonUseDrawing" checked> Show the drawing on the whiteboard above</label>
+          <div class="teach-row">
+            <input type="text" id="lessonText" placeholder="Name it (a word, or a short sentence)…" maxlength="80" aria-label="Name it">
+          </div>
+          <div class="teach-row">
+            <label for="lessonVowel" class="io-hint">and/or a sound</label>
+            <select id="lessonVowel" aria-label="Sound to pair">
+              <option value="">none</option>
+              <option value="a">/a/</option><option value="e">/e/</option><option value="i">/i/</option><option value="o">/o/</option><option value="u">/u/</option>
+            </select>
+            <label for="lessonReps" class="io-hint">times</label>
+            <input type="number" id="lessonReps" min="1" max="10" value="4" aria-label="Repetitions">
+            <button class="small-btn" id="teachBtn">🎓 Teach</button>
+            <button class="small-btn" id="testBtn" title="Show the drawing alone and see what it recalls, says, writes or draws">🔍 Test it</button>
+          </div>
+          <div class="teach-progress" id="lessonProgress" aria-live="polite"><span class="vocab-empty">no lesson yet</span></div>
+          <div class="teach-row">
+            <span class="io-hint">Practice (learns its motor maps):</span>
+            <button class="small-btn" id="practiceVoice">🗣️ voice ×100</button>
+            <button class="small-btn" id="practiceHand">✍️ hand ×100</button>
+            <span class="webcam-status" id="practiceStatus" aria-live="polite"></span>
+          </div>
+        </div>
+      </div>
+
       <!-- Hand -->
       <div class="io-section">
         <label class="io-label">✍️ Hand (draw &amp; write) <span class="io-hint">— it scribbles, sees the marks it leaves and learns to draw what it sees or remembers</span></label>

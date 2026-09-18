@@ -100,7 +100,13 @@ export interface BrainConfiguration {
   serverPort: number;
   /** WebSocket port */
   wsPort: number;
-  /** Frequency of the brain's main tick (Hz) */
+  /**
+   * Real ticks per second the brain is driven at (the server's timer). The
+   * neural dynamics advance `snn.dt` simulated ms per tick whatever this is;
+   * everything on a human timescale — how long a stimulus stays in view, how
+   * long a percept waits to be bound with the next, the pause between babbles —
+   * is defined in real milliseconds and converted to ticks with this rate.
+   */
   tickRate: number;
   /** Path for brain state persistence */
   persistencePath: string;
@@ -281,7 +287,7 @@ export const DEFAULT_BRAIN_CONFIG: BrainConfiguration = {
   // --- SERVER CONFIGURATION ---
   serverPort: 3000,
   wsPort: 3001,
-  tickRate: 100,     // 100 Hz = 10ms per tick
+  tickRate: 10,      // 10 Hz: the server's default (BRAIN_TICK_HZ)
   persistencePath: './brain_state.bin',
 };
 

@@ -92,6 +92,18 @@ export interface EmotionalMemory {
  *   neuromodulatory systems through its efferent projections
  *   to the hypothalamus, VTA, locus coeruleus and raphe nuclei.
  */
+/**
+ * A conditioned emotional response to a sensory CUE: the population code of a
+ * category (its engram's units) that has been paired with an emotional event.
+ */
+export interface CueMemory {
+  modality: string;
+  units: number[];
+  emotion: EmotionalState;
+  /** 0..1: the association's strength; extinction lowers it, never to zero. */
+  strength: number;
+}
+
 export interface NeuromodulatorRelease {
   /** Dopamine: reward, motivation. VTA/SNc. */
   dopamine: number;
@@ -175,6 +187,23 @@ export class Amygdala extends BrainRegion {
    * moves the state more than a tick of diffuse sensory input does.
    */
   private static readonly APPRAISAL_INERTIA = 0.5;
+
+  /**
+   * Conditioned responses to sensory CUES (visual / auditory category codes).
+   * Fear conditioning at the lateral nucleus: fast (one pairing for an aversive
+   * event), extinguishable but never erased (extinction is new learning that
+   * inhibits the memory, so it recovers under stress; Bouton 2004).
+   */
+  private cueMemories: CueMemory[] = [];
+  /** Overlap (Jaccard) from which a cue's code evokes its conditioned response. */
+  private static readonly CUE_MATCH = 0.5;
+  /** Strength left after each safe exposure (extinction), and the floor it never crosses. */
+  private static readonly EXTINCTION_KEEP = 0.85;
+  private static readonly EXTINCTION_FLOOR = 0.1;
+  /** How much stress (cortisol) restores an extinguished memory: effective = strength × (1 + stress × this). */
+  private static readonly RECOVERY_GAIN = 1.0;
+  /** Effective strength below which a cue evokes nothing. */
+  private static readonly CUE_MIN_EFFECT = 0.2;
 
   /** Neurons that report the affective state (half valence, half arousal). */
   private static readonly AFFECT_POPULATION = 20;
@@ -421,14 +450,14 @@ export class Amygdala extends BrainRegion {
    * @param pattern - Pattern of the word in lexicon space
    * @param emotion - Emotion to associate
    */
-  conditionSemantic(pattern: Float32Array, emotion: EmotionalState): void {
+  conditionSemantic(pattern: Float32Array, emotion: EmotionalState, strength: number = 1.0): void {
     for (const memory of this.semanticAssociations) {
       if (this.cosineSimilarity(pattern, memory.pattern) > 0.99) {
         memory.emotion = {
           valence: memory.emotion.valence * 0.5 + emotion.valence * 0.5,
           arousal: memory.emotion.arousal * 0.5 + emotion.arousal * 0.5,
         };
-        memory.strength = Math.min(1.0, memory.strength + 0.1);
+        memory.strength = Math.min(1.0, memory.strength + 0.15);
         return;
       }
     }
@@ -436,8 +465,156 @@ export class Amygdala extends BrainRegion {
     this.semanticAssociations.push({
       pattern: new Float32Array(pattern),
       emotion: { ...emotion },
-      strength: 1.0,
+      strength: Math.max(0, Math.min(1, strength)),
     });
+  }
+
+  // ----------------------------------------------------------------
+  // Innate appraisal and cue conditioning (thalamus → amygdala route)
+  // ----------------------------------------------------------------
+
+  /**
+   * An innate appraisal (a tone of voice, a startle, something looming, a
+   * face) pulls the affective state toward the evoked emotion. Fast route:
+   * the same inertia as a conditioned response.
+   */
+  appraiseInnate(evoked: EmotionalState): EmotionalState {
+    const inertia = Amygdala.APPRAISAL_INERTIA;
+    this.emotionalState = {
+      valence: Math.max(-1, Math.min(1, this.emotionalState.valence * inertia + evoked.valence * (1 - inertia))),
+      arousal: Math.max(0, Math.min(1, this.emotionalState.arousal * inertia + evoked.arousal * (1 - inertia))),
+    };
+    return { ...this.emotionalState };
+  }
+
+  /**
+   * Conditions a sensory cue (a category's population code) to an emotion.
+   * Pairing the same cue again reconsolidates: the emotion is averaged and the
+   * strength restored.
+   */
+  conditionCue(modality: string, units: ArrayLike<number>, emotion: EmotionalState, strength: number = 1.0): void {
+    const code = Array.from(units);
+    if (code.length === 0) return;
+    const existing = this.findCue(modality, code);
+    if (existing) {
+      existing.memory.emotion = {
+        valence: existing.memory.emotion.valence * 0.5 + emotion.valence * 0.5,
+        arousal: existing.memory.emotion.arousal * 0.5 + emotion.arousal * 0.5,
+      };
+      existing.memory.strength = Math.min(1, Math.max(existing.memory.strength, strength));
+      return;
+    }
+    if (this.cueMemories.length >= this.maxEmotionalMemories) {
+      let weakest = 0;
+      for (let i = 1; i < this.cueMemories.length; i++) {
+        if (this.cueMemories[i].strength < this.cueMemories[weakest].strength) weakest = i;
+      }
+      this.cueMemories.splice(weakest, 1);
+    }
+    this.cueMemories.push({ modality, units: code, emotion: { ...emotion }, strength: Math.max(0, Math.min(1, strength)) });
+  }
+
+  /**
+   * A cue has just been perceived: if it was conditioned, its emotion is
+   * evoked (scaled by the memory's effective strength, which stress restores)
+   * and pulls the affective state.
+   *
+   * @returns The evoked emotion, or `null` if the cue carries no learned affect
+   */
+  appraiseCue(modality: string, units: ArrayLike<number>, stress: number = 0): EmotionalState | null {
+    const found = this.findCue(modality, Array.from(units));
+    if (!found) return null;
+    const effective = Math.min(1, found.memory.strength * (1 + Math.max(0, stress) * Amygdala.RECOVERY_GAIN)) * found.overlap;
+    if (effective < Amygdala.CUE_MIN_EFFECT) return null;
+    const evoked = { valence: found.memory.emotion.valence * effective, arousal: found.memory.emotion.arousal * effective };
+    this.appraiseInnate(evoked);
+    return evoked;
+  }
+
+  /**
+   * The cue was perceived and nothing happened: extinction weakens the
+   * association a little. Never to zero — extinction inhibits, it does not erase.
+   */
+  extinguishCue(modality: string, units: ArrayLike<number>): void {
+    const found = this.findCue(modality, Array.from(units));
+    if (!found) return;
+    found.memory.strength = Math.max(Amygdala.EXTINCTION_FLOOR, found.memory.strength * Amygdala.EXTINCTION_KEEP);
+  }
+
+  private findCue(modality: string, code: number[]): { memory: CueMemory; overlap: number } | null {
+    const set = new Set(code);
+    let best: CueMemory | null = null;
+    let bestOverlap = 0;
+    for (const memory of this.cueMemories) {
+      if (memory.modality !== modality) continue;
+      let inter = 0;
+      for (const u of memory.units) if (set.has(u)) inter++;
+      const union = set.size + memory.units.length - inter;
+      const overlap = union > 0 ? inter / union : 0;
+      if (overlap > bestOverlap) {
+        bestOverlap = overlap;
+        best = memory;
+      }
+    }
+    return best && bestOverlap >= Amygdala.CUE_MATCH ? { memory: best, overlap: bestOverlap } : null;
+  }
+
+  /** Number of conditioned sensory cues */
+  get conditionedCueCount(): number {
+    return this.cueMemories.length;
+  }
+
+  /** Strength of the conditioned response to a cue (0 if none): what tests and the dashboard read. */
+  cueStrength(modality: string, units: ArrayLike<number>): number {
+    const found = this.findCue(modality, Array.from(units));
+    return found ? found.memory.strength : 0;
+  }
+
+  // ----------------------------------------------------------------
+  // Persistence of what the amygdala has learned
+  // ----------------------------------------------------------------
+
+  serializeExtra(): unknown {
+    return {
+      semantic: this.semanticAssociations.map((m) => ({ pattern: Array.from(m.pattern), emotion: m.emotion, strength: m.strength })),
+      cues: this.cueMemories.map((m) => ({ modality: m.modality, units: m.units, emotion: m.emotion, strength: m.strength })),
+    };
+  }
+
+  deserializeExtra(data: unknown): void {
+    if (typeof data !== 'object' || data === null) return;
+    const d = data as { semantic?: unknown; cues?: unknown };
+    const finite = (x: unknown, lo: number, hi: number): number | null =>
+      typeof x === 'number' && Number.isFinite(x) ? Math.max(lo, Math.min(hi, x)) : null;
+    const emotionOf = (e: unknown): EmotionalState | null => {
+      if (typeof e !== 'object' || e === null) return null;
+      const valence = finite((e as { valence?: unknown }).valence, -1, 1);
+      const arousal = finite((e as { arousal?: unknown }).arousal, 0, 1);
+      return valence === null || arousal === null ? null : { valence, arousal };
+    };
+    if (Array.isArray(d.semantic)) {
+      this.semanticAssociations = [];
+      for (const item of d.semantic.slice(0, this.maxEmotionalMemories)) {
+        const m = item as { pattern?: unknown; emotion?: unknown; strength?: unknown };
+        const emotion = emotionOf(m.emotion);
+        const strength = finite(m.strength, 0, 1);
+        if (!Array.isArray(m.pattern) || !emotion || strength === null) continue;
+        const pattern = Float32Array.from(m.pattern, (v) => (typeof v === 'number' && Number.isFinite(v) ? v : 0));
+        this.semanticAssociations.push({ pattern, emotion, strength });
+      }
+    }
+    if (Array.isArray(d.cues)) {
+      this.cueMemories = [];
+      for (const item of d.cues.slice(0, this.maxEmotionalMemories)) {
+        const m = item as { modality?: unknown; units?: unknown; emotion?: unknown; strength?: unknown };
+        const emotion = emotionOf(m.emotion);
+        const strength = finite(m.strength, 0, 1);
+        if (typeof m.modality !== 'string' || !Array.isArray(m.units) || !emotion || strength === null) continue;
+        const units = m.units.filter((u): u is number => Number.isInteger(u) && u >= 0);
+        if (units.length === 0) continue;
+        this.cueMemories.push({ modality: m.modality.slice(0, 32), units, emotion, strength });
+      }
+    }
   }
 
   /**

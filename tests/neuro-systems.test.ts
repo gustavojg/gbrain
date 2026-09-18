@@ -29,21 +29,27 @@ console.log('── Verification: affect, attention & neuromodulation ──\n')
 // ===========================================================================
 // A. AMYGDALA — affect tracks the sign of the input
 // ===========================================================================
-// Words are the exact (unaccented) keys of the brain's emotional lexicon.
-const POSITIVE = 'feliz alegria amor genial entusiasmo';
-const NEGATIVE = 'miedo tristeza ansiedad odio estres';
+// The brain brings no word meanings with it; what it reads innately is the
+// TONE of a voice (envelope + pitch track, 50 ms frames — see prosody.ts).
+const frames = (n: number, rms: (t: number) => number, f0: (t: number) => number) => ({
+  rms: Array.from({ length: n }, (_, i) => rms(i / (n - 1))),
+  f0: Array.from({ length: n }, (_, i) => f0(i / (n - 1))),
+  frameMs: 50,
+});
+const WARM_VOICE = frames(24, (t) => 0.02 + 0.06 * Math.sin(Math.PI * t), (t) => 200 + 90 * Math.sin(Math.PI * t));
+const HARSH_VOICE = frames(7, (t) => (Math.round(t * 6) % 2 === 0 ? 0.32 : 0.1), (t) => 115 - 20 * t);
 
 const brainPos = new DigitalBrain();
-brainPos.read(POSITIVE);
+brainPos.hearVoice(WARM_VOICE);
 const ePos = brainPos.feel(); // feel() reads modulator levels directly (no tick needed)
 
 const brainNeg = new DigitalBrain();
-brainNeg.read(NEGATIVE);
+brainNeg.hearVoice(HARSH_VOICE);
 const eNeg = brainNeg.feel();
 
 console.log('A. AMYGDALA');
-console.log(`   positive → valence=${ePos.valence.toFixed(3)} arousal=${ePos.arousal.toFixed(3)} (${ePos.primaryEmotion} ${ePos.emoji})`);
-console.log(`   negative → valence=${eNeg.valence.toFixed(3)} arousal=${eNeg.arousal.toFixed(3)} (${eNeg.primaryEmotion} ${eNeg.emoji})`);
+console.log(`   warm voice  → valence=${ePos.valence.toFixed(3)} arousal=${ePos.arousal.toFixed(3)} (${ePos.primaryEmotion} ${ePos.emoji})`);
+console.log(`   harsh voice → valence=${eNeg.valence.toFixed(3)} arousal=${eNeg.arousal.toFixed(3)} (${eNeg.primaryEmotion} ${eNeg.emoji})`);
 
 // Positive input must read clearly more pleasant than negative input.
 const okAmygdala = ePos.valence > eNeg.valence + 0.25;

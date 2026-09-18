@@ -34,7 +34,7 @@ Tres propiedades guían el proyecto:
   | Corteza Visual | Procesa imágenes (webcam), k-WTA + fatiga neuronal |
   | Corteza Auditiva | Procesa audio (micrófono), organización tonotópica |
   | Hipocampo | Memoria episódica: separación (giro dentado) y completado (CA3) de patrones |
-  | Amígdala | Estado afectivo en ejes valencia/arousal |
+  | Amígdala | Estado afectivo en ejes valencia/arousal; vía rápida innata (tono de voz, sobresalto, lo que se acerca, caras) y condicionamiento de miedo |
   | Corteza Prefrontal | Centro ejecutivo, memoria de trabajo (7±2), señales top-down |
   | Wernicke | Comprensión lingüística (patrón → palabra) |
   | Broca | Producción del lenguaje (intención + emoción → palabras) |
@@ -58,9 +58,10 @@ Cada capacidad tiene un test con criterios cuantitativos en `tests/`:
 - **Lenguaje bilingüe** (`bilingual-lexicon.test.ts`) — comprende y responde en español e inglés (100% de relevancia).
 - **Vocabulario** (`vocabulary-learning.test.ts`) — aprende palabras nuevas tras N exposiciones, las comprende después y las persiste en disco.
 - **Pensamientos en directo** (`live-thoughts.test.ts`) — `think()` produce pensamientos bien formados, **reactivos** (en reposo el pensamiento está vacío; al leer se vuelve no vacío) y **discriminativos** (entradas distintas → pensamientos distintos, solape <60%).
-- **Afecto, atención y neuromodulación** (`neuro-systems.test.ts`) — la **amígdala** lee texto positivo con valencia claramente mayor que el negativo; la **acetilcolina** ensancha el cuello de botella atencional del tálamo (pasan más señales); la **dopamina** sube el multiplicador de plasticidad y el **cortisol** lo suprime.
+- **Afecto, atención y neuromodulación** (`neuro-systems.test.ts`) — la **amígdala** lee una voz cálida con valencia claramente mayor que una voz áspera; la **acetilcolina** ensancha el cuello de botella atencional del tálamo (pasan más señales); la **dopamina** sube el multiplicador de plasticidad y el **cortisol** lo suprime.
 
 - **Cerebro completo** (`whole-brain.test.ts`) — con PRNG sembrado: en **reposo** no dispara nada ni se guardan episodios; un estímulo **recorre las 8 regiones** entrando por el tálamo y después el cerebro **vuelve al reposo**; el código talámico es reproducible y discriminativo; el estado **persiste** bit a bit. Además mide y publica los **huecos conocidos** (defectos auditados aún sin corregir) sin hacer fallar la suite: cuando uno se cierra, se promueve a comprobación dura.
+- **Lo innato** (`innate.test.ts`) — el cerebro no trae de serie significados (no hay diccionario de palabras afectivas): trae **reacciones a rasgos**. Lee el **tono de la voz** por una vía rápida tálamo→amígdala (suave, aguda y ascendente calma; fuerte, grave, brusca y áspera alarma; Fernald 1993), se **sobresalta** con un sonido súbito antes de que la corteza lo oiga, se alarma con **lo que se acerca**, atiende a las **caras**, aprende a **temer** en un solo emparejamiento (y a dejar de temer despacio, con recuperación bajo estrés), toma una voz cálida tras un recuerdo como **aprobación**, y **duerme por presión de sueño**. Las palabras adquieren su emoción al leerse junto a una voz que ya asusta o calma. Plan completo en [`docs/PLAN.md`](docs/PLAN.md).
 - **Sentidos que aprenden** (`sensory-learning.test.ts`) — *aprendizaje por exposición, sin etiquetas*: al enseñarle dibujos y vocales por las mismas entradas que usa el dashboard, el cerebro **forma categorías por sí solo**, **reconoce** lo que ya ha visto u oído (también con ruido o medio tapado), distingue lo nuevo y lo **recuerda tras reiniciar**.
 - **Asociación entre modalidades** (`association-learning.test.ts`) — *aprender qué va con qué, por repetición*: al enseñarle un dibujo junto a su palabra (o un sonido), la asociación **crece con cada repetición** (tras una sola no se fía; tras unas pocas sí), ver el dibujo le **trae la palabra a la mente** (la piensa y la dice), leer la palabra le trae el dibujo, enseñado con frases enteras **aísla la palabra que corresponde**, la dopamina lo acelera y todo **persiste**.
 - **Voz** (`vocal-learning.test.ts`) — *aprender a usar la voz balbuceando*: antes de balbucear no puede repetir ninguna vocal que oye; con la voz activada **balbucea solo, se oye a sí mismo** y aprende qué orden motora produce qué sonido; cuanto más balbucea, **más vocales repite** y con poco error (3–7 % del rango vocal; al azar sería ≈33 %); no entra en eco con su propia voz, solo responde a sonidos y la habilidad **persiste**. Y unido a la asociación: si se le enseña que un dibujo va con un sonido, **al ver el dibujo dice ese sonido**.
@@ -97,7 +98,7 @@ En el dashboard, el panel **🎓 Teach** hace de maestro:
 1. Dibuja algo en la pizarra y escribe su nombre (y/o elige un sonido /a/…/u/).
 2. Pulsa **Teach**: el cerebro ve y lee (u oye) las dos cosas juntas las veces indicadas, y el panel muestra la **curva de aprendizaje**: cuánto recordaba antes de cada repetición (0 % la primera vez, y creciendo).
 3. Pulsa **Test it**: se le muestra el dibujo solo. En *Perception → Recalls* aparece lo que le trae a la mente; si la voz y la mano están activadas, **dice** el sonido asociado y **escribe** la palabra.
-4. **👍 / 👎** refuerzan o debilitan lo que acaba de recordar.
+4. **👍 / 👎** refuerzan o debilitan lo que acaba de recordar. Con el micrófono activo basta con **hablarle**: una voz cálida justo después de que recuerde algo vale como 👍 y una seca como 👎, y el panel *Perception → Tone* muestra cómo ha leído tu voz.
 5. **Practice** le deja balbucear o garabatear ×100 en unos segundos: así aprende sus mapas motores (necesarios para imitar sonidos y copiar dibujos).
 
 Todo ello va por `POST /api/lesson`, `/api/practice`, `/api/feedback`, `/api/voice` y `/api/hand` (o sus mensajes WebSocket), validados y con límite de frecuencia.
@@ -132,7 +133,7 @@ Three principles drive the project:
   | Visual Cortex | Image processing (webcam), k-WTA + neuronal fatigue |
   | Auditory Cortex | Audio processing (microphone), tonotopic organization |
   | Hippocampus | Episodic memory: pattern separation (dentate gyrus) & completion (CA3) |
-  | Amygdala | Affective state on valence/arousal axes |
+  | Amygdala | Affective state on valence/arousal axes; innate fast route (tone of voice, startle, looming, faces) and fear conditioning |
   | Prefrontal Cortex | Executive center, working memory (7±2), top-down signals |
   | Wernicke | Language comprehension (pattern → word) |
   | Broca | Language production (intention + emotion → words) |
@@ -156,9 +157,10 @@ Each capability has a test with quantitative criteria under `tests/`:
 - **Bilingual language** (`bilingual-lexicon.test.ts`) — comprehends and responds in Spanish and English (100% relevance).
 - **Vocabulary** (`vocabulary-learning.test.ts`) — learns new words after N exposures, comprehends them afterwards, and persists them to disk.
 - **Live thoughts** (`live-thoughts.test.ts`) — `think()` produces well-formed thoughts that are **reactive** (idle → empty; after reading → non-empty) and **discriminative** (distinct inputs → distinct thoughts, <60% overlap).
-- **Affect, attention & neuromodulation** (`neuro-systems.test.ts`) — the **amygdala** reads positive text with clearly higher valence than negative text; **acetylcholine** widens the thalamic attentional bottleneck (more signals pass); **dopamine** raises the plasticity multiplier and **cortisol** suppresses it.
+- **Affect, attention & neuromodulation** (`neuro-systems.test.ts`) — the **amygdala** reads a warm voice with clearly higher valence than a harsh one; **acetylcholine** widens the thalamic attentional bottleneck (more signals pass); **dopamine** raises the plasticity multiplier and **cortisol** suppresses it.
 
 - **Whole brain** (`whole-brain.test.ts`) — with a seeded PRNG: at **rest** nothing fires and no episode is stored; a stimulus **travels through all 8 regions**, entering via the thalamus, and then the brain **returns to rest**; the thalamic code is reproducible and discriminative; state **persists** bit for bit. It also measures and prints the **known gaps** (audited defects not fixed yet) without failing the suite: once one closes, it is promoted to a hard check.
+- **The innate layer** (`innate.test.ts`) — the brain brings no meanings with it (no dictionary of affective words): it brings **reactions to features**. It reads the **tone of a voice** on a fast thalamus→amygdala route (soft, high and rising comforts; loud, low, abrupt and rough alarms; Fernald 1993), **startles** at a sudden sound before the cortex has heard it, is alarmed by **looming**, attends to **faces**, learns to **fear** in one pairing (and to stop fearing slowly, with recovery under stress), takes a warm voice after a recall as **approval**, and **sleeps by sleep pressure**. Words acquire their emotion by being read alongside a voice that already frightens or comforts. Full plan in [`docs/PLAN.md`](docs/PLAN.md).
 - **Senses that learn** (`sensory-learning.test.ts`) — *learning by exposure, no labels*: shown drawings and played vowels through the same entry points the dashboard uses, the brain **forms categories on its own**, **recognizes** what it has seen or heard before (also noisy or half occluded), tells new things apart and **remembers across restarts**.
 - **Cross-modal association** (`association-learning.test.ts`) — *learning what goes with what, by repetition*: shown a drawing together with its word (or a sound), the association **grows with every repetition** (one pairing is not acted upon; a few are), seeing the drawing **brings the word to mind** (it thinks it and says it), reading the word brings the drawing back, taught with whole sentences it **singles out the word that belongs**, dopamine speeds it up, and it all **persists**.
 - **Voice** (`vocal-learning.test.ts`) — *learning to use its voice by babbling*: before babbling it cannot repeat any vowel it hears; with the voice on it **babbles on its own, hears itself** and learns which motor command makes which sound; the more it babbles, the **more vowels it repeats**, with little error (3–7 % of the vocal range; chance would be ≈33 %); it does not echo its own voice, only answers sounds, and the skill **persists**. And together with association: taught that a drawing goes with a sound, **it says that sound when it sees the drawing**.
@@ -195,7 +197,7 @@ In the dashboard, the **🎓 Teach** panel is the teacher:
 1. Draw something on the whiteboard and type its name (and/or pick a sound /a/…/u/).
 2. Press **Teach**: the brain sees and reads (or hears) both together as many times as requested, and the panel shows the **learning curve**: how much it recalled before each repetition (0 % the first time, then growing).
 3. Press **Test it**: it is shown the drawing alone. *Perception → Recalls* shows what comes to its mind; with the voice and the hand on, it **says** the associated sound and **writes** the word.
-4. **👍 / 👎** strengthen or weaken what it has just recalled.
+4. **👍 / 👎** strengthen or weaken what it has just recalled. With the microphone on, just **talk to it**: a warm voice right after it recalls something counts as 👍 and a harsh one as 👎, and *Perception → Tone* shows how it read your voice.
 5. **Practice** lets it babble or scribble ×100 in a few seconds: that is how it learns its motor maps (needed to imitate sounds and copy drawings).
 
 All of it goes through `POST /api/lesson`, `/api/practice`, `/api/feedback`, `/api/voice` and `/api/hand` (or their WebSocket messages), validated and rate-limited.

@@ -18,6 +18,12 @@ const WEBCAM_FRAME_INTERVAL_MS = 2000;
 const MIC_FRAME_INTERVAL_MS = 1000;
 // Mean normalized magnitude below which a mic frame is considered silence.
 const MIC_SILENCE_THRESHOLD = 0.04;
+// The TONE of a voice (envelope + pitch track) is sampled every 50 ms and sent
+// once per utterance: it feeds the innate layer (warm / harsh), not the cortex.
+const VOICE_FRAME_MS = 50;
+const VOICE_ACTIVE_RMS = 0.015;
+const VOICE_END_SILENCE_FRAMES = 8; // 400 ms of silence ends an utterance
+const VOICE_MAX_FRAMES = 160;
 
 const REGION_COLORS = {
   thalamus:         { h: 200, s: 80, l: 60, label: 'Thalamus' },
@@ -127,6 +133,8 @@ function connectWebSocket() {
       showLessonProgress(msg.data);
     } else if (msg.type === 'practice' && msg.data) {
       showPracticeProgress(msg.data);
+    } else if (msg.type === 'affect' && msg.data) {
+      showAffect(msg.data);
     } else if (msg.type === 'notice' && msg.data) {
       addLog('error', `Server: ${msg.data.message}`);
     }
@@ -202,6 +210,7 @@ function updateDashboard(state) {
   updateVocabularyPanel(state.vocabulary, state.vocabCount);
   updatePerceptionPanel(state.recognition);
   updateRecallRow(state.association);
+  updateInnateRow(state.innate);
 
   // Learning curve (growth of vocabulary + episodic memories over time)
   updateLearningCurve(state);
@@ -232,6 +241,39 @@ function updatePerceptionPanel(recognition) {
 let lastRecallLogged = null;
 
 /** What the last percept brought back from memory: "Visual-1 → “cruz” · 82%". */
+const TONE_FACES = { warm: '😊 warm', neutral: '😐 neutral', harsh: '😠 harsh' };
+let lastVoiceShown = 0;
+
+function updateInnateRow(innate) {
+  const what = document.querySelector('#perceptTone .percept-what');
+  if (!what || !innate) return;
+  const v = innate.lastVoice;
+  if (!v) {
+    what.textContent = innate.affectiveWords > 0 || innate.conditionedCues > 0
+      ? `no voice heard yet · ${Number(innate.affectiveWords)} words and ${Number(innate.conditionedCues)} things carry a feeling`
+      : 'no voice heard yet — talk to it: the tone is what it reads';
+    return;
+  }
+  what.classList.remove('percept-empty');
+  const pct = Math.round(Math.abs(Number(v.valence)) * 100);
+  what.innerHTML =
+    `<span class="percept-label">${TONE_FACES[v.kind] || v.kind}</span> ${pct}%` +
+    (v.startle ? ' <span class="percept-badge is-new">startled</span>' : '') +
+    (v.judged ? ` <span class="percept-badge ${v.valence > 0 ? 'is-known' : 'is-new'}">${v.valence > 0 ? 'approved' : 'corrected'} what it recalled</span>` : '') +
+    `<span class="percept-total">${Number(innate.affectiveWords)} words · ${Number(innate.conditionedCues)} things carry a feeling · sleep pressure ${Math.round(Number(innate.sleepPressure) * 100)}%</span>`;
+  if (v.serial !== lastVoiceShown) {
+    lastVoiceShown = v.serial;
+    addLog('info', `🗣️ Heard a ${v.kind} voice (${pct}%)${v.judged ? v.valence > 0 ? ' — took it as approval' : ' — took it as a correction' : ''}`);
+  }
+}
+
+function showAffect(d) {
+  if (d.kind === 'startle') addLog('emotion', '😳 Startled by a sudden loud sound');
+  else if (d.kind === 'looming') addLog('emotion', '😨 Something is coming closer fast');
+  else if (d.kind === 'face') addLog('emotion', `🙂 That looks like a face (${Math.round(Number(d.match) * 100)}%)`);
+  else if (d.kind === 'conditioned') addLog('emotion', `${Number(d.valence) < 0 ? '😟' : '😌'} ${escapeHtml(String(d.label))} brings back a feeling (${Number(d.valence) < 0 ? 'unease' : 'comfort'})`);
+}
+
 function updateRecallRow(association) {
   const what = document.querySelector('#perceptRecall .percept-what');
   const r = association && association.lastRecall;
@@ -1245,8 +1287,33 @@ document.getElementById('toggleWebcam')?.addEventListener('click', async () => {
 let micStream = null;
 let micAnalyser = null;
 let micInterval = null;
+let voiceInterval = null;
 let micAudioCtx = null;
 let micOpening = false;
+
+function rmsOf(samples) {
+  let sum = 0;
+  for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
+  return Math.sqrt(sum / samples.length);
+}
+
+/** Fundamental frequency by normalized autocorrelation (70–500 Hz); 0 if unvoiced. */
+function pitchOf(samples, sampleRate) {
+  const minLag = Math.floor(sampleRate / 500);
+  const maxLag = Math.min(samples.length - 1, Math.ceil(sampleRate / 70));
+  let energy = 0;
+  for (let i = 0; i < samples.length; i++) energy += samples[i] * samples[i];
+  if (energy === 0) return 0;
+  let bestLag = 0;
+  let best = 0;
+  for (let lag = minLag; lag <= maxLag; lag++) {
+    let sum = 0;
+    for (let i = 0; i + lag < samples.length; i++) sum += samples[i] * samples[i + lag];
+    const r = sum / energy;
+    if (r > best) { best = r; bestLag = lag; }
+  }
+  return best >= 0.5 && bestLag > 0 ? sampleRate / bestLag : 0;
+}
 
 document.getElementById('toggleMic')?.addEventListener('click', async () => {
   const btn = document.getElementById('toggleMic');
@@ -1259,6 +1326,8 @@ document.getElementById('toggleMic')?.addEventListener('click', async () => {
     micAnalyser = null;
     clearInterval(micInterval);
     micInterval = null;
+    clearInterval(voiceInterval);
+    voiceInterval = null;
     micAudioCtx?.close().catch(() => {});
     micAudioCtx = null;
     btn.textContent = '▶ Enable';
@@ -1311,6 +1380,34 @@ document.getElementById('toggleMic')?.addEventListener('click', async () => {
       }
     }
     drawMic();
+
+    // The tone of the voice: envelope + pitch every 50 ms, sent per utterance.
+    const timeData = new Float32Array(micAnalyser.fftSize);
+    let contour = { rms: [], f0: [] };
+    let silentFrames = 0;
+    let ownVoiceAtStart = false;
+    voiceInterval = setInterval(() => {
+      if (!micAnalyser) return;
+      micAnalyser.getFloatTimeDomainData(timeData);
+      const rms = rmsOf(timeData);
+      const active = rms >= VOICE_ACTIVE_RMS;
+      if (contour.rms.length === 0) {
+        if (!active) return;
+        ownVoiceAtStart = performance.now() < ownVoiceUntil;
+      }
+      contour.rms.push(Math.round(rms * 1000) / 1000);
+      contour.f0.push(active ? Math.round(pitchOf(timeData, audioCtx.sampleRate)) : 0);
+      silentFrames = active ? 0 : silentFrames + 1;
+      const done = silentFrames >= VOICE_END_SILENCE_FRAMES || contour.rms.length >= VOICE_MAX_FRAMES;
+      if (!done) return;
+      const utterance = contour;
+      contour = { rms: [], f0: [] };
+      silentFrames = 0;
+      // Its own voice, played through the speakers, is not somebody talking to it.
+      if (ownVoiceAtStart) return;
+      if (utterance.rms.length - VOICE_END_SILENCE_FRAMES < 3) return; // a click, not a voice
+      sendControl('input:voice', { rms: utterance.rms, f0: utterance.f0, frameMs: VOICE_FRAME_MS }, 'input/voice');
+    }, VOICE_FRAME_MS);
 
     // Send spectrograms periodically — but never silence: each frame costs the
     // server a full perception, and silence carries no information.

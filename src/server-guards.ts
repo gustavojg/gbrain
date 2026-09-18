@@ -199,6 +199,29 @@ export function parsePracticeInput(data: unknown): { voice: number; hand: number
 }
 
 /** Validates the optional `sampleRate` of an audio frame (Hz); `undefined` if absent. */
+/** Longest voice contour accepted (frames): 8 s at 50 ms per frame. */
+export const MAX_VOICE_FRAMES = 160;
+
+/**
+ * Validates `{ rms, f0, frameMs }`: the envelope and pitch track of one
+ * utterance (see prosody.ts). Values are clamped, not trusted.
+ */
+export function parseVoiceContour(data: unknown): { rms: number[]; f0: number[]; frameMs: number } {
+  const { rms, f0, frameMs } = asRecord(data);
+  if (!Array.isArray(rms) || rms.length === 0 || rms.length > MAX_VOICE_FRAMES) {
+    throw new HttpError(400, `rms must be an array of 1..${MAX_VOICE_FRAMES} numbers`);
+  }
+  if (!Array.isArray(f0) || f0.length !== rms.length) {
+    throw new HttpError(400, 'f0 must be an array as long as rms');
+  }
+  if (typeof frameMs !== 'number' || !Number.isFinite(frameMs) || frameMs < 5 || frameMs > 200) {
+    throw new HttpError(400, 'frameMs must be a number between 5 and 200');
+  }
+  const clean = (values: unknown[], max: number): number[] =>
+    values.map((v) => (typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.min(max, v)) : 0));
+  return { rms: clean(rms, 1), f0: clean(f0, 2000), frameMs };
+}
+
 export function parseSampleRate(data: unknown): number | undefined {
   const { sampleRate } = asRecord(data);
   if (sampleRate === undefined) return undefined;

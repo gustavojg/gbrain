@@ -270,24 +270,36 @@ console.log('\n4. INTEGRATORS');
 
 // ── 5. AFFECT ───────────────────────────────────────────────────────────────
 console.log('\n5. AFFECT');
-const valenceAfter = (text: string): number => {
+// The brain brings no word meanings with it: what it reads innately is the
+// TONE of a voice (envelope + pitch track, 50 ms frames — see prosody.ts).
+const voice = (n: number, rms: (t: number) => number, f0: (t: number) => number) => ({
+  rms: Array.from({ length: n }, (_, i) => rms(i / (n - 1))),
+  f0: Array.from({ length: n }, (_, i) => f0(i / (n - 1))),
+  frameMs: 50,
+});
+const WARM_VOICE = voice(24, (t) => 0.02 + 0.06 * Math.sin(Math.PI * t), (t) => 200 + 90 * Math.sin(Math.PI * t));
+const HARSH_VOICE = voice(7, (t) => (Math.round(t * 6) % 2 === 0 ? 0.32 : 0.1), (t) => 115 - 20 * t);
+const valenceAfterVoice = (v: typeof WARM_VOICE): number => {
+  const brain = newBrain();
+  for (let i = 0; i < 3; i++) { brain.hearVoice(v); for (let t = 0; t < 20; t++) brain.tick(); }
+  return brain.feel().valence;
+};
+const valenceAfterText = (text: string): number => {
   const brain = newBrain();
   quiet(() => { for (let i = 0; i < 3; i++) brain.read(text); });
   return brain.feel().valence;
 };
 {
-  const pairs: Array<[string, string, string]> = [
-    ['Spanish', 'estoy feliz con alegria y amor', 'tengo miedo tristeza y odio'],
-    ['English', 'i am happy with joy and love', 'i feel fear sadness and hate'],
-  ];
-  for (const [language, positiveText, negativeText] of pairs) {
-    const positive = valenceAfter(positiveText);
-    const negative = valenceAfter(negativeText);
-    check(`${language}: positive text ≫ negative text in valence`, positive - negative >= 0.5 && negative < 0,
-      `+${positive.toFixed(2)} vs ${negative.toFixed(2)}`);
-  }
-  const neutral = valenceAfter('the hat is on the table');
-  check('a neutral look-alike ("hat" ≠ "hate") evokes no negative affect', neutral > 0, `valence=${neutral.toFixed(2)}`);
+  const warm = valenceAfterVoice(WARM_VOICE);
+  const harsh = valenceAfterVoice(HARSH_VOICE);
+  check('a warm voice ≫ a harsh voice in valence', warm - harsh >= 0.5 && harsh < 0, `+${warm.toFixed(2)} vs ${harsh.toFixed(2)}`);
+  // (Reading does release a little dopamine — new words get learned — but
+  // the same for any text: nothing in the words themselves is felt yet.)
+  const positive = valenceAfterText('estoy feliz con alegria y amor');
+  const negative = valenceAfterText('tengo miedo tristeza y odio');
+  check('words carry no emotion until they have been heard alongside one: "happy" and "fear" texts feel the same',
+    Math.abs(positive - negative) < 0.1 && negative >= 0,
+    `${positive.toFixed(2)} vs ${negative.toFixed(2)}`);
 }
 
 // ── 6. NEUROMODULATION (in the running brain) ───────────────────────────────

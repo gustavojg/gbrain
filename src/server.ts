@@ -331,10 +331,12 @@ function perceive(
   inputType: PerceptionResult['inputType'],
   inject: () => void,
   coalesceKey?: string,
+  ticks?: number,
 ): Promise<PerceptionResult | null> {
   let startTime = 0;
   return scheduler.submit({
     coalesceKey,
+    ticks,
     inject: () => {
       startTime = brain.time;
       inject();
@@ -366,6 +368,8 @@ function broadcast(type: string, data: unknown): void {
 const LESSON_VOWELS: Record<NonNullable<LessonInput['vowel']>, [number, number]> = {
   a: [700, 1200], e: [500, 1900], i: [300, 2300], o: [500, 900], u: [350, 800],
 };
+/** Real ms between the frames of a streamed sound (the dashboard's mic cadence while someone speaks). */
+const STREAM_FRAME_MS = 200;
 /** Between the parts of one repetition (the first part is complete, and still in mind). */
 const LESSON_STEP_TICKS = brain.ticksFor(5000);
 /** After a repetition, for the wave to end. */
@@ -700,13 +704,14 @@ wss.on('connection', (ws: WebSocket) => {
     inputType: PerceptionResult['inputType'],
     inject: () => void,
     coalesce: boolean,
+    ticks?: number,
   ): void => {
     if (!limiter.allow(kind)) {
       // Streaming inputs (webcam, mic) are expected to overshoot: drop quietly.
       if (!coalesce) notify('Too many inputs — slow down');
       return;
     }
-    perceive(inputType, inject, coalesce ? `${kind}:${clientId}` : undefined).catch((err: Error) => {
+    perceive(inputType, inject, coalesce ? `${kind}:${clientId}` : undefined, ticks).catch((err: Error) => {
       if (err instanceof SchedulerBusyError) notify('The brain is busy — input dropped');
       else console.error('❌ Perception failed:', err);
     });
@@ -734,7 +739,11 @@ wss.on('connection', (ws: WebSocket) => {
         case 'input:audio': {
           const frame = parseSpectrogramInput(msg.data);
           const sampleRate = parseSampleRate(msg.data);
-          submit('audio', 'auditory', () => brain.hearFrame(frame, sampleRate, { propagate: false }), true);
+          // A frame that continues an utterance only refreshes what is in the
+          // ear (a few ticks); the wave of the whole sound plays out on the
+          // regular ticks once the utterance ends.
+          const ticks = brain.isHearing ? brain.ticksFor(STREAM_FRAME_MS) : undefined;
+          submit('audio', 'auditory', () => brain.hearFrame(frame, sampleRate, { propagate: false }), true, ticks);
           break;
         }
         case 'input:voice': {

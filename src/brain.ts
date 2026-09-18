@@ -45,6 +45,7 @@ import { Hippocampus } from './regions/hippocampus/hippocampus.js';
 import { Amygdala } from './regions/amygdala/amygdala.js';
 import { appraiseProsody, type ProsodyAppraisal, type VoiceContour } from './regions/amygdala/prosody.js';
 import { Motivation, type ActivityKind, type Drives, type RewardEvent } from './core/motivation/motivation.js';
+import { SequenceMemory, type Prediction } from './core/memory/sequence-memory.js';
 import { PrefrontalCortex } from './regions/prefrontal-cortex/prefrontal-cortex.js';
 import { BrocaArea, type LanguageResponse } from './regions/broca-wernicke/broca.js';
 import { WernickeArea } from './regions/broca-wernicke/wernicke.js';
@@ -77,6 +78,9 @@ export interface BrainState {
   innate?: InnateState;
   /** Why it acts: drives, the value of its activities, the last dopamine event */
   motivation?: MotivationState;
+  /** What it expects to come next, and what it holds in mind */
+  sequence?: { expectation: Prediction | null; transitions: number; lastTransition: { from: string; to: string } | null };
+  workingMemory?: Array<{ label: string; priority: number; age: number }>;
   /** Spike bus traffic */
   busTraffic: Record<string, { sent: number; received: number }>;
   /** Total ticks processed */
@@ -326,6 +330,14 @@ export class DigitalBrain {
   private static readonly DOPAMINE_DIP_GAIN = 0.4;
   private chosen: Record<ActivityKind, number> = { babble: 0, scribble: 0 };
   private motorLearnings = { babble: 0, scribble: 0 };
+
+  // ── Time: what follows what, and what is held in mind ──
+  private sequences!: SequenceMemory;
+  /** Real ms within which one percept counts as following another. */
+  private static readonly SEQUENCE_WINDOW_MS = 10_000;
+  private lastTransition: { from: string; to: string } | null = null;
+  /** |prediction error| from which a percept is gated into working memory (dopamine gating; O'Reilly & Frank 2006). */
+  private static readonly WORKING_MEMORY_GATE = 0.2;
 
   // ── Cross-modal association (learning what goes with what) ──
   private associations = new AssociationMemory();
@@ -599,6 +611,7 @@ export class DigitalBrain {
       boredomTicks: this.ticksFor(60_000),
       contactTicks: this.ticksFor(300_000),
     });
+    this.sequences = new SequenceMemory(this.ticksFor(DigitalBrain.SEQUENCE_WINDOW_MS));
     this.thoughtTraceTicks = this.ticksFor(DigitalBrain.THOUGHT_TRACE_MS);
     this.drivePeakDecay = Math.pow(0.9, this.msPerTick / 100);
     this.conditioningWindowTicks = this.ticksFor(DigitalBrain.CONDITIONING_WINDOW_MS);
@@ -669,6 +682,11 @@ export class DigitalBrain {
     console.log(`✅ Brain initialized successfully.`);
     console.log(`   Tick rate: ${this.config.tickRate} Hz (a stimulus stays ${this.presentationTicks} ticks, a percept waits ${this.associationWindowTicks})`);
     console.log(`   Consolidation every: ${this.config.memory.consolidationIntervalMs / 1000}s\n`);
+  }
+
+  /** Whether a sound is being heard right now (a frame arriving now continues the same utterance). */
+  get isHearing(): boolean {
+    return this.presentations.has('auditory');
   }
 
   /** Ticks that span `ms` of real time at this brain's tick rate (at least 1). */
@@ -1253,9 +1271,20 @@ export class DigitalBrain {
     if (code.indices.length === 0) return;
 
     this.recallFrom(modality, code, label);
+    const key = `${modality}:${label}`;
+    // Order: was this expected to follow what came before? Then learn the
+    // transition, and expect what usually follows this.
+    const expectedness = this.sequences.expectedness(key, this.tickCount);
+    const step = this.sequences.observe(key, this.tickCount);
+    if (step.learned) this.lastTransition = step.learned;
+    if (step.prediction) {
+      this.emitEvent({ type: 'affect', timestamp: this.currentTime, data: { kind: 'expectation', after: key, ...step.prediction } });
+    }
     if (modality === 'visual' || modality === 'auditory') {
       this.appraiseCue(modality, code.indices, label);
-      this.reward(this.motivation.perceive(`${modality}:${label}`, this.tickCount));
+      const novelty = this.motivation.perceive(key, this.tickCount, expectedness);
+      this.reward(novelty);
+      this.gateIntoWorkingMemory(label, novelty.error);
     }
 
     const serial = ++this.perceptSerial;
@@ -2061,11 +2090,27 @@ export class DigitalBrain {
    */
   private reward(event: RewardEvent | null): void {
     if (!event) return;
+    if (event.kind === 'external' && event.key) this.gateIntoWorkingMemory(event.key.replace(/^[a-z]+:/, ''), event.error);
     if (event.error > 0) this.modulators.release(ModulatorType.Dopamine, DigitalBrain.DOPAMINE_BURST_GAIN * event.error);
     else if (event.error < 0) this.modulators.release(ModulatorType.Dopamine, DigitalBrain.DOPAMINE_DIP_GAIN * event.error);
     if (Math.abs(event.error) >= 0.05) {
       this.emitEvent({ type: 'affect', timestamp: this.currentTime, data: { kind: 'dopamine', event } });
     }
+  }
+
+  /**
+   * Dopamine gating of working memory (O'Reilly & Frank, 2006): what enters
+   * and stays in mind is what was surprising or rewarding — the size of the
+   * prediction error opens the gate and sets the slot's priority. The routine
+   * and the expected pass through without being held. (The top-down mask the
+   * prefrontal cortex builds from its slots awaits block 3's feature-based
+   * attention; until then a slot is a label held with a priority.)
+   */
+  private gateIntoWorkingMemory(label: string, error: number): void {
+    const salience = Math.abs(error);
+    if (salience < DigitalBrain.WORKING_MEMORY_GATE) return;
+    const pfc = this.regions.get('prefrontalCortex') as PrefrontalCortex | undefined;
+    pfc?.attendTo(new Float32Array(0), label, Math.min(1, salience));
   }
 
   /** The motor maps learned from their last activity: credit its progress to that activity. */
@@ -2225,6 +2270,9 @@ export class DigitalBrain {
       memoriesCount: learningHippocampus?.memoryCount ?? 0,
       innate: this.getInnate(),
       motivation: this.getMotivation(),
+      sequence: { expectation: this.sequences.expectation, transitions: this.sequences.size, lastTransition: this.lastTransition },
+      workingMemory: ((this.regions.get('prefrontalCortex') as PrefrontalCortex | undefined)?.getWorkingMemory() ?? [])
+        .map((slot) => ({ label: slot.label, priority: slot.priority, age: slot.age })),
       busTraffic,
       tickCount: this.tickCount,
       broca: brocaResponse ? {
@@ -2274,6 +2322,7 @@ export class DigitalBrain {
       },
       association: this.associations.serialize(),
       motivation: this.motivation.serialize(),
+      sequence: this.sequences.serialize(),
     };
     for (const [id, region] of this.regions) {
       const extra = region.serializeExtra();
@@ -2380,6 +2429,7 @@ export class DigitalBrain {
     this.restoreBrainExtras(data.extras.brain);
     this.associations.deserialize(data.extras.association);
     this.motivation.deserialize(data.extras.motivation);
+    this.sequences.deserialize(data.extras.sequence);
 
     // Restore the persisted lexicon (incl. learned words) if present and
     // dimensionally compatible; otherwise keep the freshly seeded vocabulary.

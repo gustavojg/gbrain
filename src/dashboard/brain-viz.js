@@ -15,7 +15,9 @@ const API_URL = '/api';
 // Streaming cadence matches the server's per-client budget (see CLIENT_LIMITS
 // in server-guards.ts): faster frames would just be dropped there.
 const WEBCAM_FRAME_INTERVAL_MS = 2000;
-const MIC_FRAME_INTERVAL_MS = 1000;
+// While someone speaks, spectrum frames stream every 200 ms so the ear's
+// window holds the ORDER of the sounds (a syllable, a word); in silence, none.
+const MIC_FRAME_INTERVAL_MS = 200;
 // Mean normalized magnitude below which a mic frame is considered silence.
 const MIC_SILENCE_THRESHOLD = 0.04;
 // The TONE of a voice (envelope + pitch track) is sampled every 50 ms and sent
@@ -212,6 +214,8 @@ function updateDashboard(state) {
   updateRecallRow(state.association);
   updateInnateRow(state.innate);
   updateMotivationRow(state.motivation);
+  updateExpectationRow(state.sequence);
+  updateWorkingMemory(state.workingMemory);
 
   // Learning curve (growth of vocabulary + episodic memories over time)
   updateLearningCurve(state);
@@ -285,6 +289,45 @@ function updateMotivationRow(m) {
   what.innerHTML =
     `curious ${pct(m.drives.curiosity)} · bored ${pct(m.drives.boredom)} · lonely ${pct(m.drives.contact)}` +
     `<span class="percept-total">babble ${Number(m.activityValues.babble).toFixed(2)} · scribble ${Number(m.activityValues.scribble).toFixed(2)} (worth of each activity)${escapeHtml(last)}</span>`;
+}
+
+function updateWorkingMemory(slots) {
+  const box = document.getElementById('wmSlots');
+  if (!box || !Array.isArray(slots)) return;
+  const cells = box.querySelectorAll('.wm-slot');
+  const sorted = slots.slice().sort((a, b) => Number(b.priority) - Number(a.priority));
+  cells.forEach((cell, i) => {
+    const slot = sorted[i];
+    if (slot) {
+      cell.textContent = String(slot.label).slice(0, 12);
+      cell.title = `held with priority ${Math.round(Number(slot.priority) * 100)}%, ${Number(slot.age)} ticks`;
+      cell.classList.add('active');
+      cell.classList.remove('empty');
+      cell.style.opacity = String(0.45 + 0.55 * Math.min(1, Number(slot.priority)));
+    } else {
+      cell.textContent = String(i + 1);
+      cell.title = '';
+      cell.classList.remove('active');
+      cell.classList.add('empty');
+      cell.style.opacity = '';
+    }
+  });
+}
+
+function updateExpectationRow(sequence) {
+  const what = document.querySelector('#perceptNext .percept-what');
+  if (!what || !sequence) return;
+  const e = sequence.expectation;
+  if (!e) {
+    what.textContent = sequence.transitions > 0
+      ? `nothing in particular · ${Number(sequence.transitions)} orders learned`
+      : 'nothing yet — show it things in the same order a few times';
+    return;
+  }
+  what.classList.remove('percept-empty');
+  what.innerHTML = `<span class="percept-label">${escapeHtml(String(e.key).replace(/^(visual|auditory|lexical):/, ''))}</span> ` +
+    `<span class="percept-badge is-known">${Math.round(Number(e.probability) * 100)}%</span> in ~${(Number(e.expectedInTicks) / 10).toFixed(0)} s` +
+    `<span class="percept-total">${Number(sequence.transitions)} orders learned${sequence.lastTransition ? ` · last: ${escapeHtml(sequence.lastTransition.from.replace(/^[a-z]+:/, ''))} → ${escapeHtml(sequence.lastTransition.to.replace(/^[a-z]+:/, ''))}` : ''}</span>`;
 }
 
 function showAffect(d) {
@@ -1321,6 +1364,7 @@ let micInterval = null;
 let voiceInterval = null;
 let micAudioCtx = null;
 let micOpening = false;
+let micSpeaking = false;
 
 function rmsOf(samples) {
   let sum = 0;
@@ -1417,11 +1461,13 @@ document.getElementById('toggleMic')?.addEventListener('click', async () => {
     let contour = { rms: [], f0: [] };
     let silentFrames = 0;
     let ownVoiceAtStart = false;
+    micSpeaking = false;
     voiceInterval = setInterval(() => {
       if (!micAnalyser) return;
       micAnalyser.getFloatTimeDomainData(timeData);
       const rms = rmsOf(timeData);
       const active = rms >= VOICE_ACTIVE_RMS;
+      micSpeaking = active;
       if (contour.rms.length === 0) {
         if (!active) return;
         ownVoiceAtStart = performance.now() < ownVoiceUntil;
@@ -1447,7 +1493,7 @@ document.getElementById('toggleMic')?.addEventListener('click', async () => {
       micAnalyser.getByteFrequencyData(dataArray);
       const spectrogram = Array.from(dataArray).map(v => v / 255);
       const energy = spectrogram.reduce((sum, v) => sum + v, 0) / spectrogram.length;
-      if (energy < MIC_SILENCE_THRESHOLD) return;
+      if (energy < MIC_SILENCE_THRESHOLD && !micSpeaking) return;
       // The brain already hears its own voice internally: what the mic picks up
       // from the speakers must not come back as somebody else's sound.
       if (performance.now() < ownVoiceUntil) return;

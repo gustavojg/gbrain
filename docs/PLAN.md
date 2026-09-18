@@ -56,10 +56,10 @@ Fuera: `affective-lexicon.ts`.
 
 | Mecanismo | Base | Hoy | Test |
 |---|---|---|---|
-| **Secuencias**: el oído recibe la palabra como sucesión de sonidos; la mano dibuja a trazos | Células de tiempo, precesión de fase theta, cadenas sinápticas | Toda entrada es una foto fija | Distingue "pa-ta" de "ta-pa" |
-| **Fases de codificación y recuperación** separadas (ritmo theta) en el hipocampo | Hasselmo 2002 | Umbrales ajustados a mano | Menos falsos reconocimientos con los mismos umbrales |
-| **Memoria de trabajo con compuerta** | Ganglios basales → prefrontal (O'Reilly & Frank 2006) | Lista de 7 etiquetas | Retiene lo relevante de una secuencia y suelta lo demás |
-| **Orden de palabras** | Estadísticas de secuencia, aprendizaje de transiciones | Ninguno | Dice "coche azul", no "azul coche" |
+| **Secuencias**: el oído recibe la palabra como sucesión de sonidos; la mano dibuja a trazos | Células de tiempo, precesión de fase theta, cadenas sinápticas | Hecho en el oído: el micrófono manda cuadros cada 200 ms mientras se habla y la ventana del oído (10 cuadros) guarda el orden; dos vocales en un orden y en el otro son dos sonidos. Entre perceptos: `core/memory/sequence-memory` aprende qué sigue a qué y genera una expectativa (lo esperado no sorprende). Pendiente: la mano a trazos | Distingue "pa-ta" de "ta-pa" |
+| **Fases de codificación y recuperación** separadas (ritmo theta) en el hipocampo | Hasselmo 2002 | Pendiente (umbrales ajustados a mano); se hará cuando el motor nuevo permita recalibrar sin romper los tests | Menos falsos reconocimientos con los mismos umbrales |
+| **Memoria de trabajo con compuerta** | Ganglios basales → prefrontal (O'Reilly & Frank 2006) | Hecho: entra lo que sorprende o se recompensa (|error de predicción| ≥ 0,2), con esa prioridad; lo rutinario pasa de largo y lo retenido se desvanece sin refresco | Retiene lo relevante de una secuencia y suelta lo demás |
+| **Orden de palabras** | Estadísticas de secuencia, aprendizaje de transiciones | La memoria de secuencias ya guarda transiciones entre palabras leídas; producir en orden espera a que las palabras entren por el oído | Dice "coche azul", no "azul coche" |
 
 A partir de aquí las **palabras entran por el oído** y **leer es ver**: el canal de
 texto, el léxico precargado y el flujo de pensamiento en palabras (andamios) se

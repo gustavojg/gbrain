@@ -47,6 +47,7 @@ import { Amygdala } from './regions/amygdala/amygdala.js';
 import { appraiseProsody, type ProsodyAppraisal, type VoiceContour } from './regions/amygdala/prosody.js';
 import { Motivation, type ActivityKind, type Drives, type RewardEvent } from './core/motivation/motivation.js';
 import { HabitSystem, type Habit } from './core/motivation/habits.js';
+import { WordOrderMemory, type OrderVote } from './core/language/word-order.js';
 import { ImaginationMemory, mixUnits, type ImaginationOrigin, type ImaginedCombination } from './core/imagination/imagination.js';
 import type { CategoryView } from './core/memory/prototype-memory.js';
 import { mulberry32 } from './core/random.js';
@@ -95,6 +96,8 @@ export interface BrainState {
   imagination?: ImaginationState;
   /** Stimulus–response links stamped in by practice (see core/motivation/habits). */
   habits?: { count: number; links: Habit[]; lastHabit: { cue: string; response: string; timestamp: number } | null };
+  /** The order of kinds of words it has heard, and what it last said in one breath. */
+  language?: { order: OrderVote[]; lastUtterance: string | null };
   /** Spike bus traffic */
   busTraffic: Record<string, { sent: number; received: number }>;
   /** Total ticks processed */
@@ -430,6 +433,19 @@ export class DigitalBrain {
    */
   private static readonly DEVALUED = -0.3;
   private readonly habits = new HabitSystem();
+
+  // ── Word order (production) ──
+  /**
+   * The words a percept brings back are not written one by one as each
+   * modality's recall lands: they wait a breath, and go out together in the
+   * order their kinds have been heard in ("coche azul").
+   */
+  private static readonly UTTERANCE_GAP_MS = 600;
+  private readonly utteranceGapTicks: number;
+  private readonly wordOrder = new WordOrderMemory();
+  private utterance: Array<{ word: string; modality: AssociationModality; label: string; confidence: number }> = [];
+  private ticksSinceUtteranceWord = 0;
+  private lastUtterance: string | null = null;
   private lastHabit: { cue: string; response: string; timestamp: number } | null = null;
   /** Imagination and dreams draw from their own random source: they leave every other trajectory untouched. */
   private readonly imaginationRandom = mulberry32(0x1ac1e);
@@ -772,6 +788,7 @@ export class DigitalBrain {
     this.associationWindowTicks = this.ticksFor(DigitalBrain.ASSOCIATION_WINDOW_MS);
     this.explorationIntervalTicks = this.ticksFor(DigitalBrain.EXPLORATION_INTERVAL_MS);
     this.daydreamAfterTicks = this.ticksFor(DigitalBrain.DAYDREAM_AFTER_MS);
+    this.utteranceGapTicks = this.ticksFor(DigitalBrain.UTTERANCE_GAP_MS);
     this.motivation = new Motivation({
       rewardWindowTicks: this.ticksFor(DigitalBrain.VERDICT_WINDOW_MS),
       boredomTicks: this.ticksFor(60_000),
@@ -1206,6 +1223,7 @@ export class DigitalBrain {
     const lexicalCode = DigitalBrain.denseToCode(spikes, 0.1);
     this.onPercept('lexical', lexicalCode, text.trim().slice(0, 40));
     this.noteWordReferents(text);
+    this.learnWordOrder(text);
     this.considerQuestion(`lexical:${text.trim().slice(0, 40)}`, lexicalCode);
 
     // Send to the thalamus (linguistic route)
@@ -1962,12 +1980,10 @@ export class DigitalBrain {
       const word = recall.words[0].word;
       // Every execution stamps the stimulus–response link in a little.
       this.habits.practice(cueKey, word);
-      // It WRITES the word that came to mind (the dashboard has a text area for it).
-      this.emitEvent({
-        type: 'response',
-        timestamp: this.currentTime,
-        data: { kind: 'writing', text: word, cue: label, confidence: result.match, habit: false },
-      });
+      // The word joins this breath's utterance: it is written with whatever
+      // else the moment brings back, in the order the kinds have been heard in.
+      this.utterance.push({ word, modality, label, confidence: result.match });
+      this.ticksSinceUtteranceWord = 0;
     }
   }
 
@@ -2403,6 +2419,7 @@ export class DigitalBrain {
     this.relayPresentations(effects);
     this.moveEye();
     this.speakOn();
+    this.speakUtterance();
 
     //    The hippocampus stamps the episodes it encodes with the current affect
     //    (emotional episodes are forgotten more slowly).
@@ -2822,6 +2839,42 @@ export class DigitalBrain {
     }
   }
 
+  /** An utterance heard: the kinds of its words (from the word–referent record), in the order they came. */
+  private learnWordOrder(text: string): void {
+    const words = text.toLowerCase().split(/\s+/).filter((w) => w.length >= 2);
+    if (words.length < 2) return;
+    const kinds: string[] = [];
+    for (const word of words) {
+      const kind = this.modalityOfAnswer(word);
+      if (kind) kinds.push(kind);
+    }
+    if (new Set(kinds).size >= 2) this.wordOrder.observe(kinds);
+  }
+
+  /** The words gathered this breath go out together, in the order their kinds have been heard in. */
+  private speakUtterance(): void {
+    if (this.utterance.length === 0) return;
+    if (++this.ticksSinceUtteranceWord < this.utteranceGapTicks) return;
+    const ordered = this.wordOrder.order(this.utterance, (w) => w.modality);
+    const words: string[] = [];
+    for (const w of ordered) if (!words.includes(w.word)) words.push(w.word);
+    const text = words.join(' ');
+    this.lastUtterance = text;
+    this.emitEvent({
+      type: 'response',
+      timestamp: this.currentTime,
+      data: {
+        kind: 'writing',
+        text,
+        words,
+        cue: [...new Set(ordered.map((w) => w.label))].join('+'),
+        confidence: Math.max(...ordered.map((w) => w.confidence)),
+        habit: false,
+      },
+    });
+    this.utterance = [];
+  }
+
   /**
    * The name of a category: the word that has gone with it most specifically —
    * often enough, and mostly with it rather than with everything.
@@ -3105,6 +3158,7 @@ export class DigitalBrain {
       questions: { known: this.questions.size, lastAnswer: this.lastAnswer },
       imagination: this.getImagination(),
       habits: { count: this.habits.size, links: this.habits.list().slice(0, 6), lastHabit: this.lastHabit },
+      language: { order: this.wordOrder.votes().slice(0, 6), lastUtterance: this.lastUtterance },
       busTraffic,
       tickCount: this.tickCount,
       broca: brocaResponse ? {
@@ -3159,6 +3213,7 @@ export class DigitalBrain {
       wordReferents: Array.from(this.wordReferents.entries()).map(([w, m]) => [w, Array.from(m.entries())]),
       imagination: { combinations: this.imagination.serialize(), daydreams: this.daydreams, dreams: this.dreams, foreseen: this.foreseen },
       habits: this.habits.serialize(),
+      wordOrder: this.wordOrder.serialize(),
     };
     for (const [id, region] of this.regions) {
       const extra = region.serializeExtra();
@@ -3280,6 +3335,7 @@ export class DigitalBrain {
     this.restoreWordReferents(data.extras.wordReferents);
     this.restoreImagination(data.extras.imagination);
     this.habits.deserialize(data.extras.habits);
+    this.wordOrder.deserialize(data.extras.wordOrder);
 
     // Restore the persisted lexicon (incl. learned words) if present and
     // dimensionally compatible; otherwise keep the freshly seeded vocabulary.

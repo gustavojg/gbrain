@@ -157,7 +157,7 @@ console.log('\n4. NO LOOP');
 // ── 5. FROM MEMORY ──────────────────────────────────────────────────────────
 console.log('\n5. FROM MEMORY');
 const written: string[] = [];
-brain.on('response', (event) => { if (event.data.kind === 'writing') written.push(String(event.data.text)); });
+brain.on('response', (event) => { if (event.data.kind === 'writing') written.push(...String(event.data.text).split(' ')); });
 {
   brain.setHand({ copy: false }); // while being taught it just watches
   for (let i = 0; i < 4; i++) {

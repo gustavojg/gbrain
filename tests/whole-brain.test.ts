@@ -430,7 +430,7 @@ let savedEpisodes = -1;
     const b = fresh.getRegion(id)!.getNetworkConfig().weights;
     for (let i = 0; i < a.length && weightsEqual; i++) if (a[i] !== b[i]) weightsEqual = false;
   }
-  check('all 11 regions restored with bit-identical weights', result.loaded.length === 11 && weightsEqual,
+  check('all 12 regions restored with bit-identical weights', result.loaded.length === 12 && weightsEqual,
     `loaded=${result.loaded.length} skipped=${result.skipped.length}`);
 
   const oxySaved = mainBrain.getModulators().getLevel(ModulatorType.Oxytocin);

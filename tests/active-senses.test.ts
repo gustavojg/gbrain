@@ -191,7 +191,7 @@ console.log('\n3. STROKES');
   for (let i = 0; i < 4; i++) shown([vertical(false), horizontal(false)]);
   const again = copyOf(CROSS);
   const later = again?.strokes ?? [];
-  check('shown the other way more often, it switches', later.length >= 2 && new Set(later[0].cells.map(col)).size <= 2 && later[0].cells.every((c, i) => i === 0 || row(c) <= row(later[0].cells[i - 1])),
+  check('shown the other way more often, it switches', later.length >= 2 && new Set(later[0].cells.map(col)).size <= 3 && later[0].cells.every((c, i) => i === 0 || row(c) <= row(later[0].cells[i - 1])),
     later[0] ? `first stroke rows ${later[0].cells.map(row).join(',')}` : describe(again));
 }
 

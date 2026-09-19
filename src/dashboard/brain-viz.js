@@ -39,6 +39,7 @@ const REGION_COLORS = {
   motorCortex:      { h: 25,  s: 85, l: 58, label: 'Vocal Motor' },
   handMotorCortex:  { h: 320, s: 70, l: 62, label: 'Hand Motor' },
   colorCortex:      { h: 50,  s: 90, l: 60, label: 'Colour Ctx' },
+  partsCortex:      { h: 275, s: 70, l: 62, label: 'Parts Ctx (IT)' },
 };
 
 // 3D positions of brain regions (x, y, z) normalized -1..1
@@ -54,6 +55,7 @@ const REGION_POSITIONS = {
   motorCortex:      { x: -0.15, y: 0.35, z: 0.3,  size: 20 },
   handMotorCortex:  { x: 0.2,   y: 0.4,  z: 0.25, size: 20 },
   colorCortex:      { x: 0.25,  y: 0.25, z: -0.55, size: 16 },
+  partsCortex:      { x: -0.25, y: 0.15, z: -0.6,  size: 18 },
 };
 
 // Connections between regions (for drawing axon lines)
@@ -73,6 +75,7 @@ const CONNECTIONS = [
   ['auditoryCortex', 'motorCortex'],
   ['thalamus', 'handMotorCortex'],
   ['thalamus', 'colorCortex'],
+  ['thalamus', 'partsCortex'],
   ['prefrontalCortex', 'thalamus'],
   ['prefrontalCortex', 'visualCortex'],
   ['amygdala', 'hippocampus'],
@@ -244,7 +247,7 @@ const lastPerceptLogged = { visual: null, colour: null, auditory: null };
 
 function updatePerceptionPanel(recognition) {
   if (!recognition) return;
-  renderPercept('perceptVisual', 'visual', recognition.visual, recognition.visualCategories, 'seen');
+  renderPercept('perceptVisual', 'visual', recognition.visual, recognition.visualCategories, 'seen', recognition.object ? ` · object ${recognition.object.label}${recognition.object.isNew ? ' (new)' : ''} · ${Number(recognition.partsKnown)} parts` : '');
   renderPercept('perceptColour', 'colour', recognition.colour, recognition.colourCategories, 'seen');
   renderPercept('perceptAuditory', 'auditory', recognition.auditory, recognition.auditoryCategories, 'heard');
 }
@@ -385,7 +388,7 @@ function updateRecallRow(association) {
   }
 }
 
-function renderPercept(rowId, sense, r, categories, verb) {
+function renderPercept(rowId, sense, r, categories, verb, extra = '') {
   const what = document.querySelector(`#${rowId} .percept-what`);
   if (!what || !r) return;
 
@@ -396,7 +399,7 @@ function renderPercept(rowId, sense, r, categories, verb) {
   what.classList.remove('percept-empty');
   what.innerHTML =
     `<span class="percept-label">${escapeHtml(r.label)}</span>${badge}` +
-    `<span class="percept-total">${Number(categories)} categor${categories === 1 ? 'y' : 'ies'}</span>`;
+    `<span class="percept-total">${Number(categories)} categor${categories === 1 ? 'y' : 'ies'}${escapeHtml(extra)}</span>`;
 
   // Log each recognition once (the state stream repeats the last one).
   const key = `${r.id}:${r.exposures}`;

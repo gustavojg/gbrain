@@ -41,8 +41,9 @@ Network::Network(const NetworkConfig& cfg) : cfg_(cfg), rng_(cfg.seed) {
   u_.resize(n);
   a_.resize(n); b_.resize(n); c_.resize(n); d_.resize(n);
   inhibitory_.assign(n, 0);
-  input_.assign(n, 0.0f);
-  inputNow_.assign(n, 0.0f);
+  synExc_.assign(n, 0.0f);
+  synInh_.assign(n, 0.0f);
+  resource_.assign(n, 1.0f);
   preTrace_.assign(n, 0.0f);
   postTrace_.assign(n, 0.0f);
   firedFlag_.assign(n, 0);
@@ -59,7 +60,7 @@ Network::Network(const NetworkConfig& cfg) : cfg_(cfg), rng_(cfg.seed) {
     v_[i] = -70.0f + 12.0f * uniform();
     u_[i] = p.b * v_[i];
   }
-  threadInput_.assign(threads_, std::vector<float>(n, 0.0f));
+  threadInput_.assign(threads_, std::vector<float>(static_cast<size_t>(n) * 2, 0.0f));
   buildRandomSynapses();
 }
 
@@ -158,8 +159,9 @@ void Network::resetState() {
     v_[i] = -70.0f + 12.0f * uniform();
     u_[i] = b_[i] * v_[i];
   }
-  std::fill(input_.begin(), input_.end(), 0.0f);
-  std::fill(inputNow_.begin(), inputNow_.end(), 0.0f);
+  std::fill(synExc_.begin(), synExc_.end(), 0.0f);
+  std::fill(synInh_.begin(), synInh_.end(), 0.0f);
+  std::fill(resource_.begin(), resource_.end(), 1.0f);
   std::fill(preTrace_.begin(), preTrace_.end(), 0.0f);
   std::fill(postTrace_.begin(), postTrace_.end(), 0.0f);
   fired_.clear();
@@ -186,14 +188,19 @@ StepStats Network::step(const float* externalCurrent, float modulation) {
   const uint32_t n = cfg_.neurons;
   const float dt = cfg_.dt, halfDt = 0.5f * dt;
   const float decayPlus = std::exp(-dt / cfg_.tauPlus), decayMinus = std::exp(-dt / cfg_.tauMinus);
+  // Synaptic currents fade with their time constants (0 = a one-tick pulse).
+  const float decayExc = cfg_.tauSynExc > 0.0f ? std::exp(-dt / cfg_.tauSynExc) : 0.0f;
+  const float decayInh = cfg_.tauSynInh > 0.0f ? std::exp(-dt / cfg_.tauSynInh) : 0.0f;
+  // Short-term depression: resources recover toward 1 each tick, and a spike spends a share of them.
+  const bool depressing = cfg_.shortTermDepression && cfg_.stdTauRec > 0.0f;
+  const float recover = depressing ? dt / cfg_.stdTauRec : 0.0f, keep = depressing ? 1.0f - cfg_.stdU : 1.0f;
   tick_++;
 
-  // What last tick's spikes delivered is what drives this tick.
-  std::swap(input_, inputNow_);
-  std::fill(input_.begin(), input_.end(), 0.0f);
-
-  // 1. Neurons: integrate, detect spikes. Noise is drawn per neuron from a
-  //    per-range hash so that threads never share the generator.
+  // 1. Neurons: the synaptic currents (what earlier spikes delivered, fading)
+  //    plus the external current drive the integration; then the currents
+  //    decay, and this tick's spikes are added to them below. Noise is drawn
+  //    per neuron from a per-range hash so that threads never share the
+  //    generator.
   const uint64_t tickSeed = rng_ ^ (static_cast<uint64_t>(tick_) * 0x9E3779B97F4A7C15ULL);
   const float noise = cfg_.noise;
   parallelFor(n, [&](uint32_t, uint32_t from, uint32_t to) {
@@ -203,7 +210,10 @@ StepStats Network::step(const float* externalCurrent, float modulation) {
       z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
       z ^= z >> 31;
       const float jitter = noise * static_cast<float>((z >> 40) * (1.0 / 16777216.0));
-      const float I = inputNow_[i] + (externalCurrent ? externalCurrent[i] : 0.0f) + jitter;
+      const float I = synExc_[i] + synInh_[i] + (externalCurrent ? externalCurrent[i] : 0.0f) + jitter;
+      synExc_[i] *= decayExc;
+      synInh_[i] *= decayInh;
+      if (depressing) resource_[i] += (1.0f - resource_[i]) * recover;
       float v = v_[i], u = u_[i];
       v += halfDt * (0.04f * v * v + 5.0f * v + 140.0f - u + I);
       v += halfDt * (0.04f * v * v + 5.0f * v + 140.0f - u + I);
@@ -233,8 +243,9 @@ StepStats Network::step(const float* externalCurrent, float modulation) {
   stats.fired = static_cast<uint32_t>(fired_.size());
   if (cfg_.structural) for (uint32_t s = 0; s < stats.fired; s++) spikeCount_[fired_[s]]++;
 
-  // 3. Deliver: each spike adds its synapses' weights to its targets' input
-  //    for the next tick. Threads accumulate privately, then reduce.
+  // 3. Deliver: each spike adds its synapses' weights to its targets'
+  //    synaptic current (excitatory or inhibitory by the source), felt from
+  //    the next tick. Threads accumulate privately, then reduce.
   const uint32_t spikes = stats.fired;
   const bool plastic = cfg_.plastic && modulation != 0.0f;
   const float aMinus = cfg_.aMinus * modulation, aPlus = cfg_.aPlus * modulation, wMax = cfg_.wMax;
@@ -244,20 +255,29 @@ StepStats Network::step(const float* externalCurrent, float modulation) {
       std::vector<float>& acc = threadInput_[t];
       for (uint32_t s = from; s < to; s++) {
         const uint32_t i = fired_[s];
-        for (uint32_t k = rowPtr_[i]; k < rowPtr_[i + 1]; k++) acc[targets_[k]] += weights_[k];
+        const uint32_t off = inhibitory_[i] ? n : 0;
+        const float efficacy = inhibitory_[i] ? 1.0f : resource_[i];
+        for (uint32_t k = rowPtr_[i]; k < rowPtr_[i + 1]; k++) acc[off + targets_[k]] += weights_[k] * efficacy;
+        if (!inhibitory_[i]) resource_[i] *= keep;
       }
     });
     if (parallel) {
       parallelFor(n, [&](uint32_t, uint32_t from, uint32_t to) {
         for (uint32_t t = 0; t < threads_; t++) {
           std::vector<float>& acc = threadInput_[t];
-          for (uint32_t j = from; j < to; j++) { input_[j] += acc[j]; acc[j] = 0.0f; }
+          for (uint32_t j = from; j < to; j++) {
+            synExc_[j] += acc[j]; acc[j] = 0.0f;
+            synInh_[j] += acc[n + j]; acc[n + j] = 0.0f;
+          }
         }
       });
     } else {
       for (uint32_t s = 0; s < spikes; s++) {
         const uint32_t i = fired_[s];
-        for (uint32_t k = rowPtr_[i]; k < rowPtr_[i + 1]; k++) input_[targets_[k]] += weights_[k];
+        float* dst = inhibitory_[i] ? synInh_.data() : synExc_.data();
+        const float efficacy = inhibitory_[i] ? 1.0f : resource_[i];
+        for (uint32_t k = rowPtr_[i]; k < rowPtr_[i + 1]; k++) dst[targets_[k]] += weights_[k] * efficacy;
+        if (!inhibitory_[i]) resource_[i] *= keep;
       }
     }
 

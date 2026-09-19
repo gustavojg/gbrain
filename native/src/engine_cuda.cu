@@ -8,8 +8,9 @@
 //
 // Layout: the same structure-of-arrays state as the CPU backend, mirrored on
 // the device. One thread per neuron for integration; one thread per spike
-// for delivery (atomicAdd into the next tick's input), one per spike for
-// plasticity (atomic weight updates).
+// for delivery (atomicAdd into the synaptic currents, excitatory or
+// inhibitory by the source), one per spike for plasticity (atomic weight
+// updates). Synaptic currents decay exponentially as in the CPU backend.
 #ifdef GBRAIN_CUDA
 #include <cuda_runtime.h>
 
@@ -19,7 +20,8 @@ namespace gbrain {
 namespace cuda {
 
 __global__ void integrate(uint32_t n, float dt, float noise, uint64_t tickSeed,
-                          const float* inputNow, const float* external,
+                          float* synExc, float* synInh, float decayExc, float decayInh, float* resource, float recover,
+                          const float* external,
                           float* v, float* u, const float* a, const float* b, const float* c, const float* d,
                           uint8_t* fired, float* preTrace, float* postTrace, float decayPlus, float decayMinus) {
   const uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -29,7 +31,10 @@ __global__ void integrate(uint32_t n, float dt, float noise, uint64_t tickSeed,
   z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
   z ^= z >> 31;
   const float jitter = noise * static_cast<float>((z >> 40) * (1.0 / 16777216.0));
-  const float I = inputNow[i] + (external ? external[i] : 0.0f) + jitter;
+  const float I = synExc[i] + synInh[i] + (external ? external[i] : 0.0f) + jitter;
+  synExc[i] *= decayExc;
+  synInh[i] *= decayInh;
+  resource[i] += (1.0f - resource[i]) * recover;
   const float halfDt = 0.5f * dt;
   float vv = v[i], uu = u[i];
   vv += halfDt * (0.04f * vv * vv + 5.0f * vv + 140.0f - uu + I);
@@ -50,13 +55,18 @@ __global__ void collect(uint32_t n, const uint8_t* fired, uint32_t* list, uint32
   list[slot] = i;
 }
 
-/// One thread per spike: its synapses' weights land in the targets' next input.
-__global__ void deliver(uint32_t spikes, const uint32_t* list, const uint32_t* rowPtr, const uint32_t* targets,
-                        const float* weights, float* inputNext) {
+/// One thread per spike: its synapses' weights land in the targets' synaptic current (by source type).
+__global__ void deliver(uint32_t spikes, const uint32_t* list, const uint8_t* inhibitory, const uint32_t* rowPtr,
+                        const uint32_t* targets, const float* weights, float* synExc, float* synInh,
+                        float* resource, float keep) {
   const uint32_t s = blockIdx.x * blockDim.x + threadIdx.x;
   if (s >= spikes) return;
   const uint32_t i = list[s];
-  for (uint32_t k = rowPtr[i]; k < rowPtr[i + 1]; k++) atomicAdd(&inputNext[targets[k]], weights[k]);
+  float* dst = inhibitory[i] ? synInh : synExc;
+  // Short-term depression: an excitatory spike delivers what its resources allow, and spends a share of them.
+  const float efficacy = inhibitory[i] ? 1.0f : resource[i];
+  for (uint32_t k = rowPtr[i]; k < rowPtr[i + 1]; k++) atomicAdd(&dst[targets[k]], weights[k] * efficacy);
+  if (!inhibitory[i]) resource[i] *= keep;
 }
 
 /// Depression on the spiking neuron's outgoing excitatory synapses; potentiation on its incoming ones.

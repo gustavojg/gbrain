@@ -27,6 +27,14 @@ export interface NativeCortexConfig {
   fanIn: number;
   /** Input channels each neuron listens to. */
   inputFanIn: number;
+  /**
+   * Topography: the width of a neuron's receptive field as a fraction of the
+   * input channels (1 = it samples anywhere). Afferents in cortex are
+   * topographic (retinotopy, tonotopy): neighbours listen to neighbouring
+   * inputs, so a part of the input drives a part of the sheet fully — and
+   * completing the rest is the recurrent synapses' work.
+   */
+  topography: number;
   /** Current per unit of input, through the afferent weights. */
   inputGain: number;
   inhibitoryFraction: number;
@@ -59,7 +67,16 @@ export interface NativeCortexConfig {
   newWeight: number;
   /** Inhibitory plasticity: inhibition learns to balance each neuron's excitation (Vogels 2011), so recurrent drive can be strong without runaway. */
   inhibitoryPlasticity: boolean;
+  iEta: number;
   targetRate: number;
+  inhMax: number;
+  /** Synaptic current time constants (ms): what lets spikes sum in time. */
+  tauSynExc: number;
+  tauSynInh: number;
+  /** Short-term depression: what makes an assembly ignite and fade instead of taking the sheet over. */
+  shortTermDepression: boolean;
+  stdU: number;
+  stdTauRec: number;
 }
 
 const DEFAULT_CONFIG: NativeCortexConfig = {
@@ -67,6 +84,7 @@ const DEFAULT_CONFIG: NativeCortexConfig = {
   inputCount: 1000,
   fanIn: 100,
   inputFanIn: 50,
+  topography: 0.2,
   inputGain: 2.0,
   inhibitoryFraction: 0.2,
   inhibitoryAfferents: 0.3,
@@ -85,7 +103,14 @@ const DEFAULT_CONFIG: NativeCortexConfig = {
   pruneBelow: 0.15,
   newWeight: 1.0,
   inhibitoryPlasticity: true,
+  iEta: 0.002,
   targetRate: 0.05,
+  inhMax: 8.0,
+  tauSynExc: 5.0,
+  tauSynInh: 10.0,
+  shortTermDepression: true,
+  stdU: 0.3,
+  stdTauRec: 200,
 };
 
 export class NativeCortex extends BrainRegion {
@@ -126,19 +151,31 @@ export class NativeCortex extends BrainRegion {
       pruneBelow: cfg.pruneBelow,
       newWeight: cfg.newWeight,
       inhibitoryPlasticity: cfg.inhibitoryPlasticity,
+      iEta: cfg.iEta,
       targetRate: cfg.targetRate,
+      inhMax: cfg.inhMax,
+      tauSynExc: cfg.tauSynExc,
+      tauSynInh: cfg.tauSynInh,
+      shortTermDepression: cfg.shortTermDepression,
+      stdU: cfg.stdU,
+      stdTauRec: cfg.stdTauRec,
     });
     // The afferent projection, from the region's own random source: every
-    // excitatory neuron samples `inputFanIn` channels, an interneuron fewer.
+    // excitatory neuron samples `inputFanIn` channels within its receptive
+    // field (a window of the channels around its place in the sheet), an
+    // interneuron fewer.
     const random = mulberry32(cfg.seed ^ 0xaff);
     const rowPtr = new Uint32Array(cfg.neurons + 1);
     const cols: number[] = [];
     const weights: number[] = [];
+    const span = Math.max(1, Math.min(1, cfg.topography) * cfg.inputCount);
     for (let i = 0; i < cfg.neurons; i++) {
       rowPtr[i] = cols.length;
       const k = this.net.isInhibitory(i) ? Math.round(cfg.inputFanIn * cfg.inhibitoryAfferents) : cfg.inputFanIn;
+      const centre = ((i + 0.5) / cfg.neurons) * cfg.inputCount;
       for (let s = 0; s < k; s++) {
-        cols.push(Math.floor(random() * cfg.inputCount));
+        const channel = Math.floor(centre + (random() - 0.5) * span);
+        cols.push(((channel % cfg.inputCount) + cfg.inputCount) % cfg.inputCount);
         weights.push(0.2 + 0.8 * random());
       }
     }

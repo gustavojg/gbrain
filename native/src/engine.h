@@ -15,8 +15,11 @@
 //     & Gerstner 2008), on excitatory synapses only, gated by a global
 //     modulation factor (the neuromodulators' say), weights clipped to
 //     [0, wmax].
-//   - Spikes propagate with a one-tick delay: what fires at tick t drives its
-//     targets at tick t+1.
+//   - Spikes propagate with a one-tick delay and land as exponential synaptic
+//     currents: what fires at tick t drives its targets from tick t+1, fading
+//     with an AMPA-like time constant for excitatory synapses and a
+//     GABA_A-like one for inhibitory ones. That is what lets inputs sum in
+//     time (a recurrent assembly cannot hold itself up on one-tick pulses).
 //   - Multithreaded on CPU over neuron ranges; the same kernels exist for
 //     CUDA (engine_cuda.cu), selected at build time.
 //
@@ -46,6 +49,17 @@ struct NetworkConfig {
   float excToInhGain = 1.0f;
   /// Integration step (ms), as the brain's dt.
   float dt = 1.0f;
+  /// Synaptic current time constants (ms): excitatory (AMPA ≈ 5 ms) and
+  /// inhibitory (GABA_A ≈ 10 ms). 0 = a one-tick pulse, no temporal summation.
+  float tauSynExc = 5.0f, tauSynInh = 10.0f;
+  /// Short-term synaptic depression on excitatory synapses (Tsodyks & Markram
+  /// 1997), by presynaptic neuron: each spike spends a fraction `stdU` of the
+  /// neuron's synaptic resources, which recover with `stdTauRec` (ms). It is
+  /// what makes a cell assembly transient — it ignites and fades — instead of
+  /// a runaway attractor that outlives its input and answers to everything.
+  bool shortTermDepression = true;
+  float stdU = 0.3f;
+  float stdTauRec = 200.0f;
   /// Background current noise amplitude (uniform 0..noise), as the TS network adds.
   float noise = 0.05f;
   /// STDP
@@ -143,8 +157,8 @@ class Network {
   // Neuron state (structure of arrays).
   std::vector<float> v_, u_, a_, b_, c_, d_;
   std::vector<uint8_t> inhibitory_;
-  std::vector<float> input_;      // synaptic input accumulated for the NEXT tick
-  std::vector<float> inputNow_;   // synaptic input being consumed this tick
+  std::vector<float> synExc_, synInh_;  // synaptic currents (exponential), by source type
+  std::vector<float> resource_;         // short-term depression: synaptic resources per presynaptic neuron (1 = rested)
   std::vector<float> preTrace_, postTrace_;
   std::vector<uint8_t> firedFlag_;
   std::vector<uint32_t> fired_;
@@ -157,7 +171,7 @@ class Network {
   std::vector<uint32_t> inRowPtr_, inCols_;
   std::vector<float> inWeights_;
   std::vector<float> channelCurrent_;
-  // Per-thread accumulation buffers for spike delivery.
+  // Per-thread accumulation buffers for spike delivery ([0, n) excitatory sources, [n, 2n) inhibitory).
   std::vector<std::vector<float>> threadInput_;
   uint32_t threads_ = 1;
   uint64_t rng_;

@@ -30,6 +30,13 @@ export interface NativeNetworkOptions {
   pruneBelow?: number;
   newWeight?: number;
   dt?: number;
+  /** Synaptic current time constants (ms): excitatory (AMPA ≈ 5) and inhibitory (GABA_A ≈ 10); 0 = one-tick pulses. */
+  tauSynExc?: number;
+  tauSynInh?: number;
+  /** Short-term depression on excitatory synapses (Tsodyks & Markram 1997): a spike spends `stdU` of the presynaptic resources, which recover with `stdTauRec` ms. */
+  shortTermDepression?: boolean;
+  stdU?: number;
+  stdTauRec?: number;
   noise?: number;
   plastic?: boolean;
   aPlus?: number;

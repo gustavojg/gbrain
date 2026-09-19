@@ -105,12 +105,15 @@ segundo en CPU y en una GPU alquilada. Ver `README.md` para `BRAIN_TICK_HZ`.
 Izhikevich en arrays con paridad probada contra el modelo TypeScript, sinapsis CSR con
 transpuesta, interneuronas inhibitorias reales, STDP por trazas modulada, hilos en CPU,
 kernels CUDA escritos (sin compilar: no hay GPU aquí), addon de Node y `gbrain-bench`.
-En este Mac un millón de neuronas con 100 sinapsis corre a ~34 ticks/s (3,4× tiempo real a
-10 Hz) con ~0,3 % de actividad. Primera región sobre el motor hecha: la corteza nativa
+En este Mac un millón de neuronas con 100 sinapsis corre a ~58 ticks/s (5,8× tiempo real a
+10 Hz) con ~0,2 % de actividad. Primera región sobre el motor hecha: la corteza nativa
 (`GBRAIN_NATIVE=1`; asambleas excitatorias reproducibles y dispersas sin competición
-algorítmica; con plasticidad estructural la compleción desde media entrada se duplica pero no llega).
-Falta: plasticidad inhibitoria para el balance E/I, conectividad con estructura, neuromoduladores por región,
-retardos y oscilaciones, dendritas, y medir en GPU.
+algorítmica). El motor tiene corrientes sinápticas exponenciales, depresión a corto plazo,
+plasticidad estructural e inhibitoria, y la corteza nativa aferentes topográficas: con eso la
+**compleción de patrón es real** (media entrada trae de vuelta el 85–100 % del lado de la
+asamblea que la pista no alcanza, con especificidad y sin atractores permanentes).
+Falta: recurrentes con estructura y proyecciones entre regiones en el CSR, neuromoduladores
+por región, retardos y oscilaciones, dendritas, y medir en GPU.
 
 ## Escalera de hitos (criterio de éxito global)
 

@@ -33,6 +33,7 @@ class NativeNetwork : public Napi::ObjectWrap<NativeNetwork> {
       InstanceMethod("reset", &NativeNetwork::Reset),
       InstanceAccessor("neurons", &NativeNetwork::Neurons, nullptr),
       InstanceAccessor("synapses", &NativeNetwork::Synapses, nullptr),
+      InstanceAccessor("rewired", &NativeNetwork::Rewired, nullptr),
     });
     exports.Set("NativeNetwork", func);
     exports.Set("backend", Napi::String::New(env, gbrain::Network::backend()));
@@ -55,6 +56,13 @@ class NativeNetwork : public Napi::ObjectWrap<NativeNetwork> {
       cfg.excMax = static_cast<float>(num("excMax", cfg.excMax));
       cfg.inhWeight = static_cast<float>(num("inhWeight", cfg.inhWeight));
       cfg.excToInhGain = static_cast<float>(num("excToInhGain", cfg.excToInhGain));
+      cfg.rewireEvery = static_cast<uint32_t>(num("rewireEvery", cfg.rewireEvery));
+      cfg.coactiveSpikes = static_cast<uint32_t>(num("coactiveSpikes", cfg.coactiveSpikes));
+      cfg.rewiresPerEvent = static_cast<uint32_t>(num("rewiresPerEvent", cfg.rewiresPerEvent));
+      cfg.pruneBelow = static_cast<float>(num("pruneBelow", cfg.pruneBelow));
+      cfg.newWeight = static_cast<float>(num("newWeight", cfg.newWeight));
+      Napi::Value structural = o.Get("structural");
+      if (structural.IsBoolean()) cfg.structural = structural.As<Napi::Boolean>().Value();
       cfg.dt = static_cast<float>(num("dt", cfg.dt));
       cfg.noise = static_cast<float>(num("noise", cfg.noise));
       cfg.aPlus = static_cast<float>(num("aPlus", cfg.aPlus));
@@ -232,6 +240,7 @@ class NativeNetwork : public Napi::ObjectWrap<NativeNetwork> {
 
   Napi::Value Neurons(const Napi::CallbackInfo& info) { return Napi::Number::New(info.Env(), net_->neurons()); }
   Napi::Value Synapses(const Napi::CallbackInfo& info) { return Napi::Number::New(info.Env(), static_cast<double>(net_->synapses())); }
+  Napi::Value Rewired(const Napi::CallbackInfo& info) { return Napi::Number::New(info.Env(), static_cast<double>(net_->rewired())); }
 
   std::unique_ptr<gbrain::Network> net_;
 };

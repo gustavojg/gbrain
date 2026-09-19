@@ -48,6 +48,15 @@ export interface NativeCortexConfig {
   aPlus: number;
   aMinus: number;
   wMax: number;
+  /** Structural plasticity: synapses grow between neurons that fire together, the weakest go (what completes an assembly from a part of it). */
+  structural: boolean;
+  rewireEvery: number;
+  /** Spikes in a window that make a neuron part of the coactive core. */
+  coactiveSpikes: number;
+  rewiresPerEvent: number;
+  pruneBelow: number;
+  /** A new synapse between coactive neurons is born strong: it is there to carry the assembly. */
+  newWeight: number;
 }
 
 const DEFAULT_CONFIG: NativeCortexConfig = {
@@ -65,7 +74,13 @@ const DEFAULT_CONFIG: NativeCortexConfig = {
   plastic: true,
   aPlus: 0.015,
   aMinus: 0.010,
-  wMax: 1.0,
+  wMax: 2.0,
+  structural: true,
+  rewireEvery: 60,
+  coactiveSpikes: 3,
+  rewiresPerEvent: 4,
+  pruneBelow: 0.15,
+  newWeight: 1.0,
 };
 
 export class NativeCortex extends BrainRegion {
@@ -99,6 +114,12 @@ export class NativeCortex extends BrainRegion {
       excMax: cfg.excMax,
       inhWeight: cfg.inhWeight,
       excToInhGain: cfg.excToInhGain,
+      structural: cfg.structural,
+      rewireEvery: cfg.rewireEvery,
+      coactiveSpikes: cfg.coactiveSpikes,
+      rewiresPerEvent: cfg.rewiresPerEvent,
+      pruneBelow: cfg.pruneBelow,
+      newWeight: cfg.newWeight,
     });
     // The afferent projection, from the region's own random source: every
     // excitatory neuron samples `inputFanIn` channels, an interneuron fewer.
@@ -162,6 +183,11 @@ export class NativeCortex extends BrainRegion {
 
   get synapses(): number {
     return this.net.synapses;
+  }
+
+  /** Synapses rewired so far by structural plasticity. */
+  get rewired(): number {
+    return this.net.rewired;
   }
 
   /** Recurrent weights, for inspection. */

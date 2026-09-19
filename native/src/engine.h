@@ -53,6 +53,17 @@ struct NetworkConfig {
   float aPlus = 0.01f, aMinus = 0.012f;
   float tauPlus = 20.0f, tauMinus = 20.0f;
   float wMax = 1.0f;
+  /// Structural plasticity: every `rewireEvery` ticks, each excitatory neuron
+  /// that has been active in the window swaps up to `rewiresPerEvent` of its
+  /// weakest synapses (below `pruneBelow`) for new ones onto neurons that were
+  /// active in the same window (synaptogenesis between coactive neurons;
+  /// Holtmaat & Svoboda 2009), born at `newWeight`.
+  bool structural = false;
+  uint32_t rewireEvery = 50;
+  uint32_t coactiveSpikes = 2;
+  uint32_t rewiresPerEvent = 2;
+  float pruneBelow = 0.05f;
+  float newWeight = 0.3f;
   /// Threads for the CPU backend (0 = hardware concurrency).
   uint32_t threads = 0;
   uint64_t seed = 0x5eed;
@@ -107,12 +118,16 @@ class Network {
   /// Resets membrane state and traces (not the weights).
   void resetState();
 
+  /// Synapses rewired so far (structural plasticity).
+  uint64_t rewired() const { return rewired_; }
+
   /// Name of the backend in use ("cpu" or "cuda").
   static const char* backend();
 
  private:
   void buildRandomSynapses();
   void buildTranspose();
+  void rewire();
   void parallelFor(uint32_t count, const std::function<void(uint32_t, uint32_t, uint32_t)>& body);
 
   NetworkConfig cfg_;
@@ -139,6 +154,9 @@ class Network {
   uint64_t rng_;
   float uniform();
   uint32_t tick_ = 0;
+  // Structural plasticity: spikes per neuron since the last rewiring, and the count of rewirings.
+  std::vector<uint32_t> spikeCount_;
+  uint64_t rewired_ = 0;
 };
 
 }  // namespace gbrain

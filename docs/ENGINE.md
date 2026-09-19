@@ -88,11 +88,16 @@ criterio que la suite usa para el hipocampo y la corteza prefrontal; la respuest
 dispersa (un 27 % de las excitatorias dispara alguna vez en media presentación); tras 40
 repeticiones las sinapsis entre las neuronas de la asamblea (el 5 % más sostenido) crecen
 más que el resto (+0,21 frente a +0,12); dentro del cerebro dispara al ver algo y calla si
-no. Lo que **no** hace aún: completar la respuesta desde media entrada (r 0,13 → 0,17).
-Con 100 sinapsis recurrentes al azar, cada miembro de la asamblea recibe un puñado de
-sinapsis de su asamblea: pocas para completarla aunque estén al máximo. Hace falta
-conectividad más densa dentro de la asamblea, es decir, plasticidad estructural (crear
-sinapsis entre las neuronas que disparan juntas), que es lo siguiente.
+no. Y con **plasticidad estructural** (cada 60 ticks, las neuronas excitatorias que
+dispararon al menos tres veces forman el núcleo coactivo; cada una cambia hasta cuatro de
+sus sinapsis más débiles, por debajo de 0,15, por sinapsis nuevas hacia otras del núcleo,
+nacidas a 1,0; el abanico se mantiene fijo, la transpuesta se reconstruye) media entrada
+trae de vuelta el doble que antes (r 0,11 → 0,22). Eso es el principio de la compleción,
+no la compleción: con el doble de repeticiones se queda en 0,21. Lo que la frena, a falta
+de medirlo, es que la excitación recurrente sigue siendo pequeña frente a la aferente y a
+la inhibición de retroalimentación que la sigue; la respuesta es tratar la escala de las
+sinapsis nuevas y la inhibición juntas (balance E/I por aprendizaje inhibitorio), que es lo
+siguiente.
 
 ## Lo que falta para que el cerebro corra encima
 
@@ -100,10 +105,10 @@ sinapsis entre las neuronas que disparan juntas), que es lo siguiente.
    actuales (visual, auditiva, de color, de partes) siguen siendo plantillas densas en
    TypeScript; pasarlas al motor significa que sus categorías nazcan de asambleas, no de
    engramas k-WTA, y eso pide primero la plasticidad estructural.
-2. **Plasticidad estructural y conectividad con estructura**: crear sinapsis entre las
-   neuronas que disparan juntas (y podar las inútiles), para que las asambleas se completen;
-   y proyecciones entre regiones (tálamo → corteza) como bloques del CSR con pesos iniciales
-   por proyección.
+2. **Compleción y conectividad con estructura**: la plasticidad estructural existe y
+   duplica la compleción; para que complete de verdad hacen falta plasticidad inhibitoria
+   (balance E/I aprendido, Vogels 2011) y sinapsis nuevas más fuertes; y proyecciones entre
+   regiones (tálamo → corteza) como bloques del CSR con pesos iniciales por proyección.
 3. **Neuromoduladores regionales**: el factor de modulación es global; debe ser por
    región (dopamina en el estriado, acetilcolina en la corteza…).
 4. **Retardos axonales** por sinapsis (hoy un tick para todas) y **oscilaciones**: con

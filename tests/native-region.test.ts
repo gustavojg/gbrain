@@ -10,12 +10,10 @@
  *   2. SPARSE      — the interneurons keep the response to a few percent.
  *   3. ASSEMBLY    — after an input has been repeated, the recurrent synapses
  *                    between the neurons of its assembly have grown more than
- *                    the rest (Hebb: what fires together wires together).
- *                    Completion from half the input is reported, not counted:
- *                    with a hundred random recurrent synapses per neuron an
- *                    assembly of a tenth has ~9 synapses into each member —
- *                    too few to complete it even at full weight (that needs
- *                    denser within-assembly connectivity: structural plasticity).
+ *                    the rest (Hebb: what fires together wires together), and
+ *                    structural plasticity has grown synapses between them, so
+ *                    that half the input brings back twice as much of the
+ *                    response as before (completion has begun; it is not full).
  *   4. IN THE BRAIN — with GBRAIN_NATIVE=1 the brain has the region, fed by
  *                    the visual relay: it fires when something is seen and
  *                    is quiet otherwise.
@@ -121,7 +119,11 @@ console.log('\n3. ASSEMBLY');
     `within ${within >= 0 ? '+' : ''}${within.toFixed(3)} (${inN} of ${inN + outN} excitatory synapses, assembly of ${assembly.size}) vs rest ${rest >= 0 ? '+' : ''}${rest.toFixed(3)}`);
   const full = present(cortex, A, 60, false);
   const after = correlation(present(cortex, half(A), 60, false), full);
-  console.log(`   ${after > before + 0.1 ? '🎉' : 'ℹ️ '} half the input brings back r = ${before.toFixed(2)} → ${after.toFixed(2)} of the response (completion needs denser within-assembly connectivity)`);
+  check('structural plasticity rewires synapses toward coactive neurons', cortex.rewired > 100, `${cortex.rewired} synapses rewired`);
+  // Honest measure: structural plasticity doubles what half the input brings
+  // back, and no more so far (it plateaus near r ≈ 0.2 with twice the
+  // repetitions); full completion is still to come.
+  check('half the input brings back about twice as much of the response as before', after >= before * 1.8 && after >= 0.2, `r = ${before.toFixed(2)} → ${after.toFixed(2)}`);
 }
 
 // ── 4. IN THE BRAIN ─────────────────────────────────────────────────────────

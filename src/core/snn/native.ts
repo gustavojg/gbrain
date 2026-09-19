@@ -17,6 +17,13 @@ export interface NativeNetworkOptions {
   excMax?: number;
   inhWeight?: number;
   excToInhGain?: number;
+  /** Structural plasticity: synapses grown between coactive neurons, the weakest pruned. */
+  structural?: boolean;
+  rewireEvery?: number;
+  coactiveSpikes?: number;
+  rewiresPerEvent?: number;
+  pruneBelow?: number;
+  newWeight?: number;
   dt?: number;
   noise?: number;
   plastic?: boolean;
@@ -33,6 +40,8 @@ export interface NativeNetworkOptions {
 export interface NativeNetwork {
   readonly neurons: number;
   readonly synapses: number;
+  /** Synapses rewired so far by structural plasticity. */
+  readonly rewired: number;
   /** One tick: external currents per neuron (or null) and the neuromodulatory gain on plasticity; returns the neurons that fired. */
   step(externalCurrent: Float32Array | null, modulation?: number): Uint32Array;
   /** One tick driven by input channels through the afferent projection. */

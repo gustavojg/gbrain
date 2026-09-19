@@ -46,6 +46,7 @@ Network::Network(const NetworkConfig& cfg) : cfg_(cfg), rng_(cfg.seed) {
   preTrace_.assign(n, 0.0f);
   postTrace_.assign(n, 0.0f);
   firedFlag_.assign(n, 0);
+  spikeCount_.assign(n, 0);
   // Interneurons: a fixed fraction, spread through the population.
   const uint32_t inhibitoryCount = static_cast<uint32_t>(n * cfg_.inhibitoryFraction);
   for (uint32_t i = 0; i < n; i++) {
@@ -230,6 +231,7 @@ StepStats Network::step(const float* externalCurrent, float modulation) {
     }
   }
   stats.fired = static_cast<uint32_t>(fired_.size());
+  if (cfg_.structural) for (uint32_t s = 0; s < stats.fired; s++) spikeCount_[fired_[s]]++;
 
   // 3. Deliver: each spike adds its synapses' weights to its targets' input
   //    for the next tick. Threads accumulate privately, then reduce.
@@ -286,7 +288,49 @@ StepStats Network::step(const float* externalCurrent, float modulation) {
       }
     }
   }
+  // 5. Structural plasticity, now and then.
+  if (cfg_.structural && cfg_.rewireEvery > 0 && tick_ % cfg_.rewireEvery == 0) rewire();
   return stats;
+}
+
+// Synaptogenesis between coactive neurons. Neurons that fired at least
+// `coactiveSpikes` times since the last rewiring form the coactive set; each
+// excitatory member gives up its weakest synapses (below `pruneBelow`) and
+// grows new ones onto other members it is not yet connected to. Fan-in stays
+// fixed (slots are reused), so the memory does not grow. The transpose is
+// rebuilt afterwards; the traces of the new synapses start at zero.
+void Network::rewire() {
+  const uint32_t n = cfg_.neurons;
+  std::vector<uint32_t> coactive;
+  for (uint32_t i = 0; i < n; i++) {
+    if (spikeCount_[i] >= cfg_.coactiveSpikes && !inhibitory_[i]) coactive.push_back(i);
+  }
+  std::fill(spikeCount_.begin(), spikeCount_.end(), 0u);
+  if (coactive.size() < 2) return;
+  bool changed = false;
+  for (uint32_t pre : coactive) {
+    for (uint32_t r = 0; r < cfg_.rewiresPerEvent; r++) {
+      // The weakest synapse of the row, if it is weak enough to give up.
+      uint32_t weakest = rowPtr_[pre];
+      for (uint32_t k = rowPtr_[pre]; k < rowPtr_[pre + 1]; k++) if (weights_[k] < weights_[weakest]) weakest = k;
+      if (rowPtr_[pre + 1] == rowPtr_[pre] || weights_[weakest] >= cfg_.pruneBelow) break;
+      // A coactive partner it does not reach yet.
+      uint32_t target = n;
+      for (uint32_t attempt = 0; attempt < 8 && target == n; attempt++) {
+        const uint32_t candidate = coactive[static_cast<uint32_t>(uniform() * coactive.size())];
+        if (candidate == pre) continue;
+        bool already = false;
+        for (uint32_t k = rowPtr_[pre]; k < rowPtr_[pre + 1]; k++) if (targets_[k] == candidate) { already = true; break; }
+        if (!already) target = candidate;
+      }
+      if (target == n) break;
+      targets_[weakest] = target;
+      weights_[weakest] = cfg_.newWeight;
+      rewired_++;
+      changed = true;
+    }
+  }
+  if (changed) buildTranspose();
 }
 
 }  // namespace gbrain

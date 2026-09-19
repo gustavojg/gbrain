@@ -39,6 +39,14 @@
   coactivas cambian sus sinapsis más débiles por sinapsis nuevas hacia otras del núcleo
   coactivo (sinaptogénesis entre neuronas coactivas; Holtmaat & Svoboda 2009), con el abanico
   fijo para que la memoria no crezca.
+- **Conectividad con estructura por bloques**: una red son poblaciones más bloques de
+  sinapsis. Cada bloque dice que las neuronas de un rango envían `fanOut` sinapsis a otro
+  rango, alrededor de su posición relativa (una gaussiana de anchura `sigma`, como fracción
+  del rango destino: conectividad local o topográfica) o a cualquier parte (`sigma` 0), con
+  pesos en un intervalo y una ganancia propia sobre las interneuronas del destino (inhibición
+  de alimentación directa). Las interneuronas solo proyectan dentro de su población. Así se
+  escriben las recurrentes locales y de largo alcance de un área, la proyección de un área a
+  la siguiente y la retroalimentación: la forma de que el cerebro entero quepa en un CSR.
 - **Hilos** en CPU sobre rangos de neuronas; la entrega de impulsos acumula por hilo y
   reduce. Los mismos kernels existen para **CUDA** (`engine_cuda.cu`): integración por
   neurona, compactación de impulsos, entrega con `atomicAdd`, plasticidad. Se compilan con
@@ -92,6 +100,12 @@ Calibrar esto costó: con recurrentes fuertes todas las neuronas acababan dispar
 ganancia aferente alta la entrada sola las disparaba, y con interneuronas poco acopladas la
 inhibición no se enteraba de nada.
 
+Sus recurrentes tienen estructura: el 70 % de las sinapsis de una neurona son locales (una
+gaussiana del 5 % de la lámina alrededor de su sitio, las conexiones horizontales densas de
+un vecindario cortical) y el 30 % llegan a cualquier parte (las horizontales de largo alcance
+que unen partes lejanas de un patrón). Con eso la compleción se mantiene (81–100 % del lado
+no iluminado en 12 combinaciones) y las sinapsis dentro de la asamblea son el doble.
+
 Se activa con `GBRAIN_NATIVE=1` (necesita el addon compilado): el cerebro añade la región
 `nativeCortex` alimentada por el relé visual; sale en el dashboard como "Native Ctx (C++)".
 Sus pesos recurrentes persisten en el estado del cerebro (2 MB a 5 000 neuronas).
@@ -130,17 +144,46 @@ corteza, una parte del patrón que excita una parte de la asamblea. Límite cono
 asamblea medida es pequeña (30–60 neuronas sostenidas de 8 000) y con sinapsis nuevas más
 fuertes (2,0) completa más pero pierde la especificidad (otra entrada también la enciende).
 
+## Dos áreas en un mismo motor
+
+`tests/native-areas.test.ts` (en `npm run test:engine`) es el primer paso hacia el cerebro
+entero dentro del motor: dos áreas de 5 000 neuronas comparten una red. El área 1 recibe los
+canales de entrada por una proyección aferente topográfica; el área 2 recibe **solo los
+impulsos del área 1** por un bloque de alimentación directa topográfico (100 sinapsis por
+neurona, pesos 0,8–2,0, inhibición directa a la mitad), y devuelve una retroalimentación
+dispersa y débil. Cada área tiene sus recurrentes locales y de largo alcance y sus
+interneuronas. Lo que se cumple: el área 2 dispara cuando dispara el área 1 y calla si no,
+de forma dispersa (3 % por tick); la misma entrada dos veces excita a las mismas neuronas
+del área 2 (r = 0,83); la proyección misma aprende (STDP mueve 312 000 de 400 000 sinapsis de
+alimentación directa); tras repetir, media entrada en el área 1 trae de vuelta el 70 % del
+lado de la asamblea del área 2 que la pista no alcanza; nada sigue disparando en silencio.
+
+**Lo que no se cumple, medido y declarado en el test sin contar**: el área 2 no distingue
+dos entradas (r = 0,78 entre las respuestas a A y a B, frente a 0,28 en el área 1). La causa
+está medida: el área 2 responde sobre todo a la **volea de arranque** del área 1 (cuando la
+entrada empieza, toda neurona del área 1 con algún canal iluminado dispara una vez, y esa
+volea es igual para cualquier entrada); el disparo sostenido y selectivo del área 1 (que sí
+distingue: r 0,77 igual frente a 0,09 distinto en la segunda mitad de la presentación) es
+demasiado disperso y débil para excitar al área 2 a través de cien sinapsis al azar (35
+impulsos en la segunda mitad frente a 7 358 en toda la presentación). Y la repetición lo
+empeora: la volea sincrónica potencia todas las sinapsis de alimentación directa por igual
+(tras 20 lecciones de A y B, r = 0,97 entre las respuestas). Lo que falta es lo que la
+corteza tiene para esto: **normalización sináptica** (depresión heterosináptica, escalado)
+para que la potenciación sea competitiva, y **corrientes lentas (NMDA)** que dejen sumar la
+entrada sostenida y dispersa. Es lo siguiente del motor.
+
 ## Lo que falta para que el cerebro corra encima
 
 1. **Regiones sobre el motor**: hecha la primera (la corteza nativa, arriba). Las cortezas
    actuales (visual, auditiva, de color, de partes) siguen siendo plantillas densas en
    TypeScript; pasarlas al motor significa que sus categorías nazcan de asambleas, no de
    engramas k-WTA, y eso pide primero la plasticidad estructural.
-2. **Conectividad con estructura**: la compleción funciona con aferentes topográficas y
-   recurrentes al azar; faltan recurrentes con estructura (más densas entre vecinas) y
-   proyecciones entre regiones (tálamo → corteza) como bloques del CSR con pesos iniciales
-   por proyección; y que la depresión y la facilitación a corto plazo sean por tipo de
-   sinapsis (hoy la depresión es por neurona presináptica excitatoria).
+2. **Selectividad a través de una proyección**: los bloques existen (recurrentes locales y
+   de largo alcance, proyección entre áreas, retroalimentación) y la compleción cruza la
+   proyección, pero el área receptora no distingue entradas (arriba). Hacen falta
+   normalización sináptica para una potenciación competitiva y corrientes NMDA lentas; y
+   que la depresión y la facilitación a corto plazo sean por tipo de sinapsis (hoy la
+   depresión es por neurona presináptica excitatoria).
 3. **Neuromoduladores regionales**: el factor de modulación es global; debe ser por
    región (dopamina en el estriado, acetilcolina en la corteza…).
 4. **Retardos axonales** por sinapsis (hoy un tick para todas) y **oscilaciones**: con

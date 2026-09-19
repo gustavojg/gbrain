@@ -112,8 +112,12 @@ algorítmica). El motor tiene corrientes sinápticas exponenciales, depresión a
 plasticidad estructural e inhibitoria, y la corteza nativa aferentes topográficas: con eso la
 **compleción de patrón es real** (media entrada trae de vuelta el 85–100 % del lado de la
 asamblea que la pista no alcanza, con especificidad y sin atractores permanentes).
-Falta: recurrentes con estructura y proyecciones entre regiones en el CSR, neuromoduladores
-por región, retardos y oscilaciones, dendritas, y medir en GPU.
+La conectividad se construye por bloques (recurrentes locales + largo alcance en la corteza
+nativa; dos áreas en un motor con proyección y retroalimentación: relevo, aprendizaje y
+compleción a través de la proyección funcionan; la selectividad del área receptora no, por la
+volea de arranque y la potenciación no competitiva, declarado en el test).
+Falta: normalización sináptica y corrientes NMDA, neuromoduladores por región, retardos y
+oscilaciones, dendritas, y medir en GPU.
 
 ## Escalera de hitos (criterio de éxito global)
 

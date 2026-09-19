@@ -25,6 +25,15 @@ export interface NativeCortexConfig {
   inputCount: number;
   /** Recurrent synapses per neuron. */
   fanIn: number;
+  /**
+   * Structured recurrents: this share of a neuron's synapses stay local
+   * (Gaussian of width `localSigma`, a fraction of the sheet, around its
+   * place: the dense horizontal connections within a cortical neighbourhood);
+   * the rest reach anywhere (the sparse long-range horizontal connections
+   * that bind distant parts of a pattern). 0 = all random, as before.
+   */
+  localShare: number;
+  localSigma: number;
   /** Input channels each neuron listens to. */
   inputFanIn: number;
   /**
@@ -83,6 +92,8 @@ const DEFAULT_CONFIG: NativeCortexConfig = {
   neurons: 10_000,
   inputCount: 1000,
   fanIn: 100,
+  localShare: 0.7,
+  localSigma: 0.05,
   inputFanIn: 50,
   topography: 0.2,
   inputGain: 2.0,
@@ -132,9 +143,14 @@ export class NativeCortex extends BrainRegion {
     // engine holds the real ones, so the base matrix is kept minimal (1 × inputs).
     super('nativeCortex', 'Corteza Nativa (motor C++)', 1, cfg.inputCount);
     this.cfg = cfg;
+    const local = Math.round(cfg.fanIn * Math.max(0, Math.min(1, cfg.localShare)));
     this.net = createNativeNetwork({
       neurons: cfg.neurons,
       fanIn: cfg.fanIn,
+      blocks: local > 0 ? [
+        { srcFrom: 0, srcTo: cfg.neurons, dstFrom: 0, dstTo: cfg.neurons, fanOut: local, wMin: 0, wMax: cfg.excMax, sigma: cfg.localSigma },
+        { srcFrom: 0, srcTo: cfg.neurons, dstFrom: 0, dstTo: cfg.neurons, fanOut: cfg.fanIn - local, wMin: 0, wMax: cfg.excMax, sigma: 0 },
+      ] : undefined,
       inhibitoryFraction: cfg.inhibitoryFraction,
       seed: cfg.seed,
       plastic: cfg.plastic,

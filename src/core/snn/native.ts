@@ -9,9 +9,32 @@
  */
 import { createRequire } from 'module';
 
+/**
+ * A block of connectivity: every neuron in [srcFrom, srcTo) sends `fanOut`
+ * synapses into [dstFrom, dstTo), drawn around its relative position with a
+ * Gaussian of width `sigma` (a fraction of the destination range; 0 =
+ * anywhere). An area's local and long-range recurrents, a projection from one
+ * area to the next, a feedback path: a network is populations plus blocks.
+ */
+export interface SynapseBlock {
+  srcFrom: number;
+  srcTo: number;
+  dstFrom: number;
+  dstTo: number;
+  fanOut: number;
+  wMin?: number;
+  wMax?: number;
+  sigma?: number;
+  /** Gain on this block's synapses onto interneurons (feedforward inhibition); omitted = the network's `excToInhGain`. */
+  inhGain?: number;
+}
+
 export interface NativeNetworkOptions {
   neurons: number;
+  /** Random recurrent fan-in, used when no `blocks` are given. */
   fanIn?: number;
+  /** Structured connectivity: the synapses are built from these blocks instead of at random. */
+  blocks?: SynapseBlock[];
   inhibitoryFraction?: number;
   excMin?: number;
   excMax?: number;

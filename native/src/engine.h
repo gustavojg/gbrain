@@ -35,10 +35,33 @@
 
 namespace gbrain {
 
+/// A block of connectivity: every neuron in [srcFrom, srcTo) sends `fanOut`
+/// synapses into [dstFrom, dstTo). With `sigma` > 0 the targets are drawn
+/// around the source's relative position in the destination range (a
+/// Gaussian of that width, as a fraction of the range: local or topographic
+/// connectivity); with 0 they are drawn anywhere in it. Weights are uniform in
+/// [wMin, wMax] for excitatory sources (times `excToInhGain` onto
+/// interneurons); inhibitory sources use the network's `inhWeight`, and only
+/// project within their own population (source and destination ranges equal).
+/// A network is populations plus blocks: an area's local and long-range
+/// recurrents, the projection from one area to the next, the feedback.
+struct SynapseBlock {
+  uint32_t srcFrom = 0, srcTo = 0, dstFrom = 0, dstTo = 0;
+  uint32_t fanOut = 0;
+  float wMin = 0.0f, wMax = 0.5f;
+  float sigma = 0.0f;
+  /// Gain on this block's synapses onto interneurons (feedforward inhibition); < 0 = the network's `excToInhGain`.
+  float inhGain = -1.0f;
+};
+
 struct NetworkConfig {
   uint32_t neurons = 10000;
-  /// Synapses per neuron (fan-in), drawn at random when the network is built.
+  /// Synapses per neuron (fan-in), drawn at random when the network is built
+  /// (when `blocks` is empty).
   uint32_t fanIn = 100;
+  /// Structured connectivity: when given, the synapses are built from these
+  /// blocks instead of at random over the whole population.
+  std::vector<SynapseBlock> blocks;
   /// Fraction of neurons that are inhibitory interneurons (fast spiking).
   float inhibitoryFraction = 0.2f;
   /// Initial excitatory weight range and the inhibitory weight (negative).
@@ -149,7 +172,9 @@ class Network {
 
  private:
   void buildRandomSynapses();
+  void buildBlockSynapses();
   void buildTranspose();
+  float gaussian();
   void rewire();
   void parallelFor(uint32_t count, const std::function<void(uint32_t, uint32_t, uint32_t)>& body);
 

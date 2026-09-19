@@ -61,7 +61,61 @@ Network::Network(const NetworkConfig& cfg) : cfg_(cfg), rng_(cfg.seed) {
     u_[i] = p.b * v_[i];
   }
   threadInput_.assign(threads_, std::vector<float>(static_cast<size_t>(n) * 2, 0.0f));
-  buildRandomSynapses();
+  if (cfg_.blocks.empty()) buildRandomSynapses(); else buildBlockSynapses();
+}
+
+// Standard normal by Box–Muller, from the network's own generator.
+float Network::gaussian() {
+  const float u1 = std::max(uniform(), 1e-7f), u2 = uniform();
+  return std::sqrt(-2.0f * std::log(u1)) * std::cos(6.2831853f * u2);
+}
+
+// Synapses from connectivity blocks (CSR by presynaptic neuron): a neuron's
+// row is the concatenation of the blocks it is a source in.
+void Network::buildBlockSynapses() {
+  const uint32_t n = cfg_.neurons;
+  rowPtr_.assign(n + 1, 0);
+  // Interneurons project only within their own population (a block whose
+  // source and destination ranges coincide): cortical inhibition is local,
+  // there is no long-range inhibitory projection.
+  const auto projects = [&](const SynapseBlock& b, uint32_t i) -> bool {
+    return !inhibitory_[i] || (b.srcFrom == b.dstFrom && b.srcTo == b.dstTo);
+  };
+  for (const SynapseBlock& b : cfg_.blocks) {
+    if (b.srcTo > n || b.dstTo > n || b.srcFrom >= b.srcTo || b.dstFrom >= b.dstTo) continue;
+    for (uint32_t i = b.srcFrom; i < b.srcTo; i++) if (projects(b, i)) rowPtr_[i + 1] += b.fanOut;
+  }
+  for (uint32_t i = 0; i < n; i++) rowPtr_[i + 1] += rowPtr_[i];
+  targets_.resize(rowPtr_[n]);
+  weights_.resize(rowPtr_[n]);
+  std::vector<uint32_t> fill(rowPtr_.begin(), rowPtr_.end() - 1);
+  for (const SynapseBlock& b : cfg_.blocks) {
+    if (b.srcTo > n || b.dstTo > n || b.srcFrom >= b.srcTo || b.dstFrom >= b.dstTo) continue;
+    const uint32_t dstRange = b.dstTo - b.dstFrom, srcRange = b.srcTo - b.srcFrom;
+    for (uint32_t i = b.srcFrom; i < b.srcTo; i++) {
+      if (!projects(b, i)) continue;
+      for (uint32_t s = 0; s < b.fanOut; s++) {
+        uint32_t t;
+        if (b.sigma > 0.0f) {
+          // Around the source's place in the destination range, wrapped (a ring, no edge effects).
+          const float centre = (static_cast<float>(i - b.srcFrom) + 0.5f) / srcRange * dstRange;
+          float offset = centre + gaussian() * b.sigma * dstRange;
+          offset = std::fmod(offset, static_cast<float>(dstRange));
+          if (offset < 0.0f) offset += dstRange;
+          t = b.dstFrom + std::min(dstRange - 1, static_cast<uint32_t>(offset));
+        } else {
+          t = b.dstFrom + static_cast<uint32_t>(uniform() * dstRange);
+        }
+        if (t == i) t = b.dstFrom + (t - b.dstFrom + 1) % dstRange;
+        const uint32_t slot = fill[i]++;
+        targets_[slot] = t;
+        const float gain = b.inhGain < 0.0f ? cfg_.excToInhGain : b.inhGain;
+        const float exc = (b.wMin + uniform() * (b.wMax - b.wMin)) * (inhibitory_[t] ? gain : 1.0f);
+        weights_[slot] = inhibitory_[i] ? cfg_.inhWeight : exc;
+      }
+    }
+  }
+  buildTranspose();
 }
 
 Network::~Network() = default;

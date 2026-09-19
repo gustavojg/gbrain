@@ -85,6 +85,34 @@ class NativeNetwork : public Napi::ObjectWrap<NativeNetwork> {
       cfg.seed = static_cast<uint64_t>(num("seed", static_cast<double>(cfg.seed)));
       Napi::Value plastic = o.Get("plastic");
       if (plastic.IsBoolean()) cfg.plastic = plastic.As<Napi::Boolean>().Value();
+      Napi::Value blocks = o.Get("blocks");
+      if (blocks.IsArray()) {
+        Napi::Array arr = blocks.As<Napi::Array>();
+        for (uint32_t k = 0; k < arr.Length(); k++) {
+          Napi::Value item = arr.Get(k);
+          if (!item.IsObject()) continue;
+          Napi::Object bo = item.As<Napi::Object>();
+          auto bnum = [&](const char* key, double fallback) -> double {
+            Napi::Value v = bo.Get(key);
+            return v.IsNumber() ? v.As<Napi::Number>().DoubleValue() : fallback;
+          };
+          gbrain::SynapseBlock b;
+          b.srcFrom = static_cast<uint32_t>(bnum("srcFrom", 0));
+          b.srcTo = static_cast<uint32_t>(bnum("srcTo", 0));
+          b.dstFrom = static_cast<uint32_t>(bnum("dstFrom", 0));
+          b.dstTo = static_cast<uint32_t>(bnum("dstTo", 0));
+          b.fanOut = static_cast<uint32_t>(bnum("fanOut", 0));
+          b.wMin = static_cast<float>(bnum("wMin", b.wMin));
+          b.wMax = static_cast<float>(bnum("wMax", b.wMax));
+          b.sigma = static_cast<float>(bnum("sigma", 0));
+          b.inhGain = static_cast<float>(bnum("inhGain", -1));
+          if (b.srcTo > cfg.neurons || b.dstTo > cfg.neurons || b.srcFrom >= b.srcTo || b.dstFrom >= b.dstTo) {
+            Napi::RangeError::New(env, "a synapse block's ranges must be non-empty and within the population").ThrowAsJavaScriptException();
+            return;
+          }
+          cfg.blocks.push_back(b);
+        }
+      }
     }
     if (cfg.neurons == 0 || cfg.neurons > 50000000u) {
       Napi::RangeError::New(env, "neurons must be in [1, 50 000 000]").ThrowAsJavaScriptException();

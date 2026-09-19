@@ -1418,21 +1418,35 @@ function rmsOf(samples) {
 }
 
 /** Fundamental frequency by normalized autocorrelation (70–500 Hz); 0 if unvoiced. */
+/**
+ * The pitch of a frame by normalized autocorrelation, 70–500 Hz. Each lag is
+ * normalized by the energy of the two stretches actually compared (dividing
+ * by the whole frame's energy, as before, capped a low male voice at
+ * r ≈ 0.5 and read most of it as unvoiced). Prefers the longest lag among
+ * near-equal peaks, so a strong second harmonic does not halve the period.
+ */
 function pitchOf(samples, sampleRate) {
+  const n = samples.length;
   const minLag = Math.floor(sampleRate / 500);
-  const maxLag = Math.min(samples.length - 1, Math.ceil(sampleRate / 70));
-  let energy = 0;
-  for (let i = 0; i < samples.length; i++) energy += samples[i] * samples[i];
-  if (energy === 0) return 0;
+  const maxLag = Math.min(n >> 1, Math.ceil(sampleRate / 70));
   let bestLag = 0;
   let best = 0;
   for (let lag = minLag; lag <= maxLag; lag++) {
-    let sum = 0;
-    for (let i = 0; i + lag < samples.length; i++) sum += samples[i] * samples[i + lag];
-    const r = sum / energy;
+    let sum = 0, e1 = 0, e2 = 0;
+    for (let i = 0; i + lag < n; i++) { const a = samples[i], b = samples[i + lag]; sum += a * b; e1 += a * a; e2 += b * b; }
+    const r = e1 > 0 && e2 > 0 ? sum / Math.sqrt(e1 * e2) : 0;
     if (r > best) { best = r; bestLag = lag; }
   }
-  return best >= 0.5 && bestLag > 0 ? sampleRate / bestLag : 0;
+  if (best < 0.6 || bestLag === 0) return 0;
+  // Octave check: if double the lag correlates almost as well, that is the true period.
+  const twice = bestLag * 2;
+  if (twice <= maxLag) {
+    let sum = 0, e1 = 0, e2 = 0;
+    for (let i = 0; i + twice < n; i++) { const a = samples[i], b = samples[i + twice]; sum += a * b; e1 += a * a; e2 += b * b; }
+    const r2 = e1 > 0 && e2 > 0 ? sum / Math.sqrt(e1 * e2) : 0;
+    if (r2 >= best * 0.9) bestLag = twice;
+  }
+  return sampleRate / bestLag;
 }
 
 document.getElementById('toggleMic')?.addEventListener('click', async () => {
@@ -1471,7 +1485,7 @@ document.getElementById('toggleMic')?.addEventListener('click', async () => {
     await audioCtx.resume(); // iOS creates it suspended
     const source = audioCtx.createMediaStreamSource(micStream);
     micAnalyser = audioCtx.createAnalyser();
-    micAnalyser.fftSize = 1024; // ~47 Hz per bin at 48 kHz: enough to tell vowels apart
+    micAnalyser.fftSize = 2048; // ~23 Hz per bin at 48 kHz; and 43 ms of waveform, four periods of a low male voice, for the pitch
     source.connect(micAnalyser);
 
     btn.textContent = '⏹ Disable';

@@ -76,6 +76,8 @@ const STARTLE_ABRUPTNESS = 0.6;
 const STARTLE_LOUDNESS = 0.6;
 /** Shortest utterance (ms) that can be appraised at all. */
 const MIN_DURATION_MS = 80;
+/** Fewer voiced frames than this share and it is not a voice (a clap, a keyboard, a door): the detectors are for voices. */
+const MIN_VOICED = 0.3;
 
 const semitones = (hz: number, ref: number): number => 12 * Math.log2(hz / ref);
 const clamp = (x: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, x));
@@ -130,6 +132,7 @@ export function extractProsody(contour: VoiceContour, speakerPitchHz: number, sp
     if (hz >= 50 && hz <= 800 && contour.rms[i] >= ACTIVE_RMS) pitches.push([i, semitones(hz, speakerPitchHz)]);
   }
   const voiced = pitches.length / (last - first + 1);
+  if (voiced < MIN_VOICED) return null;
   let pitchHeight = 0;
   let pitchSlope = 0;
   let bell = 0;

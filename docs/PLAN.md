@@ -101,6 +101,15 @@ algorítmica, neuromoduladores regionales, cómputo dendrítico. Hitos: paridad 
 tests actuales a 10 000 neuronas; luego 100 000 y 1 000 000 midiendo ticks por
 segundo en CPU y en una GPU alquilada. Ver `README.md` para `BRAIN_TICK_HZ`.
 
+**Estado (2026-09-19)**: el núcleo existe (`native/`, ver `docs/ENGINE.md`): neuronas de
+Izhikevich en arrays con paridad probada contra el modelo TypeScript, sinapsis CSR con
+transpuesta, interneuronas inhibitorias reales, STDP por trazas modulada, hilos en CPU,
+kernels CUDA escritos (sin compilar: no hay GPU aquí), addon de Node y `gbrain-bench`.
+En este Mac un millón de neuronas con 100 sinapsis corre a ~34 ticks/s (3,4× tiempo real a
+10 Hz) con ~0,3 % de actividad. Falta: regiones sobre el motor (`NativeRegion`),
+conectividad con estructura, neuromoduladores por región, retardos y oscilaciones,
+dendritas, persistencia del CSR, y medir en GPU.
+
 ## Escalera de hitos (criterio de éxito global)
 
 1. Palabras de atributo generalizan a un objeto nuevo.

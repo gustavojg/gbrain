@@ -193,7 +193,21 @@ inhibición que se adapta y depresión sináptica, la respuesta es un transitori
 son 60 ms simulados, cuando un estímulo real dura segundos. Lo que esto señala es la
 **escala temporal** del motor (un tick = 1 ms simulado a 10 Hz reales): un régimen sostenido
 y selectivo pide sub-pasos por tick o una presentación mucho más larga, y es una decisión de
-diseño antes que un parámetro. Queda como lo siguiente.
+diseño antes que un parámetro.
+
+**Medido con sub-pasos** (`substeps` en la configuración del motor: el mismo tick integra
+varios pasos de `dt` bajo la misma entrada y reporta las neuronas que dispararon en alguno):
+con 5 sub-pasos el área 1 sí tiene régimen sostenido (1 498 neuronas con tres impulsos o más,
+selectividad en la segunda mitad r 0,84 igual frente a 0,20 distinto), pero el área 2 sigue
+sin distinguir (0,70 frente a 0,66), y **las 20 lecciones desbocan la red**: la plasticidad
+STDP y estructural, calibradas a un paso por tick, actúan cinco o diez veces más por
+presentación, y tras aprender las dos áreas disparan en silencio (133–309 impulsos por tick)
+y responden igual a todo. Coste a 100 000 neuronas: 8 ms por tick con un sub-paso (12,6×
+tiempo real), 31 ms con cinco (3,2×), 61 ms con diez (1,6×); a un millón, con cinco sub-pasos
+el motor bajaría de tiempo real en esta máquina. La conclusión honesta: cambiar la escala
+temporal es recalibrar todo lo que aprende (tasas de STDP, ventanas estructurales, depresión
+a corto plazo, tasa objetivo de la inhibición) para la nueva duración de las presentaciones,
+y decidir con ello cuánto cómputo se acepta. Es una decisión del proyecto, no un parámetro.
 
 ## Lo que falta para que el cerebro corra encima
 

@@ -53,6 +53,8 @@ export interface NativeNetworkOptions {
   pruneBelow?: number;
   newWeight?: number;
   dt?: number;
+  /** Integration steps of `dt` per tick under the same input (the tick reports every neuron that fired in any of them). */
+  substeps?: number;
   /** Synaptic current time constants (ms): excitatory (AMPA ≈ 5) and inhibitory (GABA_A ≈ 10); 0 = one-tick pulses. */
   tauSynExc?: number;
   tauSynInh?: number;

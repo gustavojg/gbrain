@@ -119,7 +119,9 @@ volea de arranque y la potenciación no competitiva, declarado en el test).
 El motor tiene además corrientes lentas NMDA y normalización sináptica con presupuesto;
 ninguna de las dos da selectividad al área receptora porque el área emisora no tiene régimen
 sostenido en 60 ms simulados: la escala temporal del motor (un tick = 1 ms simulado) es la
-decisión pendiente. Falta también: normalización homeostática por tasa, neuromoduladores por
+decisión pendiente. Medido con sub-pasos por tick: cinco sub-pasos dan régimen sostenido y
+selectivo al área emisora, pero la plasticidad calibrada a un paso desboca la red y el coste
+es 4× (a un millón bajaría de tiempo real); cambiar la escala es recalibrar todo lo que aprende. Falta también: normalización homeostática por tasa, neuromoduladores por
 región, retardos y oscilaciones, dendritas, y medir en GPU.
 
 ## Escalera de hitos (criterio de éxito global)

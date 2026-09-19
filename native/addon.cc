@@ -69,6 +69,7 @@ class NativeNetwork : public Napi::ObjectWrap<NativeNetwork> {
       Napi::Value structural = o.Get("structural");
       if (structural.IsBoolean()) cfg.structural = structural.As<Napi::Boolean>().Value();
       cfg.dt = static_cast<float>(num("dt", cfg.dt));
+      cfg.substeps = static_cast<uint32_t>(num("substeps", cfg.substeps));
       cfg.tauSynExc = static_cast<float>(num("tauSynExc", cfg.tauSynExc));
       cfg.tauSynInh = static_cast<float>(num("tauSynInh", cfg.tauSynInh));
       cfg.nmdaShare = static_cast<float>(num("nmdaShare", cfg.nmdaShare));

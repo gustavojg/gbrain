@@ -72,6 +72,12 @@ struct NetworkConfig {
   float excToInhGain = 1.0f;
   /// Integration step (ms), as the brain's dt.
   float dt = 1.0f;
+  /// Integration steps per tick. The brain ticks at 10 Hz real time; with one
+  /// step per tick a second of the world is 10 simulated ms and no sustained
+  /// regime can form. With `substeps` steps the same input is held for that
+  /// many steps of `dt`, and the tick reports the neurons that fired in any
+  /// of them. Cost scales with it.
+  uint32_t substeps = 1;
   /// Synaptic current time constants (ms): excitatory (AMPA ≈ 5 ms) and
   /// inhibitory (GABA_A ≈ 10 ms). 0 = a one-tick pulse, no temporal summation.
   float tauSynExc = 5.0f, tauSynInh = 10.0f;
@@ -145,8 +151,11 @@ class Network {
   ~Network();
 
   /// One tick: external currents (length = neurons, may be null = zeros) plus
-  /// the synaptic input from last tick's spikes drive every neuron.
+  /// the synaptic input from last tick's spikes drive every neuron, for
+  /// `substeps` integration steps. Returns the spike counts summed over them.
   StepStats step(const float* externalCurrent, float modulation = 1.0f);
+  /// One integration step of `dt`.
+  StepStats stepOnce(const float* externalCurrent, float modulation = 1.0f);
 
   /// The afferent projection: input channels → neurons, sparse (CSR by
   /// neuron: which channels each neuron listens to, with what weight). What
@@ -207,8 +216,8 @@ class Network {
   std::vector<float> normTarget_;       // synaptic normalization: the target sum of excitatory input weights per neuron
   std::vector<float> resource_;         // short-term depression: synaptic resources per presynaptic neuron (1 = rested)
   std::vector<float> preTrace_, postTrace_;
-  std::vector<uint8_t> firedFlag_;
-  std::vector<uint32_t> fired_;
+  std::vector<uint8_t> firedFlag_, firedInTick_;
+  std::vector<uint32_t> fired_, firedTick_;
   // Synapses: CSR by presynaptic neuron, and its transpose as index map.
   std::vector<uint32_t> rowPtr_, targets_;
   std::vector<float> weights_;

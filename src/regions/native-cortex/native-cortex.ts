@@ -54,6 +54,8 @@ export interface NativeCortexConfig {
   inhWeight: number;
   excToInhGain: number;
   seed: number;
+  /** Integration steps per brain tick (a tick is 100 real ms; one step is 1 simulated ms). */
+  substeps: number;
   /** Whether recurrent synapses learn (STDP). */
   plastic: boolean;
   /**
@@ -120,6 +122,7 @@ const DEFAULT_CONFIG: NativeCortexConfig = {
   inhWeight: -2.0,
   excToInhGain: 8.0,
   seed: 0x9a71,
+  substeps: 1,
   plastic: true,
   aPlus: 0.015,
   aMinus: 0.010,
@@ -168,6 +171,7 @@ export class NativeCortex extends BrainRegion {
     const local = Math.round(cfg.fanIn * Math.max(0, Math.min(1, cfg.localShare)));
     this.net = createNativeNetwork({
       neurons: cfg.neurons,
+      substeps: cfg.substeps,
       fanIn: cfg.fanIn,
       blocks: local > 0 ? [
         { srcFrom: 0, srcTo: cfg.neurons, dstFrom: 0, dstTo: cfg.neurons, fanOut: local, wMin: 0, wMax: cfg.excMax, sigma: cfg.localSigma },

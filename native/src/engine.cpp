@@ -48,6 +48,7 @@ Network::Network(const NetworkConfig& cfg) : cfg_(cfg), rng_(cfg.seed) {
   preTrace_.assign(n, 0.0f);
   postTrace_.assign(n, 0.0f);
   firedFlag_.assign(n, 0);
+  firedInTick_.assign(n, 0);
   spikeCount_.assign(n, 0);
   // Interneurons: a fixed fraction, spread through the population.
   const uint32_t inhibitoryCount = static_cast<uint32_t>(n * cfg_.inhibitoryFraction);
@@ -277,6 +278,23 @@ void Network::parallelFor(uint32_t count, const std::function<void(uint32_t, uin
 }
 
 StepStats Network::step(const float* externalCurrent, float modulation) {
+  if (cfg_.substeps <= 1) return stepOnce(externalCurrent, modulation);
+  // Several integration steps under the same input; the tick's spike list is
+  // every neuron that fired in any of them (in index order).
+  StepStats total;
+  std::fill(firedInTick_.begin(), firedInTick_.end(), 0);
+  for (uint32_t s = 0; s < cfg_.substeps; s++) {
+    const StepStats st = stepOnce(externalCurrent, modulation);
+    total.fired += st.fired; total.firedExcitatory += st.firedExcitatory; total.firedInhibitory += st.firedInhibitory;
+    for (uint32_t i : fired_) firedInTick_[i] = 1;
+  }
+  firedTick_.clear();
+  for (uint32_t i = 0; i < cfg_.neurons; i++) if (firedInTick_[i]) firedTick_.push_back(i);
+  fired_.swap(firedTick_);
+  return total;
+}
+
+StepStats Network::stepOnce(const float* externalCurrent, float modulation) {
   const uint32_t n = cfg_.neurons;
   const float dt = cfg_.dt, halfDt = 0.5f * dt;
   const float decayPlus = std::exp(-dt / cfg_.tauPlus), decayMinus = std::exp(-dt / cfg_.tauMinus);

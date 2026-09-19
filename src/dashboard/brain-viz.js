@@ -1564,12 +1564,26 @@ document.getElementById('toggleMic')?.addEventListener('click', async () => {
 // VOICE — the brain's vocal tract, rendered with WebAudio
 // ================================================================
 // Same articulatory model as src/core/voice/vocal-tract.ts: a voiced source
-// shaped by two formants. The brain decides F1/F2; this only makes them audible.
+// shaped by two formants. The brain decides F1/F2; this only makes them
+// audible. What the brain HEARS of itself is the model's spectrum, not this
+// playback, so nothing here changes what it learns — only what you hear.
+//
+// The voice is a small child's: a fundamental of ~260 Hz (an infant's 380 Hz
+// left too few harmonics under the formants to hear a vowel — it whistled),
+// a natural slight rise-and-fall contour and a little vibrato, formants as
+// wide as the model's (a narrow, fixed-pitch buzz is what sounds like a
+// robot) but with steep skirts (two filter stages each), a weak third
+// formant and a breath of aspiration noise.
 
 let voiceCtx = null;
 let voiceEnabled = false;
 let ownVoiceUntil = 0;
-const VOICE_PITCH_HZ = 160;
+/** A small child's fundamental frequency (adults: 100–250 Hz; infants: 300–500 Hz). */
+const VOICE_PITCH_HZ = 260;
+/** Formant bandwidths, as the vocal tract model's (FWHM of its Gaussian peaks: 2.355 × 90 and × 120 Hz). */
+const FORMANT_BANDWIDTH_HZ = { f1: 212, f2: 283, f3: 400 };
+/** The third formant: fixed, weak; it makes the vowel a voice rather than two whistles. */
+const F3_HZ = 3000;
 
 document.getElementById('toggleVoice')?.addEventListener('click', () => {
   const btn = document.getElementById('toggleVoice');
@@ -1626,7 +1640,7 @@ function playVocalization(v) {
     lead = 0.09;
     const hum = voiceCtx.createOscillator();
     hum.type = 'triangle';
-    hum.frequency.value = VOICE_PITCH_HZ;
+    hum.frequency.value = VOICE_PITCH_HZ * 1.04;
     const nasal = voiceCtx.createBiquadFilter();
     nasal.type = 'lowpass';
     nasal.frequency.value = 400;
@@ -1652,30 +1666,70 @@ function playVocalization(v) {
   const now = now0 + lead;
   const source = voiceCtx.createOscillator();
   source.type = 'sawtooth'; // rich in harmonics, like the glottal source
-  source.frequency.value = VOICE_PITCH_HZ;
+  // The pitch contour of a cry-free vocalization: a little above the usual
+  // pitch at the start, settling, then falling toward the end.
+  source.frequency.setValueAtTime(VOICE_PITCH_HZ * 1.04, now);
+  source.frequency.exponentialRampToValueAtTime(VOICE_PITCH_HZ, now + seconds * 0.4);
+  source.frequency.exponentialRampToValueAtTime(VOICE_PITCH_HZ * 0.93, now + seconds);
+  // Vibrato: a slow, small wobble of the pitch (a fixed pitch is a machine's).
+  const vibrato = voiceCtx.createOscillator();
+  vibrato.frequency.value = 5.5;
+  const vibratoDepth = voiceCtx.createGain();
+  vibratoDepth.gain.value = VOICE_PITCH_HZ * 0.012;
+  vibrato.connect(vibratoDepth);
+  vibratoDepth.connect(source.frequency);
+  // Aspiration: a breath of noise through the same tract.
+  const breathLength = Math.floor(voiceCtx.sampleRate * (seconds + 0.05));
+  const breathBuffer = voiceCtx.createBuffer(1, breathLength, voiceCtx.sampleRate);
+  const breathData = breathBuffer.getChannelData(0);
+  for (let i = 0; i < breathLength; i++) breathData[i] = Math.random() * 2 - 1;
+  const breath = voiceCtx.createBufferSource();
+  breath.buffer = breathBuffer;
+  const breathGain = voiceCtx.createGain();
+  breathGain.gain.value = 0.015;
+  breath.connect(breathGain);
 
   const out = voiceCtx.createGain();
-  const level = 0.25 * Math.min(1, Math.max(0, Number(command.amplitude) || 0.9));
+  const level = 0.3 * Math.min(1, Math.max(0, Number(command.amplitude) || 0.9));
   out.gain.setValueAtTime(0, now);
-  out.gain.linearRampToValueAtTime(level, now + 0.03);
-  out.gain.setValueAtTime(level, now + seconds - 0.08);
+  out.gain.linearRampToValueAtTime(level, now + 0.04);
+  out.gain.setValueAtTime(level, now + seconds - 0.1);
   out.gain.linearRampToValueAtTime(0, now + seconds);
 
-  for (const [freq, q, gain] of [[f1, 8, 1.0], [f2, 10, 0.78]]) {
-    const formant = voiceCtx.createBiquadFilter();
-    formant.type = 'bandpass';
-    formant.frequency.value = freq;
-    formant.Q.value = q;
+  // The tract: the two formants the brain chose, as wide as in its own
+  // model, plus a fixed, weak third one. Two stages per formant: the skirts
+  // fall twice as fast, so the harmonics away from the formants (what made
+  // it whistle) stay down and the vowel is what is left.
+  for (const [freq, bandwidth, gain] of [[f1, FORMANT_BANDWIDTH_HZ.f1, 1.0], [f2, FORMANT_BANDWIDTH_HZ.f2, 0.7], [F3_HZ, FORMANT_BANDWIDTH_HZ.f3, 0.12]]) {
+    const first = voiceCtx.createBiquadFilter();
+    first.type = 'bandpass';
+    first.frequency.value = freq;
+    first.Q.value = freq / bandwidth;
+    const second = voiceCtx.createBiquadFilter();
+    second.type = 'bandpass';
+    second.frequency.value = freq;
+    second.Q.value = freq / bandwidth;
     const formantGain = voiceCtx.createGain();
-    formantGain.gain.value = gain;
-    source.connect(formant);
-    formant.connect(formantGain);
+    formantGain.gain.value = gain * 2.2; // two stages lose level
+    source.connect(first);
+    breathGain.connect(first);
+    first.connect(second);
+    second.connect(formantGain);
     formantGain.connect(out);
   }
-  out.connect(voiceCtx.destination);
+  // Lip radiation and the softness of a small tract: nothing sharp above 4 kHz.
+  const tilt = voiceCtx.createBiquadFilter();
+  tilt.type = 'lowpass';
+  tilt.frequency.value = 4000;
+  out.connect(tilt);
+  tilt.connect(voiceCtx.destination);
+  vibrato.start(now);
+  breath.start(now);
   source.start(now);
   source.stop(now + seconds + 0.02);
-  source.onended = () => out.disconnect();
+  vibrato.stop(now + seconds + 0.02);
+  breath.stop(now + seconds + 0.02);
+  source.onended = () => { out.disconnect(); tilt.disconnect(); };
 
   ownVoiceUntil = performance.now() + seconds * 1000 + 300;
 }

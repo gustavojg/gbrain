@@ -27,8 +27,12 @@ export interface VoiceContour {
 
 /** What the innate detectors extracted from the contour (all 0..1 unless noted). */
 export interface ProsodyFeatures {
-  /** Mean level over the active frames. */
+  /** Mean level over the active frames, absolute (0 = silence, 1 = as loud as speech right at a microphone). */
   loudness: number;
+  /** How much louder than the speaker usually is (0 = usual or softer, 1 = two and a half times the usual level). A raised voice, not a voice. */
+  raised: number;
+  /** Mean level (RMS), for adapting to the speaker. */
+  meanRms: number;
   /** How abruptly the sound starts: level reached in the first ~100 ms relative to its peak. */
   abruptness: number;
   /** Frame-to-frame level fluctuation: staccato, harshness. */
@@ -59,8 +63,14 @@ export interface ProsodyAppraisal {
 
 /** Level below which a frame is silence. */
 const ACTIVE_RMS = 0.015;
-/** Level that counts as loud (RMS of speech close to a microphone ≈ 0.1–0.3). */
+/** Level that counts as loud in absolute terms (RMS of speech close to a microphone ≈ 0.1–0.3): what startles. */
 const LOUD_RMS = 0.25;
+/** A voice this many times the speaker's usual level is fully "raised". */
+const RAISED_RATIO = 2.5;
+/** Roughness below this is the ordinary texture of speech, not staccato. */
+const ROUGH_FLOOR = 0.25;
+/** Pitch falling less than this (semitones) is the ordinary end of a sentence, not a prohibition. */
+const FALL_FLOOR = 3;
 /** A start this abrupt AND this loud is a startle. */
 const STARTLE_ABRUPTNESS = 0.6;
 const STARTLE_LOUDNESS = 0.6;
@@ -75,8 +85,9 @@ const clamp = (x: number, lo: number, hi: number): number => Math.max(lo, Math.m
  *
  * @param contour - Envelope and pitch track of the utterance
  * @param speakerPitchHz - The speaker's usual pitch (adapts over time; ~150 Hz to start)
+ * @param speakerLevel - The speaker's usual level, RMS (adapts over time; ~0.1 to start)
  */
-export function extractProsody(contour: VoiceContour, speakerPitchHz: number): ProsodyFeatures | null {
+export function extractProsody(contour: VoiceContour, speakerPitchHz: number, speakerLevel: number = 0.1): ProsodyFeatures | null {
   const frameMs = clamp(contour.frameMs, 5, 200);
   const n = Math.min(contour.rms.length, contour.f0.length);
   const active: number[] = [];
@@ -93,7 +104,12 @@ export function extractProsody(contour: VoiceContour, speakerPitchHz: number): P
     peak = Math.max(peak, contour.rms[i]);
     sum += contour.rms[i];
   }
-  const loudness = clamp(sum / (last - first + 1) / LOUD_RMS, 0, 1);
+  const meanRms = sum / (last - first + 1);
+  const loudness = clamp(meanRms / LOUD_RMS, 0, 1);
+  // Loud is relative to the speaker: what a baby hears as a raised voice is
+  // louder than THIS voice usually is, not louder than some fixed level.
+  const usual = Math.max(ACTIVE_RMS, speakerLevel);
+  const raised = clamp((meanRms - usual) / (usual * (RAISED_RATIO - 1)), 0, 1);
 
   // Abruptness: how much of the peak is reached within the first ~100 ms.
   const onsetFrames = Math.max(1, Math.round(100 / frameMs));
@@ -141,23 +157,29 @@ export function extractProsody(contour: VoiceContour, speakerPitchHz: number): P
     if (maxIdx > 0 && maxIdx < values.length - 1) bell = clamp(Math.min(rise, fall) / 3, 0, 1);
   }
 
-  return { loudness, abruptness, roughness, pitchHeight, pitchSlope, bell, pitchRange, durationMs, voiced };
+  return { loudness, raised, meanRms, abruptness, roughness, pitchHeight, pitchSlope, bell, pitchRange, durationMs, voiced };
 }
 
 /**
  * The innate appraisal of a voice: warm or harsh, calm or alarming, and
  * whether it startles. A fixed mapping; the weights are the "wiring".
  */
-export function appraiseProsody(contour: VoiceContour, speakerPitchHz: number = 150): ProsodyAppraisal | null {
-  const f = extractProsody(contour, speakerPitchHz);
+export function appraiseProsody(contour: VoiceContour, speakerPitchHz: number = 150, speakerLevel: number = 0.1): ProsodyAppraisal | null {
+  const f = extractProsody(contour, speakerPitchHz, speakerLevel);
   if (!f) return null;
 
   const high = clamp(f.pitchHeight / 6, -1, 1); // ±6 semitones from usual saturates
   const rising = clamp(f.pitchSlope / 4, -1, 1);
   const longUtterance = clamp((f.durationMs - 300) / 900, 0, 1); // 300 ms → 0, 1.2 s → 1
-  const shortAndLoud = (1 - longUtterance) * f.loudness;
+  const shortAndLoud = (1 - longUtterance) * f.raised;
   const lively = clamp(f.pitchRange / 4, 0, 1);
   const softness = clamp((0.4 - f.loudness) / 0.4, 0, 1); // clearly quiet, not merely not loud
+  // What counts against a voice is what is beyond ordinary speech: staccato
+  // beyond its normal texture, a fall beyond the end of a sentence, a voice
+  // raised above its own usual level. A man saying one word at his usual
+  // level and pitch, ending low as sentences do, is neither warm nor harsh.
+  const staccato = clamp((f.roughness - ROUGH_FLOOR) / (1 - ROUGH_FLOOR), 0, 1);
+  const falling = clamp((-f.pitchSlope - FALL_FLOOR) / 4, 0, 1);
 
   // Warm: high, rising or bell-shaped, melodious, unhurried, soft. A flat,
   // medium voice scores nothing here — neutrality is the absence of cues.
@@ -168,13 +190,15 @@ export function appraiseProsody(contour: VoiceContour, speakerPitchHz: number = 
     0.20 * lively +
     0.10 * longUtterance +
     0.20 * softness * (1 - f.roughness);
-  // Harsh: loud, abrupt (when loud), rough, low, falling, short and loud.
+  // Harsh: raised, abrupt (when raised), staccato, low (when raised or
+  // staccato: a low voice by itself is just a low voice), falling, short and
+  // raised.
   const harshness =
-    0.45 * f.loudness +
-    0.35 * f.abruptness * f.loudness +
-    0.45 * f.roughness +
-    0.30 * Math.max(0, -high) +
-    0.20 * Math.max(0, -rising) +
+    0.45 * f.raised +
+    0.35 * f.abruptness * f.raised +
+    0.45 * staccato +
+    0.30 * Math.max(0, -high) * Math.max(f.raised, staccato) +
+    0.20 * falling +
     0.30 * shortAndLoud;
 
   const valence = clamp(warmth - harshness, -1, 1);

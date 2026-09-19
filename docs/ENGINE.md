@@ -27,6 +27,20 @@
   sus destinos desde t+1 y se apaga con una constante de tiempo (AMPA ≈ 5 ms para las
   excitatorias, GABA_A ≈ 10 ms para las inhibitorias). Sin eso cada impulso era una corriente
   de un solo tick y nada sumaba en el tiempo: una asamblea no podía sostenerse.
+- **Corriente lenta (NMDA)**: una parte de cada sinapsis excitatoria (`nmdaShare`) llega
+  como corriente con constante de tiempo larga (50 ms): lo que deja sumar una entrada
+  dispersa y sostenida donde la corriente AMPA se apaga entre impulsos. Sin dependencia del
+  voltaje (el bloqueo por Mg²⁺) todavía. En la corteza nativa va al 0,15: al 0,3 la
+  excitación lenta llega también a las interneuronas y la compleción falla en 2 de 12
+  combinaciones; al 0,15 completan las 12 (60–100 %).
+- **Normalización sináptica** (Turrigiano 2008; competencia heterosináptica): cada cierto
+  número de ticks, las sinapsis excitatorias que entran en cada neurona se reescalan si su
+  suma supera un presupuesto (la suma inicial por una ganancia). Existe en el motor y está
+  **apagada en la corteza nativa**: para que una pista parcial traiga de vuelta la asamblea,
+  el peso excitatorio total de sus miembros tiene que crecer muchas veces, y cualquier
+  presupuesto que lo permita (medido hasta 3× la suma inicial) deja de ser un presupuesto:
+  con ella la compleción cae a 0–11 %. La normalización fiel es homeostática y lenta (por
+  tasa de disparo), y es lo que hay que escribir.
 - **Depresión sináptica a corto plazo** (Tsodyks & Markram 1997) por neurona presináptica
   excitatoria: cada impulso gasta una fracción (0,3) de los recursos sinápticos, que se
   recuperan en ~200 ms. Es lo que hace que una asamblea se encienda y se apague en vez de
@@ -167,10 +181,19 @@ distingue: r 0,77 igual frente a 0,09 distinto en la segunda mitad de la present
 demasiado disperso y débil para excitar al área 2 a través de cien sinapsis al azar (35
 impulsos en la segunda mitad frente a 7 358 en toda la presentación). Y la repetición lo
 empeora: la volea sincrónica potencia todas las sinapsis de alimentación directa por igual
-(tras 20 lecciones de A y B, r = 0,97 entre las respuestas). Lo que falta es lo que la
-corteza tiene para esto: **normalización sináptica** (depresión heterosináptica, escalado)
-para que la potenciación sea competitiva, y **corrientes lentas (NMDA)** que dejen sumar la
-entrada sostenida y dispersa. Es lo siguiente del motor.
+(tras 20 lecciones de A y B, r = 0,97 entre las respuestas). Se probaron las dos cosas que
+la corteza tiene para esto y **no bastaron**: las corrientes lentas NMDA (0,3–0,5 de la
+sinapsis, 50–100 ms) y la normalización sináptica con presupuesto, con sinapsis de
+alimentación directa fuertes y pocas o débiles y muchas (100–300 por neurona). En ningún
+caso el área 2 disparó de forma sostenida y selectiva (0–45 impulsos en la segunda mitad,
+r ≈ 0,2 igual frente a distinto tras las lecciones). La razón de fondo, medida: el propio
+área 1 casi no tiene régimen sostenido (4 neuronas con tres impulsos o más, ~120 impulsos en
+la segunda mitad frente a ~3 800 en el arranque). Con corriente aferente constante,
+inhibición que se adapta y depresión sináptica, la respuesta es un transitorio; y 60 ticks
+son 60 ms simulados, cuando un estímulo real dura segundos. Lo que esto señala es la
+**escala temporal** del motor (un tick = 1 ms simulado a 10 Hz reales): un régimen sostenido
+y selectivo pide sub-pasos por tick o una presentación mucho más larga, y es una decisión de
+diseño antes que un parámetro. Queda como lo siguiente.
 
 ## Lo que falta para que el cerebro corra encima
 
@@ -178,12 +201,12 @@ entrada sostenida y dispersa. Es lo siguiente del motor.
    actuales (visual, auditiva, de color, de partes) siguen siendo plantillas densas en
    TypeScript; pasarlas al motor significa que sus categorías nazcan de asambleas, no de
    engramas k-WTA, y eso pide primero la plasticidad estructural.
-2. **Selectividad a través de una proyección**: los bloques existen (recurrentes locales y
-   de largo alcance, proyección entre áreas, retroalimentación) y la compleción cruza la
-   proyección, pero el área receptora no distingue entradas (arriba). Hacen falta
-   normalización sináptica para una potenciación competitiva y corrientes NMDA lentas; y
-   que la depresión y la facilitación a corto plazo sean por tipo de sinapsis (hoy la
-   depresión es por neurona presináptica excitatoria).
+2. **Selectividad a través de una proyección y escala temporal**: los bloques existen y la
+   compleción cruza la proyección, pero el área receptora no distingue entradas (arriba), y
+   ni NMDA ni la normalización lo arreglan porque el área emisora no tiene régimen
+   sostenido en 60 ms simulados. Decidir la escala temporal (sub-pasos por tick), escribir
+   la normalización homeostática por tasa, y que la depresión y la facilitación a corto
+   plazo sean por tipo de sinapsis.
 3. **Neuromoduladores regionales**: el factor de modulación es global; debe ser por
    región (dopamina en el estriado, acetilcolina en la corteza…).
 4. **Retardos axonales** por sinapsis (hoy un tick para todas) y **oscilaciones**: con

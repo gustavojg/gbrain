@@ -75,6 +75,24 @@ struct NetworkConfig {
   /// Synaptic current time constants (ms): excitatory (AMPA ≈ 5 ms) and
   /// inhibitory (GABA_A ≈ 10 ms). 0 = a one-tick pulse, no temporal summation.
   float tauSynExc = 5.0f, tauSynInh = 10.0f;
+  /// A slow (NMDA-like) component of every excitatory synapse: this share of
+  /// its weight lands as a current with time constant `tauSynNmda` (ms). It
+  /// is what lets sparse, sustained input sum where the fast AMPA current
+  /// alone would fade between spikes. 0 = none.
+  float nmdaShare = 0.3f;
+  float tauSynNmda = 50.0f;
+  /// Synaptic normalization (Turrigiano 2008; heterosynaptic competition):
+  /// every `normalizeEvery` ticks the excitatory synapses INTO each neuron
+  /// are scaled so that their sum stays what it was when the network was
+  /// built. Potentiation then competes: what one synapse gains, the others
+  /// give up — without it a synchronous volley potentiates every synapse
+  /// alike and nothing becomes selective.
+  bool normalize = true;
+  uint32_t normalizeEvery = 20;
+  /// The budget: `normalizeGain` times the built sum. Below it potentiation is
+  /// free (an assembly needs strong synapses); above it the synapses are scaled
+  /// back down and compete.
+  float normalizeGain = 2.0f;
   /// Short-term synaptic depression on excitatory synapses (Tsodyks & Markram
   /// 1997), by presynaptic neuron: each spike spends a fraction `stdU` of the
   /// neuron's synaptic resources, which recover with `stdTauRec` (ms). It is
@@ -174,6 +192,8 @@ class Network {
   void buildRandomSynapses();
   void buildBlockSynapses();
   void buildTranspose();
+  void computeNormTargets();
+  void normalizeWeights();
   float gaussian();
   void rewire();
   void parallelFor(uint32_t count, const std::function<void(uint32_t, uint32_t, uint32_t)>& body);
@@ -183,6 +203,8 @@ class Network {
   std::vector<float> v_, u_, a_, b_, c_, d_;
   std::vector<uint8_t> inhibitory_;
   std::vector<float> synExc_, synInh_;  // synaptic currents (exponential), by source type
+  std::vector<float> synNmda_;          // the slow excitatory component
+  std::vector<float> normTarget_;       // synaptic normalization: the target sum of excitatory input weights per neuron
   std::vector<float> resource_;         // short-term depression: synaptic resources per presynaptic neuron (1 = rested)
   std::vector<float> preTrace_, postTrace_;
   std::vector<uint8_t> firedFlag_;

@@ -71,6 +71,12 @@ class NativeNetwork : public Napi::ObjectWrap<NativeNetwork> {
       cfg.dt = static_cast<float>(num("dt", cfg.dt));
       cfg.tauSynExc = static_cast<float>(num("tauSynExc", cfg.tauSynExc));
       cfg.tauSynInh = static_cast<float>(num("tauSynInh", cfg.tauSynInh));
+      cfg.nmdaShare = static_cast<float>(num("nmdaShare", cfg.nmdaShare));
+      cfg.tauSynNmda = static_cast<float>(num("tauSynNmda", cfg.tauSynNmda));
+      cfg.normalizeEvery = static_cast<uint32_t>(num("normalizeEvery", cfg.normalizeEvery));
+      cfg.normalizeGain = static_cast<float>(num("normalizeGain", cfg.normalizeGain));
+      Napi::Value normalize = o.Get("normalize");
+      if (normalize.IsBoolean()) cfg.normalize = normalize.As<Napi::Boolean>().Value();
       cfg.stdU = static_cast<float>(num("stdU", cfg.stdU));
       cfg.stdTauRec = static_cast<float>(num("stdTauRec", cfg.stdTauRec));
       Napi::Value shortTermDepression = o.Get("shortTermDepression");

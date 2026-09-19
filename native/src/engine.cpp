@@ -43,6 +43,7 @@ Network::Network(const NetworkConfig& cfg) : cfg_(cfg), rng_(cfg.seed) {
   inhibitory_.assign(n, 0);
   synExc_.assign(n, 0.0f);
   synInh_.assign(n, 0.0f);
+  synNmda_.assign(n, 0.0f);
   resource_.assign(n, 1.0f);
   preTrace_.assign(n, 0.0f);
   postTrace_.assign(n, 0.0f);
@@ -60,8 +61,43 @@ Network::Network(const NetworkConfig& cfg) : cfg_(cfg), rng_(cfg.seed) {
     v_[i] = -70.0f + 12.0f * uniform();
     u_[i] = p.b * v_[i];
   }
-  threadInput_.assign(threads_, std::vector<float>(static_cast<size_t>(n) * 2, 0.0f));
+  threadInput_.assign(threads_, std::vector<float>(static_cast<size_t>(n) * 3, 0.0f));
   if (cfg_.blocks.empty()) buildRandomSynapses(); else buildBlockSynapses();
+  computeNormTargets();
+}
+
+// The sum of excitatory weights into each neuron at build time: what
+// normalization holds it to.
+void Network::computeNormTargets() {
+  const uint32_t n = cfg_.neurons;
+  normTarget_.assign(n, 0.0f);
+  for (uint32_t j = 0; j < n; j++) {
+    float sum = 0.0f;
+    for (uint32_t k = colPtr_[j]; k < colPtr_[j + 1]; k++) if (!inhibitory_[sources_[k]]) sum += weights_[synapseOfIncoming_[k]];
+    normTarget_[j] = sum;
+  }
+}
+
+// Multiplicative scaling of the excitatory synapses into each neuron back to
+// its target sum. Every synapse has one target, so neurons are independent.
+void Network::normalizeWeights() {
+  const uint32_t n = cfg_.neurons;
+  const float wMax = cfg_.wMax;
+  parallelFor(n, [&](uint32_t, uint32_t from, uint32_t to) {
+    for (uint32_t j = from; j < to; j++) {
+      float sum = 0.0f;
+      for (uint32_t k = colPtr_[j]; k < colPtr_[j + 1]; k++) if (!inhibitory_[sources_[k]]) sum += weights_[synapseOfIncoming_[k]];
+      const float budget = normTarget_[j] * cfg_.normalizeGain;
+      if (sum <= budget || budget <= 0.0f) continue;
+      const float f = budget / sum;
+      for (uint32_t k = colPtr_[j]; k < colPtr_[j + 1]; k++) {
+        if (inhibitory_[sources_[k]]) continue;
+        const uint32_t syn = synapseOfIncoming_[k];
+        const float w = weights_[syn] * f;
+        weights_[syn] = w > wMax ? wMax : w;
+      }
+    }
+  });
 }
 
 // Standard normal by Box–Muller, from the network's own generator.
@@ -147,6 +183,7 @@ void Network::setSynapses(std::vector<uint32_t> rowPtr, std::vector<uint32_t> ta
   targets_ = std::move(targets);
   weights_ = std::move(weights);
   buildTranspose();
+  computeNormTargets();
 }
 
 // Transpose (CSC): for every postsynaptic neuron, the indices (into the CSR
@@ -215,6 +252,7 @@ void Network::resetState() {
   }
   std::fill(synExc_.begin(), synExc_.end(), 0.0f);
   std::fill(synInh_.begin(), synInh_.end(), 0.0f);
+  std::fill(synNmda_.begin(), synNmda_.end(), 0.0f);
   std::fill(resource_.begin(), resource_.end(), 1.0f);
   std::fill(preTrace_.begin(), preTrace_.end(), 0.0f);
   std::fill(postTrace_.begin(), postTrace_.end(), 0.0f);
@@ -245,6 +283,8 @@ StepStats Network::step(const float* externalCurrent, float modulation) {
   // Synaptic currents fade with their time constants (0 = a one-tick pulse).
   const float decayExc = cfg_.tauSynExc > 0.0f ? std::exp(-dt / cfg_.tauSynExc) : 0.0f;
   const float decayInh = cfg_.tauSynInh > 0.0f ? std::exp(-dt / cfg_.tauSynInh) : 0.0f;
+  const float decayNmda = cfg_.tauSynNmda > 0.0f ? std::exp(-dt / cfg_.tauSynNmda) : 0.0f;
+  const float slow = cfg_.nmdaShare > 0.0f && cfg_.tauSynNmda > 0.0f ? cfg_.nmdaShare : 0.0f, fast = 1.0f - slow;
   // Short-term depression: resources recover toward 1 each tick, and a spike spends a share of them.
   const bool depressing = cfg_.shortTermDepression && cfg_.stdTauRec > 0.0f;
   const float recover = depressing ? dt / cfg_.stdTauRec : 0.0f, keep = depressing ? 1.0f - cfg_.stdU : 1.0f;
@@ -264,8 +304,9 @@ StepStats Network::step(const float* externalCurrent, float modulation) {
       z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
       z ^= z >> 31;
       const float jitter = noise * static_cast<float>((z >> 40) * (1.0 / 16777216.0));
-      const float I = synExc_[i] + synInh_[i] + (externalCurrent ? externalCurrent[i] : 0.0f) + jitter;
+      const float I = synExc_[i] + synNmda_[i] + synInh_[i] + (externalCurrent ? externalCurrent[i] : 0.0f) + jitter;
       synExc_[i] *= decayExc;
+      synNmda_[i] *= decayNmda;
       synInh_[i] *= decayInh;
       if (depressing) resource_[i] += (1.0f - resource_[i]) * recover;
       float v = v_[i], u = u_[i];
@@ -309,10 +350,17 @@ StepStats Network::step(const float* externalCurrent, float modulation) {
       std::vector<float>& acc = threadInput_[t];
       for (uint32_t s = from; s < to; s++) {
         const uint32_t i = fired_[s];
-        const uint32_t off = inhibitory_[i] ? n : 0;
-        const float efficacy = inhibitory_[i] ? 1.0f : resource_[i];
-        for (uint32_t k = rowPtr_[i]; k < rowPtr_[i + 1]; k++) acc[off + targets_[k]] += weights_[k] * efficacy;
-        if (!inhibitory_[i]) resource_[i] *= keep;
+        if (inhibitory_[i]) {
+          for (uint32_t k = rowPtr_[i]; k < rowPtr_[i + 1]; k++) acc[n + targets_[k]] += weights_[k];
+        } else {
+          const float efficacy = resource_[i];
+          for (uint32_t k = rowPtr_[i]; k < rowPtr_[i + 1]; k++) {
+            const float w = weights_[k] * efficacy;
+            acc[targets_[k]] += w * fast;
+            acc[2 * n + targets_[k]] += w * slow;
+          }
+          resource_[i] *= keep;
+        }
       }
     });
     if (parallel) {
@@ -322,16 +370,24 @@ StepStats Network::step(const float* externalCurrent, float modulation) {
           for (uint32_t j = from; j < to; j++) {
             synExc_[j] += acc[j]; acc[j] = 0.0f;
             synInh_[j] += acc[n + j]; acc[n + j] = 0.0f;
+            synNmda_[j] += acc[2 * n + j]; acc[2 * n + j] = 0.0f;
           }
         }
       });
     } else {
       for (uint32_t s = 0; s < spikes; s++) {
         const uint32_t i = fired_[s];
-        float* dst = inhibitory_[i] ? synInh_.data() : synExc_.data();
-        const float efficacy = inhibitory_[i] ? 1.0f : resource_[i];
-        for (uint32_t k = rowPtr_[i]; k < rowPtr_[i + 1]; k++) dst[targets_[k]] += weights_[k] * efficacy;
-        if (!inhibitory_[i]) resource_[i] *= keep;
+        if (inhibitory_[i]) {
+          for (uint32_t k = rowPtr_[i]; k < rowPtr_[i + 1]; k++) synInh_[targets_[k]] += weights_[k];
+        } else {
+          const float efficacy = resource_[i];
+          for (uint32_t k = rowPtr_[i]; k < rowPtr_[i + 1]; k++) {
+            const float w = weights_[k] * efficacy;
+            synExc_[targets_[k]] += w * fast;
+            synNmda_[targets_[k]] += w * slow;
+          }
+          resource_[i] *= keep;
+        }
       }
     }
 
@@ -389,7 +445,8 @@ StepStats Network::step(const float* externalCurrent, float modulation) {
       }
     }
   }
-  // 5. Structural plasticity, now and then.
+  // 5. Synaptic normalization and structural plasticity, now and then.
+  if (plastic && cfg_.normalize && cfg_.normalizeEvery > 0 && tick_ % cfg_.normalizeEvery == 0) normalizeWeights();
   if (cfg_.structural && cfg_.rewireEvery > 0 && tick_ % cfg_.rewireEvery == 0) rewire();
   return stats;
 }

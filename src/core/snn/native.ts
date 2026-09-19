@@ -56,6 +56,14 @@ export interface NativeNetworkOptions {
   /** Synaptic current time constants (ms): excitatory (AMPA ≈ 5) and inhibitory (GABA_A ≈ 10); 0 = one-tick pulses. */
   tauSynExc?: number;
   tauSynInh?: number;
+  /** A slow (NMDA-like) share of every excitatory synapse's weight, with its own time constant (ms); lets sparse sustained input sum. */
+  nmdaShare?: number;
+  tauSynNmda?: number;
+  /** Synaptic normalization: every `normalizeEvery` ticks the excitatory synapses into each neuron are scaled back to their built sum (competitive potentiation). */
+  normalize?: boolean;
+  normalizeEvery?: number;
+  /** The budget as a multiple of the built sum; potentiation is free below it. */
+  normalizeGain?: number;
   /** Short-term depression on excitatory synapses (Tsodyks & Markram 1997): a spike spends `stdU` of the presynaptic resources, which recover with `stdTauRec` ms. */
   shortTermDepression?: boolean;
   stdU?: number;

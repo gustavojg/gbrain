@@ -116,8 +116,11 @@ La conectividad se construye por bloques (recurrentes locales + largo alcance en
 nativa; dos áreas en un motor con proyección y retroalimentación: relevo, aprendizaje y
 compleción a través de la proyección funcionan; la selectividad del área receptora no, por la
 volea de arranque y la potenciación no competitiva, declarado en el test).
-Falta: normalización sináptica y corrientes NMDA, neuromoduladores por región, retardos y
-oscilaciones, dendritas, y medir en GPU.
+El motor tiene además corrientes lentas NMDA y normalización sináptica con presupuesto;
+ninguna de las dos da selectividad al área receptora porque el área emisora no tiene régimen
+sostenido en 60 ms simulados: la escala temporal del motor (un tick = 1 ms simulado) es la
+decisión pendiente. Falta también: normalización homeostática por tasa, neuromoduladores por
+región, retardos y oscilaciones, dendritas, y medir en GPU.
 
 ## Escalera de hitos (criterio de éxito global)
 

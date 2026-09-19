@@ -20,7 +20,8 @@ namespace gbrain {
 namespace cuda {
 
 __global__ void integrate(uint32_t n, float dt, float noise, uint64_t tickSeed,
-                          float* synExc, float* synInh, float decayExc, float decayInh, float* resource, float recover,
+                          float* synExc, float* synInh, float* synNmda, float decayExc, float decayInh, float decayNmda,
+                          float* resource, float recover,
                           const float* external,
                           float* v, float* u, const float* a, const float* b, const float* c, const float* d,
                           uint8_t* fired, float* preTrace, float* postTrace, float decayPlus, float decayMinus) {
@@ -31,8 +32,9 @@ __global__ void integrate(uint32_t n, float dt, float noise, uint64_t tickSeed,
   z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
   z ^= z >> 31;
   const float jitter = noise * static_cast<float>((z >> 40) * (1.0 / 16777216.0));
-  const float I = synExc[i] + synInh[i] + (external ? external[i] : 0.0f) + jitter;
+  const float I = synExc[i] + synNmda[i] + synInh[i] + (external ? external[i] : 0.0f) + jitter;
   synExc[i] *= decayExc;
+  synNmda[i] *= decayNmda;
   synInh[i] *= decayInh;
   resource[i] += (1.0f - resource[i]) * recover;
   const float halfDt = 0.5f * dt;
@@ -57,16 +59,42 @@ __global__ void collect(uint32_t n, const uint8_t* fired, uint32_t* list, uint32
 
 /// One thread per spike: its synapses' weights land in the targets' synaptic current (by source type).
 __global__ void deliver(uint32_t spikes, const uint32_t* list, const uint8_t* inhibitory, const uint32_t* rowPtr,
-                        const uint32_t* targets, const float* weights, float* synExc, float* synInh,
-                        float* resource, float keep) {
+                        const uint32_t* targets, const float* weights, float* synExc, float* synInh, float* synNmda,
+                        float* resource, float keep, float nmdaShare) {
   const uint32_t s = blockIdx.x * blockDim.x + threadIdx.x;
   if (s >= spikes) return;
   const uint32_t i = list[s];
-  float* dst = inhibitory[i] ? synInh : synExc;
-  // Short-term depression: an excitatory spike delivers what its resources allow, and spends a share of them.
-  const float efficacy = inhibitory[i] ? 1.0f : resource[i];
-  for (uint32_t k = rowPtr[i]; k < rowPtr[i + 1]; k++) atomicAdd(&dst[targets[k]], weights[k] * efficacy);
-  if (!inhibitory[i]) resource[i] *= keep;
+  if (inhibitory[i]) {
+    for (uint32_t k = rowPtr[i]; k < rowPtr[i + 1]; k++) atomicAdd(&synInh[targets[k]], weights[k]);
+    return;
+  }
+  // Short-term depression: an excitatory spike delivers what its resources
+  // allow, split between the fast (AMPA) and slow (NMDA) currents, and spends
+  // a share of them.
+  const float efficacy = resource[i];
+  for (uint32_t k = rowPtr[i]; k < rowPtr[i + 1]; k++) {
+    const float w = weights[k] * efficacy;
+    atomicAdd(&synExc[targets[k]], w * (1.0f - nmdaShare));
+    atomicAdd(&synNmda[targets[k]], w * nmdaShare);
+  }
+  resource[i] *= keep;
+}
+
+/// Synaptic normalization, one thread per postsynaptic neuron: the excitatory
+/// synapses into it are scaled back to its budget when their sum exceeds it.
+__global__ void normalize(uint32_t n, const uint32_t* colPtr, const uint32_t* sources, const uint32_t* synapseOfIncoming,
+                          const uint8_t* inhibitory, const float* budget, float wMax, float* weights) {
+  const uint32_t j = blockIdx.x * blockDim.x + threadIdx.x;
+  if (j >= n) return;
+  float sum = 0.0f;
+  for (uint32_t k = colPtr[j]; k < colPtr[j + 1]; k++) if (!inhibitory[sources[k]]) sum += weights[synapseOfIncoming[k]];
+  if (sum <= budget[j] || budget[j] <= 0.0f) return;
+  const float f = budget[j] / sum;
+  for (uint32_t k = colPtr[j]; k < colPtr[j + 1]; k++) {
+    if (inhibitory[sources[k]]) continue;
+    const float w = weights[synapseOfIncoming[k]] * f;
+    weights[synapseOfIncoming[k]] = w > wMax ? wMax : w;
+  }
 }
 
 /// Depression on the spiking neuron's outgoing excitatory synapses; potentiation on its incoming ones.

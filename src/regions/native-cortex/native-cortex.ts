@@ -82,6 +82,23 @@ export interface NativeCortexConfig {
   /** Synaptic current time constants (ms): what lets spikes sum in time. */
   tauSynExc: number;
   tauSynInh: number;
+  /**
+   * The slow (NMDA-like) share of excitatory synapses and its time constant.
+   * A small share: at 0.3 the slower excitation reaches the interneurons too
+   * and completion fails in 2 of 12 seed/pattern combinations; at 0.15 all 12
+   * complete (60–100% of the unlit side).
+   */
+  nmdaShare: number;
+  tauSynNmda: number;
+  /**
+   * Synaptic normalization: potentiation competes for a budget per neuron.
+   * Off here: an assembly's members need their total excitatory weight to
+   * grow many times over for a partial cue to bring the rest back, and any
+   * budget that allows it (measured up to 3× the built sum) is no budget.
+   */
+  normalize: boolean;
+  normalizeEvery: number;
+  normalizeGain: number;
   /** Short-term depression: what makes an assembly ignite and fade instead of taking the sheet over. */
   shortTermDepression: boolean;
   stdU: number;
@@ -119,6 +136,11 @@ const DEFAULT_CONFIG: NativeCortexConfig = {
   inhMax: 8.0,
   tauSynExc: 5.0,
   tauSynInh: 10.0,
+  nmdaShare: 0.15,
+  tauSynNmda: 50,
+  normalize: false,
+  normalizeEvery: 20,
+  normalizeGain: 2.0,
   shortTermDepression: true,
   stdU: 0.3,
   stdTauRec: 200,
@@ -172,6 +194,11 @@ export class NativeCortex extends BrainRegion {
       inhMax: cfg.inhMax,
       tauSynExc: cfg.tauSynExc,
       tauSynInh: cfg.tauSynInh,
+      nmdaShare: cfg.nmdaShare,
+      tauSynNmda: cfg.tauSynNmda,
+      normalize: cfg.normalize,
+      normalizeEvery: cfg.normalizeEvery,
+      normalizeGain: cfg.normalizeGain,
       shortTermDepression: cfg.shortTermDepression,
       stdU: cfg.stdU,
       stdTauRec: cfg.stdTauRec,

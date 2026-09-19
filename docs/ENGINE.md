@@ -61,15 +61,49 @@ actividad (el reparto de la plasticidad está pendiente); y con el estado de rep
 heterogéneo (sin él la red disparaba en bloque) el tick cuesta el doble que la primera
 medida en silencio. Con actividad del 2–5 % hay que medir de nuevo.
 
+## La primera región sobre el motor: la corteza nativa
+
+`src/regions/native-cortex/native-cortex.ts` es una `BrainRegion` cuyas neuronas viven en
+el motor: 10 000 neuronas de impulsos (5 000 dentro del cerebro), 100 sinapsis recurrentes
+al azar por neurona (excitatorias débiles, 0–0,2; ocho veces más fuertes sobre las
+interneuronas, que es lo que hace que la inhibición de retroalimentación siga a la
+actividad), un 20 % de interneuronas con peso −2, y una proyección aferente dispersa (cada
+neurona excitatoria escucha 50 canales de entrada, una interneurona 15) por la que le llega
+lo que el tálamo relé. No hay competición algorítmica ni plantilla: una entrada excita a las
+neuronas cuyas aferentes la muestrean, las interneuronas mantienen la respuesta dispersa, y
+la STDP recurrente (con LTP dominante: lo que dispara junto se cablea junto) estampa la
+asamblea. Calibrar esto costó: con recurrentes fuertes todas las neuronas acababan
+disparando, con ganancia aferente alta la entrada sola las disparaba, y con interneuronas
+poco acopladas la inhibición no se enteraba de nada.
+
+Se activa con `GBRAIN_NATIVE=1` (necesita el addon compilado): el cerebro añade la región
+`nativeCortex` alimentada por el relé visual; sale en el dashboard como "Native Ctx (C++)".
+Sus pesos recurrentes persisten en el estado del cerebro (2 MB a 5 000 neuronas).
+
+Lo que el test (`tests/native-region.test.ts`, en `npm run test:engine`) comprueba a
+10 000 neuronas, sobre los recuentos de disparo de las neuronas excitatorias (las
+interneuronas disparan a todo y no representan nada): la misma entrada dos veces da
+respuestas correlacionadas (r = 0,60) y dos entradas distintas no (r = 0,10), el mismo
+criterio que la suite usa para el hipocampo y la corteza prefrontal; la respuesta es
+dispersa (un 27 % de las excitatorias dispara alguna vez en media presentación); tras 40
+repeticiones las sinapsis entre las neuronas de la asamblea (el 5 % más sostenido) crecen
+más que el resto (+0,21 frente a +0,12); dentro del cerebro dispara al ver algo y calla si
+no. Lo que **no** hace aún: completar la respuesta desde media entrada (r 0,13 → 0,17).
+Con 100 sinapsis recurrentes al azar, cada miembro de la asamblea recibe un puñado de
+sinapsis de su asamblea: pocas para completarla aunque estén al máximo. Hace falta
+conectividad más densa dentro de la asamblea, es decir, plasticidad estructural (crear
+sinapsis entre las neuronas que disparan juntas), que es lo siguiente.
+
 ## Lo que falta para que el cerebro corra encima
 
-1. **Regiones sobre el motor**: hoy cada región TypeScript tiene su propia red pequeña
-   (`SNNNetwork` densa, k-WTA). El paso siguiente es una región que delegue su población
-   al motor nativo — una `NativeRegion` con el mismo contrato de `BrainRegion` — empezando
-   por la corteza visual, y el test de paridad con la suite actual a 10 000 neuronas.
-2. **Conectividad con estructura**: hoy `gbrain-bench` construye un grafo aleatorio. Las
-   regiones necesitan proyecciones (tálamo → corteza) como bloques del CSR y pesos
-   iniciales por proyección.
+1. **Regiones sobre el motor**: hecha la primera (la corteza nativa, arriba). Las cortezas
+   actuales (visual, auditiva, de color, de partes) siguen siendo plantillas densas en
+   TypeScript; pasarlas al motor significa que sus categorías nazcan de asambleas, no de
+   engramas k-WTA, y eso pide primero la plasticidad estructural.
+2. **Plasticidad estructural y conectividad con estructura**: crear sinapsis entre las
+   neuronas que disparan juntas (y podar las inútiles), para que las asambleas se completen;
+   y proyecciones entre regiones (tálamo → corteza) como bloques del CSR con pesos iniciales
+   por proyección.
 3. **Neuromoduladores regionales**: el factor de modulación es global; debe ser por
    región (dopamina en el estriado, acetilcolina en la corteza…).
 4. **Retardos axonales** por sinapsis (hoy un tick para todas) y **oscilaciones**: con

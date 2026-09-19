@@ -41,6 +41,7 @@ import { ImageGenerator } from './decoders/image-generator.js';
 import { Thalamus } from './regions/thalamus/thalamus.js';
 import { VisualCortex } from './regions/visual-cortex/visual-cortex.js';
 import { PartsCortex } from './regions/visual-cortex/parts-cortex.js';
+import { NativeCortex } from './regions/native-cortex/native-cortex.js';
 import { AuditoryCortex } from './regions/auditory-cortex/auditory-cortex.js';
 import { Hippocampus } from './regions/hippocampus/hippocampus.js';
 import { Amygdala } from './regions/amygdala/amygdala.js';
@@ -696,6 +697,10 @@ export class DigitalBrain {
   private static readonly RETINA_SIDE = 14;
   /** Input channels of the visual cortex. */
   private static readonly VISUAL_CORTEX_INPUTS = 1000;
+  /** Neurons of the native cortex when it is switched on (its recurrent synapses persist with the state). */
+  private static readonly NATIVE_CORTEX_NEURONS = 5000;
+  /** Extra targets of the visual relay (the native cortex, when on). */
+  private readonly extraVisualRelay: string[] = [];
 
   /**
    * Regions whose weights are NOT restored from legacy (protocol v1) files.
@@ -946,6 +951,17 @@ export class DigitalBrain {
     // The parts cortex (V2→IT): objects as arrangements of local parts. Added
     // last, with its own random source, so the other trajectories stay put.
     this.addRegion(new PartsCortex({ retinaSide: DigitalBrain.RETINA_SIDE, channelMaps: 5, inputCount: DigitalBrain.VISUAL_CORTEX_INPUTS }));
+    // The native cortex (opt-in, GBRAIN_NATIVE=1, needs `npm run build:native`):
+    // a sheet of spiking neurons on the C++ engine, fed by the visual relay —
+    // the first region on the substrate the million-neuron brain will run on.
+    if (process.env.GBRAIN_NATIVE === '1') {
+      if (NativeCortex.available()) {
+        this.addRegion(new NativeCortex({ neurons: DigitalBrain.NATIVE_CORTEX_NEURONS, inputCount: DigitalBrain.VISUAL_CORTEX_INPUTS }));
+        this.extraVisualRelay.push('nativeCortex');
+      } else {
+        console.warn('⚠️  GBRAIN_NATIVE=1 but the native engine is not built (npm run build:native): running without it.');
+      }
+    }
 
     // Connect Broca/Wernicke to the bus as an alias of 'brocaWernicke'
     // to receive packets from the existing connectome
@@ -2348,7 +2364,7 @@ export class DigitalBrain {
       // travels along that projection of the connectome (its delay and weight).
       this.bus.send({
         source: 'thalamus',
-        targets: [...DigitalBrain.THALAMIC_RELAY[type]],
+        targets: [...DigitalBrain.THALAMIC_RELAY[type], ...(type === 'visual' ? this.extraVisualRelay : [])],
         spikes: relayed,
         timestamp: this.currentTime,
         metadata: { inputType: type },

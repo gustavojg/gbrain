@@ -16,6 +16,7 @@ export interface NativeNetworkOptions {
   excMin?: number;
   excMax?: number;
   inhWeight?: number;
+  excToInhGain?: number;
   dt?: number;
   noise?: number;
   plastic?: boolean;
@@ -34,8 +35,17 @@ export interface NativeNetwork {
   readonly synapses: number;
   /** One tick: external currents per neuron (or null) and the neuromodulatory gain on plasticity; returns the neurons that fired. */
   step(externalCurrent: Float32Array | null, modulation?: number): Uint32Array;
+  /** One tick driven by input channels through the afferent projection. */
+  stepChannels(channels: Float32Array, modulation?: number): Uint32Array;
+  /** The afferent projection, CSR by neuron over input channels. */
+  setInputProjection(channels: number, rowPtr: Uint32Array, cols: Uint32Array, weights: Float32Array): void;
+  /** A random afferent projection: every neuron listens to `fanIn` channels. */
+  buildRandomInputProjection(channels: number, fanIn: number, wMin?: number, wMax?: number): void;
   potentials(): Float32Array;
   weights(): Float32Array;
+  /** The recurrent connectivity: CSR row pointers by presynaptic neuron, and the targets. */
+  synapseRowPtr(): Uint32Array;
+  synapseTargets(): Uint32Array;
   setWeights(weights: Float32Array): void;
   setSynapses(rowPtr: Uint32Array, targets: Uint32Array, weights: Float32Array): void;
   isInhibitory(neuron: number): boolean;

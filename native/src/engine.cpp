@@ -78,7 +78,8 @@ void Network::buildRandomSynapses() {
       uint32_t t = static_cast<uint32_t>(uniform() * n);
       if (t == i) t = (t + 1) % n;
       targets_[static_cast<size_t>(i) * k + s] = t;
-      weights_[static_cast<size_t>(i) * k + s] = inhibitory_[i] ? cfg_.inhWeight : cfg_.excMin + uniform() * (cfg_.excMax - cfg_.excMin);
+      const float exc = (cfg_.excMin + uniform() * (cfg_.excMax - cfg_.excMin)) * (inhibitory_[t] ? cfg_.excToInhGain : 1.0f);
+      weights_[static_cast<size_t>(i) * k + s] = inhibitory_[i] ? cfg_.inhWeight : exc;
     }
   }
   rowPtr_[n] = n * k;
@@ -111,6 +112,44 @@ void Network::buildTranspose() {
       synapseOfIncoming_[slot] = s;
     }
   }
+}
+
+void Network::setInputProjection(uint32_t channels, std::vector<uint32_t> rowPtr, std::vector<uint32_t> cols, std::vector<float> weights) {
+  inputChannels_ = channels;
+  inRowPtr_ = std::move(rowPtr);
+  inCols_ = std::move(cols);
+  inWeights_ = std::move(weights);
+  channelCurrent_.assign(cfg_.neurons, 0.0f);
+}
+
+void Network::buildRandomInputProjection(uint32_t channels, uint32_t fanIn, float wMin, float wMax) {
+  const uint32_t n = cfg_.neurons;
+  const uint32_t k = std::min(fanIn, channels);
+  std::vector<uint32_t> rowPtr(n + 1);
+  std::vector<uint32_t> cols(static_cast<size_t>(n) * k);
+  std::vector<float> weights(static_cast<size_t>(n) * k);
+  for (uint32_t i = 0; i < n; i++) {
+    rowPtr[i] = i * k;
+    for (uint32_t s = 0; s < k; s++) {
+      cols[static_cast<size_t>(i) * k + s] = static_cast<uint32_t>(uniform() * channels);
+      weights[static_cast<size_t>(i) * k + s] = wMin + uniform() * (wMax - wMin);
+    }
+  }
+  rowPtr[n] = n * k;
+  setInputProjection(channels, std::move(rowPtr), std::move(cols), std::move(weights));
+}
+
+StepStats Network::stepChannels(const float* channels, float modulation) {
+  if (inputChannels_ == 0) return step(nullptr, modulation);
+  const uint32_t n = cfg_.neurons;
+  parallelFor(n, [&](uint32_t, uint32_t from, uint32_t to) {
+    for (uint32_t i = from; i < to; i++) {
+      float I = 0.0f;
+      for (uint32_t k = inRowPtr_[i]; k < inRowPtr_[i + 1]; k++) I += inWeights_[k] * channels[inCols_[k]];
+      channelCurrent_[i] = I;
+    }
+  });
+  return step(channelCurrent_.data(), modulation);
 }
 
 void Network::resetState() {

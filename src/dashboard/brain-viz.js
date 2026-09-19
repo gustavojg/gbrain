@@ -40,6 +40,7 @@ const REGION_COLORS = {
   handMotorCortex:  { h: 320, s: 70, l: 62, label: 'Hand Motor' },
   colorCortex:      { h: 50,  s: 90, l: 60, label: 'Colour Ctx' },
   partsCortex:      { h: 275, s: 70, l: 62, label: 'Parts Ctx (IT)' },
+  nativeCortex:     { h: 10,  s: 80, l: 60, label: 'Native Ctx (C++)' },
 };
 
 // 3D positions of brain regions (x, y, z) normalized -1..1
@@ -56,6 +57,7 @@ const REGION_POSITIONS = {
   handMotorCortex:  { x: 0.2,   y: 0.4,  z: 0.25, size: 20 },
   colorCortex:      { x: 0.25,  y: 0.25, z: -0.55, size: 16 },
   partsCortex:      { x: -0.25, y: 0.15, z: -0.6,  size: 18 },
+  nativeCortex:     { x: 0.0,   y: -0.35, z: -0.7, size: 20 },
 };
 
 // Connections between regions (for drawing axon lines)
@@ -76,6 +78,7 @@ const CONNECTIONS = [
   ['thalamus', 'handMotorCortex'],
   ['thalamus', 'colorCortex'],
   ['thalamus', 'partsCortex'],
+  ['thalamus', 'nativeCortex'],
   ['prefrontalCortex', 'thalamus'],
   ['prefrontalCortex', 'visualCortex'],
   ['amygdala', 'hippocampus'],

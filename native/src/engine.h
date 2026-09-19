@@ -41,6 +41,9 @@ struct NetworkConfig {
   /// Initial excitatory weight range and the inhibitory weight (negative).
   float excMin = 0.0f, excMax = 0.5f;
   float inhWeight = -1.0f;
+  /// Gain on excitatory synapses onto interneurons: E→I coupling is dense and strong in cortex,
+  /// and it is what makes feedback inhibition track the excitatory activity.
+  float excToInhGain = 1.0f;
   /// Integration step (ms), as the brain's dt.
   float dt = 1.0f;
   /// Background current noise amplitude (uniform 0..noise), as the TS network adds.
@@ -69,6 +72,18 @@ class Network {
   /// One tick: external currents (length = neurons, may be null = zeros) plus
   /// the synaptic input from last tick's spikes drive every neuron.
   StepStats step(const float* externalCurrent, float modulation = 1.0f);
+
+  /// The afferent projection: input channels → neurons, sparse (CSR by
+  /// neuron: which channels each neuron listens to, with what weight). What
+  /// a region receives from the rest of the brain enters through it.
+  void setInputProjection(uint32_t channels, std::vector<uint32_t> rowPtr, std::vector<uint32_t> cols, std::vector<float> weights);
+  /// A random afferent projection: every neuron listens to `fanIn` channels with weights in [wMin, wMax].
+  void buildRandomInputProjection(uint32_t channels, uint32_t fanIn, float wMin, float wMax);
+  uint32_t inputChannels() const { return inputChannels_; }
+
+  /// One tick driven by input CHANNELS (length = inputChannels): the external
+  /// current of each neuron is its projection's weighted sum of the channels.
+  StepStats stepChannels(const float* channels, float modulation = 1.0f);
 
   /// Neurons that fired on the last step (indices).
   const std::vector<uint32_t>& fired() const { return fired_; }
@@ -113,6 +128,11 @@ class Network {
   std::vector<uint32_t> rowPtr_, targets_;
   std::vector<float> weights_;
   std::vector<uint32_t> colPtr_, sources_, synapseOfIncoming_;
+  // Afferent projection (CSR by neuron over input channels).
+  uint32_t inputChannels_ = 0;
+  std::vector<uint32_t> inRowPtr_, inCols_;
+  std::vector<float> inWeights_;
+  std::vector<float> channelCurrent_;
   // Per-thread accumulation buffers for spike delivery.
   std::vector<std::vector<float>> threadInput_;
   uint32_t threads_ = 1;

@@ -1394,6 +1394,12 @@ body::after {
   gap: 0.5rem;
 }
 
+.webcam-views {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-end;
+}
+
 .webcam-container video {
   width: 100%;
   max-width: 200px;
@@ -1401,6 +1407,16 @@ body::after {
   border-radius: 8px;
   border: 1px solid var(--border);
   object-fit: cover;
+  background: var(--bg-secondary);
+}
+
+/* The brain's retina: the 64×64 frame it actually receives, shown as it is. */
+.webcam-container canvas {
+  width: 64px;
+  height: 64px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  image-rendering: pixelated;
   background: var(--bg-secondary);
 }
 

@@ -16,7 +16,7 @@
  */
 import { BrainRegion } from '../../core/brain-region.js';
 import type { ModulationEffects } from '../../core/neuromodulators/modulator-system.js';
-import { packArray, unpackFloat32 } from '../../core/persistence/binary-protocol.js';
+import { packArray, unpackFloat32, unpackInt32 } from '../../core/persistence/binary-protocol.js';
 import { createNativeNetwork, isNativeAvailable, type NativeNetwork } from '../../core/snn/native.js';
 import { mulberry32 } from '../../core/random.js';
 
@@ -291,13 +291,27 @@ export class NativeCortex extends BrainRegion {
     return { rowPtr: this.net.synapseRowPtr(), targets: this.net.synapseTargets() };
   }
 
+  /**
+   * The recurrent synapses persist as weights AND targets: structural
+   * plasticity rewires synapses, so the weights alone, put back on the
+   * connectivity a fresh network draws, would land on the wrong neurons.
+   */
   override serializeExtra(): unknown {
-    return { recurrent: packArray(this.net.weights()) };
+    const { targets } = this.recurrentSynapses();
+    return { recurrent: packArray(this.net.weights()), targets: packArray(Int32Array.from(targets)) };
   }
 
   override deserializeExtra(data: unknown): void {
     if (typeof data !== 'object' || data === null) return;
-    const w = unpackFloat32((data as Record<string, unknown>).recurrent, this.net.synapses);
-    if (w) this.net.setWeights(w);
+    const record = data as Record<string, unknown>;
+    const w = unpackFloat32(record.recurrent, this.net.synapses);
+    if (!w) return;
+    const targets = unpackInt32(record.targets, this.net.synapses);
+    if (targets && targets.every((t) => t >= 0 && t < this.cfg.neurons)) {
+      this.net.setSynapses(this.net.synapseRowPtr(), Uint32Array.from(targets), w);
+    } else {
+      // A state written before targets were saved: the weights on the fresh connectivity are the best there is.
+      this.net.setWeights(w);
+    }
   }
 }

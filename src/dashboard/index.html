@@ -180,8 +180,10 @@
       <div class="io-section">
         <label class="io-label">📷 Webcam (see)</label>
         <div class="webcam-container">
-          <video id="webcamVideo" autoplay playsinline muted></video>
-          <canvas id="webcamCanvas" width="64" height="64" style="display:none"></canvas>
+          <div class="webcam-views">
+            <video id="webcamVideo" autoplay playsinline muted title="The camera"></video>
+            <canvas id="webcamCanvas" width="64" height="64" title="What the brain sees: its 64×64 retina"></canvas>
+          </div>
           <div class="draw-controls">
             <button class="small-btn" id="toggleWebcam">▶ Enable</button>
             <span class="webcam-status" id="webcamStatus">Inactive</span>

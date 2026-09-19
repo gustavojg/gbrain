@@ -3307,7 +3307,7 @@ export class DigitalBrain {
    *
    * @returns Which regions were restored and which were skipped.
    */
-  loadState(filePath: string): { loaded: string[]; skipped: string[] } {
+  loadState(filePath: string): { loaded: string[]; skipped: string[]; fresh: string[] } {
     // If the main file is missing or corrupted (failed CRC, truncated write),
     // fall back to the previous snapshot instead of starting from scratch.
     let data;
@@ -3322,8 +3322,14 @@ export class DigitalBrain {
 
     const loaded: string[] = [];
     const skipped: string[] = [];
+    // Regions the file does not know (added since it was written): they start fresh, nothing is wrong.
+    const fresh: string[] = [];
     for (const [id, region] of this.regions) {
       const rd = data.regions.get(id);
+      if (!rd) {
+        fresh.push(id);
+        continue;
+      }
       if (rd && data.version < 2 && DigitalBrain.RESET_ON_LEGACY_STATE.has(id)) {
         console.warn(`⚠️  ${id}: weights from a legacy (v${data.version}) state are not restored — starting fresh.`);
         skipped.push(id);
@@ -3372,7 +3378,7 @@ export class DigitalBrain {
       }
     }
 
-    return { loaded, skipped };
+    return { loaded, skipped, fresh };
   }
 
   /**

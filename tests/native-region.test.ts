@@ -18,7 +18,9 @@
  *                    through the recurrent synapses — and only for its own
  *                    cue, not for another input, and not in silence (short-
  *                    term depression lets the assembly ignite and fade).
- *   5. IN THE BRAIN — with GBRAIN_NATIVE=1 the brain has the region, fed by
+ *   5. PERSISTENCE — the recurrent synapses, rewired ones included, survive
+ *                    a restart.
+ *   6. IN THE BRAIN — with GBRAIN_NATIVE=1 the brain has the region, fed by
  *                    the visual relay: it fires when something is seen and
  *                    is quiet otherwise.
  *
@@ -160,8 +162,24 @@ console.log('\n3. ASSEMBLY');
   check('it ignites and fades: nothing keeps firing in silence', total(idle) / 200 < 1, `${(total(idle) / 200).toFixed(2)} excitatory spikes per tick with no input`);
 }
 
-// ── 5. IN THE BRAIN ─────────────────────────────────────────────────────────
-console.log('\n5. IN THE BRAIN');
+// ── 5. PERSISTENCE ──────────────────────────────────────────────────────────
+console.log('\n5. PERSISTENCE');
+{
+  // Structural plasticity rewired synapses above; a restored cortex must have the same connectivity AND weights.
+  const extra = JSON.parse(JSON.stringify(cortex.serializeExtra())) as unknown;
+  const restored = new NativeCortex({ neurons: 10_000, inputCount: INPUTS, seed: 11, plastic: true });
+  restored.deserializeExtra(extra);
+  const w0 = cortex.recurrentWeights(), w1 = restored.recurrentWeights();
+  const t0 = cortex.recurrentSynapses().targets, t1 = restored.recurrentSynapses().targets;
+  let weightsOff = 0, targetsOff = 0;
+  for (let s = 0; s < w0.length; s++) { if (w0[s] !== w1[s]) weightsOff++; if (t0[s] !== t1[s]) targetsOff++; }
+  check('the recurrent synapses survive a restart, rewired ones included', weightsOff === 0 && targetsOff === 0 && cortex.rewired > 0, `${weightsOff} weights and ${targetsOff} targets differ after restore (${cortex.rewired} rewired)`);
+  const h2 = present(restored, half(A), 60, false);
+  check('…and the restored cortex completes the pattern too', correlation(h2, present(cortex, half(A), 60, false)) >= 0.5, `r = ${correlation(h2, present(cortex, half(A), 60, false)).toFixed(2)} between the two cortices' responses to half the input`);
+}
+
+// ── 6. IN THE BRAIN ─────────────────────────────────────────────────────────
+console.log('\n6. IN THE BRAIN');
 {
   process.env.GBRAIN_NATIVE = '1';
   seedRandom(20260917);

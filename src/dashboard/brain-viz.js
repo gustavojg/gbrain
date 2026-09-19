@@ -1369,7 +1369,9 @@ document.getElementById('toggleWebcam')?.addEventListener('click', async () => {
   btn.disabled = true;
   status.textContent = 'Asking for the camera…';
   try {
-    webcamStream = await navigator.mediaDevices.getUserMedia({ video: { width: 64, height: 64, facingMode: 'user' } });
+    // A normal-resolution stream for the preview; the frame the brain gets is
+    // reduced to its 64×64 retina on the canvas beside it.
+    webcamStream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' } });
     video.srcObject = webcamStream;
     btn.textContent = '⏹ Disable';
     status.textContent = 'Active — sending frames';
@@ -1379,7 +1381,10 @@ document.getElementById('toggleWebcam')?.addEventListener('click', async () => {
     const wCtx = wCanvas.getContext('2d');
 
     webcamInterval = setInterval(() => {
-      wCtx.drawImage(video, 0, 0, 64, 64);
+      // Centre crop to a square, then reduce to the retina.
+      const side = Math.min(video.videoWidth, video.videoHeight) || 64;
+      const sx = ((video.videoWidth || side) - side) / 2, sy = ((video.videoHeight || side) - side) / 2;
+      wCtx.drawImage(video, sx, sy, side, side, 0, 0, 64, 64);
       const { pixels, rgb } = pixelsOf(wCtx);
       if (ws && ws.readyState === 1) {
         ws.send(JSON.stringify({ type: 'input:image', data: { pixels, rgb, width: 64, height: 64 } }));

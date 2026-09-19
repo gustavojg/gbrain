@@ -821,6 +821,8 @@ export class DigitalBrain {
 
     // 3. Initialize neuromodulators
     this.modulators = new NeuromodulatorSystem();
+    // Neuromodulators decay in real seconds (a dopamine transient ≈ 2 s), whatever the tick rate.
+    this.modulators.setTimeScale(this.msPerTick / this.config.snn.dt);
 
     // 4. Initialize consolidation
     this.consolidationEngine = new ConsolidationEngine(DigitalBrain.SLEEP_REPLAY_CYCLES);

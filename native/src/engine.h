@@ -53,6 +53,15 @@ struct NetworkConfig {
   float aPlus = 0.01f, aMinus = 0.012f;
   float tauPlus = 20.0f, tauMinus = 20.0f;
   float wMax = 1.0f;
+  /// Inhibitory plasticity (Vogels et al. 2011): the synapses from
+  /// interneurons onto an excitatory neuron grow when it fires above a target
+  /// rate and shrink when below, so that inhibition comes to balance each
+  /// neuron's excitation — what lets recurrent excitation be strong without
+  /// runaway. `targetRate` is in spikes per tick; the traces are the STDP ones.
+  bool inhibitoryPlasticity = false;
+  float iEta = 0.002f;
+  float targetRate = 0.05f;
+  float inhMax = 8.0f;
   /// Structural plasticity: every `rewireEvery` ticks, each excitatory neuron
   /// that has been active in the window swaps up to `rewiresPerEvent` of its
   /// weakest synapses (below `pruneBelow`) for new ones onto neurons that were

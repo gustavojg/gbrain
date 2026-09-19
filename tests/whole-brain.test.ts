@@ -318,11 +318,21 @@ console.log('\n6. NEUROMODULATION');
 
   const see = (modulator: ModulatorType | null, amount = 0): { relayedDrive: number; pfcRecruited: number } => {
     const brain = newBrain();
-    if (modulator) brain.getModulators().release(modulator, amount);
+    // A sustained state (a mood, a drug), not a single burst: the level is
+    // held up for the whole window — modulators decay in real seconds now,
+    // and a single release would be gone before the prefrontal cortex recruits.
+    const hold = (): void => {
+      if (!modulator) return;
+      const target = brain.getModulators().getBaseline(modulator) + amount;
+      const level = brain.getModulators().getLevel(modulator);
+      if (level < target) brain.getModulators().release(modulator, target - level);
+    };
+    hold();
     quiet(() => brain.see(square, 64, 64, { propagate: false }));
     let relayedDrive = 0;
     let pfcRecruited = 0;
     for (let t = 0; t < 120; t++) {
+      hold();
       brain.tick();
       const { regions } = brain.getState();
       relayedDrive = Math.max(relayedDrive, regions.visualCortex.drive);

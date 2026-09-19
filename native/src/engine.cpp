@@ -281,6 +281,33 @@ StepStats Network::step(const float* externalCurrent, float modulation) {
           weights_[syn] = w > wMax ? wMax : w;
         }
       }
+      // Inhibitory plasticity on I→E synapses (Vogels 2011). Pre (interneuron)
+      // spike: the synapse grows by how far the target's post trace exceeds
+      // the target (alpha = 2 · rate · tau); post (excitatory) spike: it grows
+      // by the interneuron's pre trace. Inhibitory weights are negative, so
+      // "grows" means more negative, bounded at −inhMax.
+      if (cfg_.inhibitoryPlasticity) {
+        const float eta = cfg_.iEta, alpha = 2.0f * cfg_.targetRate * cfg_.tauMinus, inhMax = cfg_.inhMax;
+        for (uint32_t s = 0; s < spikes; s++) {
+          const uint32_t i = fired_[s];
+          if (inhibitory_[i]) {
+            for (uint32_t k = rowPtr_[i]; k < rowPtr_[i + 1]; k++) {
+              const uint32_t t = targets_[k];
+              if (inhibitory_[t]) continue;
+              float w = weights_[k] - eta * (postTrace_[t] - alpha);
+              weights_[k] = w < -inhMax ? -inhMax : (w > 0.0f ? 0.0f : w);
+            }
+          } else {
+            for (uint32_t k = colPtr_[i]; k < colPtr_[i + 1]; k++) {
+              const uint32_t src = sources_[k];
+              if (!inhibitory_[src]) continue;
+              const uint32_t syn = synapseOfIncoming_[k];
+              float w = weights_[syn] - eta * preTrace_[src];
+              weights_[syn] = w < -inhMax ? -inhMax : w;
+            }
+          }
+        }
+      }
       for (uint32_t s = 0; s < spikes; s++) {
         const uint32_t i = fired_[s];
         preTrace_[i] += 1.0f;

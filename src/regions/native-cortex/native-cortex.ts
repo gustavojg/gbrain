@@ -57,6 +57,9 @@ export interface NativeCortexConfig {
   pruneBelow: number;
   /** A new synapse between coactive neurons is born strong: it is there to carry the assembly. */
   newWeight: number;
+  /** Inhibitory plasticity: inhibition learns to balance each neuron's excitation (Vogels 2011), so recurrent drive can be strong without runaway. */
+  inhibitoryPlasticity: boolean;
+  targetRate: number;
 }
 
 const DEFAULT_CONFIG: NativeCortexConfig = {
@@ -81,6 +84,8 @@ const DEFAULT_CONFIG: NativeCortexConfig = {
   rewiresPerEvent: 4,
   pruneBelow: 0.15,
   newWeight: 1.0,
+  inhibitoryPlasticity: true,
+  targetRate: 0.05,
 };
 
 export class NativeCortex extends BrainRegion {
@@ -120,6 +125,8 @@ export class NativeCortex extends BrainRegion {
       rewiresPerEvent: cfg.rewiresPerEvent,
       pruneBelow: cfg.pruneBelow,
       newWeight: cfg.newWeight,
+      inhibitoryPlasticity: cfg.inhibitoryPlasticity,
+      targetRate: cfg.targetRate,
     });
     // The afferent projection, from the region's own random source: every
     // excitatory neuron samples `inputFanIn` channels, an interneuron fewer.

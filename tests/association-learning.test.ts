@@ -85,7 +85,9 @@ function newBrain(seed: number = SEED): DigitalBrain {
   return brain;
 }
 
-const wait = (brain: DigitalBrain, ticks: number): void => { for (let t = 0; t < ticks; t++) brain.tick(); };
+/** Something to do on every tick while waiting (a modulator held up, for instance). */
+let onTick: ((brain: DigitalBrain) => void) | null = null;
+const wait = (brain: DigitalBrain, ticks: number): void => { for (let t = 0; t < ticks; t++) { onTick?.(brain); brain.tick(); } };
 const see = (brain: DigitalBrain, image: number[]): void => { quiet(() => brain.see(image, SIDE, SIDE, { propagate: false })); };
 const read = (brain: DigitalBrain, text: string): void => { quiet(() => brain.read(text, { propagate: false })); };
 const hear = (brain: DigitalBrain, frame: number[]): void => { quiet(() => brain.hearFrame(frame, 48000, { propagate: false })); };
@@ -222,10 +224,20 @@ console.log('\n7. REWARD');
 {
   const confidenceAfterTwo = (dopamine: number): number => {
     const learner = newBrain(SEED + 2);
+    // A rewarding context held for the whole lesson (modulators decay in real
+    // seconds: a single burst would be gone before the pairing closes).
+    const hold = (brain: DigitalBrain): void => {
+      if (dopamine <= 0) return;
+      const target = brain.getModulators().getBaseline(ModulatorType.Dopamine) + dopamine;
+      const level = brain.getModulators().getLevel(ModulatorType.Dopamine);
+      if (level < target) brain.getModulators().release(ModulatorType.Dopamine, target - level);
+    };
+    onTick = hold;
     for (let i = 0; i < 2; i++) {
-      learner.getModulators().release(ModulatorType.Dopamine, dopamine);
+      hold(learner);
       teach(learner, () => see(learner, CROSS), () => read(learner, 'cruz'));
     }
+    onTick = null;
     return probe(learner, () => see(learner, CROSS))?.confidence ?? 0;
   };
   const neutral = confidenceAfterTwo(0);

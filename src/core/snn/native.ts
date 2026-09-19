@@ -17,6 +17,11 @@ export interface NativeNetworkOptions {
   excMax?: number;
   inhWeight?: number;
   excToInhGain?: number;
+  /** Inhibitory plasticity (Vogels 2011): interneuron→excitatory synapses track each neuron's firing toward a target rate. */
+  inhibitoryPlasticity?: boolean;
+  iEta?: number;
+  targetRate?: number;
+  inhMax?: number;
   /** Structural plasticity: synapses grown between coactive neurons, the weakest pruned. */
   structural?: boolean;
   rewireEvery?: number;

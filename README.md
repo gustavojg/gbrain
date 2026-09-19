@@ -94,7 +94,7 @@ npm run build
 npm start
 ```
 
-Luego abre **http://localhost:3000** para el dashboard. El servidor expone también `GET /api/state` (estado del cerebro) y un WebSocket para streaming en vivo. El cerebro avanza 10 ticks por segundo por defecto; `BRAIN_TICK_HZ=100` lo lleva a 100 Hz sin cambiar lo que hace por segundo de reloj (todo lo que está a escala humana, cuánto dura un estímulo a la vista, cuánto espera un percepto a que llegue su nombre, está en segundos y se convierte a ticks con esa frecuencia: solo vive diez veces más tiempo neuronal por segundo). `BRAIN_SPEED=10` sí lo hace vivir 10× más deprisa (útil para sesiones de balbuceo/garabateo, no para enseñarle en vivo).
+Luego abre **http://localhost:3000** para el dashboard. El servidor expone también `GET /api/state` (estado del cerebro) y un WebSocket para streaming en vivo. El cerebro avanza 10 ticks por segundo por defecto; `BRAIN_TICK_HZ=100` lo lleva a 100 Hz sin cambiar lo que hace por segundo de reloj (todo lo que está a escala humana, cuánto dura un estímulo a la vista, cuánto espera un percepto a que llegue su nombre, está en segundos y se convierte a ticks con esa frecuencia: solo vive diez veces más tiempo neuronal por segundo; los neuromoduladores también decaen en segundos reales, una ráfaga de dopamina dura unos dos segundos). `BRAIN_SPEED=10` sí lo hace vivir 10× más deprisa (útil para sesiones de balbuceo/garabateo, no para enseñarle en vivo).
 
 ```bash
 # Ejecutar un test de aprendizaje (ejemplo)
@@ -203,7 +203,7 @@ npm run build
 npm start
 ```
 
-Then open **http://localhost:3000** for the dashboard. The server also exposes `GET /api/state` (brain state) and a WebSocket for live streaming. The brain advances 10 ticks per second by default; `BRAIN_TICK_HZ=100` drives it at 100 Hz without changing what it does per second of wall clock (everything on a human timescale, how long a stimulus stays in view, how long a percept waits for its name, is defined in seconds and converted to ticks with that rate: it just lives through ten times more neural time per second). `BRAIN_SPEED=10` does make it live 10× faster (useful for babbling/scribbling sessions, not for interactive teaching).
+Then open **http://localhost:3000** for the dashboard. The server also exposes `GET /api/state` (brain state) and a WebSocket for live streaming. The brain advances 10 ticks per second by default; `BRAIN_TICK_HZ=100` drives it at 100 Hz without changing what it does per second of wall clock (everything on a human timescale, how long a stimulus stays in view, how long a percept waits for its name, is defined in seconds and converted to ticks with that rate: it just lives through ten times more neural time per second; the neuromodulators decay in real seconds too, a dopamine burst lasts about two seconds). `BRAIN_SPEED=10` does make it live 10× faster (useful for babbling/scribbling sessions, not for interactive teaching).
 
 ```bash
 # Run a learning test (example)

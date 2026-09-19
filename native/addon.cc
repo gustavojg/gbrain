@@ -61,6 +61,11 @@ class NativeNetwork : public Napi::ObjectWrap<NativeNetwork> {
       cfg.rewiresPerEvent = static_cast<uint32_t>(num("rewiresPerEvent", cfg.rewiresPerEvent));
       cfg.pruneBelow = static_cast<float>(num("pruneBelow", cfg.pruneBelow));
       cfg.newWeight = static_cast<float>(num("newWeight", cfg.newWeight));
+      cfg.iEta = static_cast<float>(num("iEta", cfg.iEta));
+      cfg.targetRate = static_cast<float>(num("targetRate", cfg.targetRate));
+      cfg.inhMax = static_cast<float>(num("inhMax", cfg.inhMax));
+      Napi::Value inhibitoryPlasticity = o.Get("inhibitoryPlasticity");
+      if (inhibitoryPlasticity.IsBoolean()) cfg.inhibitoryPlasticity = inhibitoryPlasticity.As<Napi::Boolean>().Value();
       Napi::Value structural = o.Get("structural");
       if (structural.IsBoolean()) cfg.structural = structural.As<Napi::Boolean>().Value();
       cfg.dt = static_cast<float>(num("dt", cfg.dt));

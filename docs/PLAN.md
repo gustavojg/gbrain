@@ -101,6 +101,29 @@ algorítmica, neuromoduladores regionales, cómputo dendrítico. Hitos: paridad 
 tests actuales a 10 000 neuronas; luego 100 000 y 1 000 000 midiendo ticks por
 segundo en CPU y en una GPU alquilada. Ver `README.md` para `BRAIN_TICK_HZ`.
 
+**Estado (2026-09-19)**: el núcleo existe (`native/`, ver `docs/ENGINE.md`): neuronas de
+Izhikevich en arrays con paridad probada contra el modelo TypeScript, sinapsis CSR con
+transpuesta, interneuronas inhibitorias reales, STDP por trazas modulada, hilos en CPU,
+kernels CUDA escritos (sin compilar: no hay GPU aquí), addon de Node y `gbrain-bench`.
+En este Mac un millón de neuronas con 100 sinapsis corre a ~58 ticks/s (5,8× tiempo real a
+10 Hz) con ~0,2 % de actividad. Primera región sobre el motor hecha: la corteza nativa
+(`GBRAIN_NATIVE=1`; asambleas excitatorias reproducibles y dispersas sin competición
+algorítmica). El motor tiene corrientes sinápticas exponenciales, depresión a corto plazo,
+plasticidad estructural e inhibitoria, y la corteza nativa aferentes topográficas: con eso la
+**compleción de patrón es real** (media entrada trae de vuelta el 85–100 % del lado de la
+asamblea que la pista no alcanza, con especificidad y sin atractores permanentes).
+La conectividad se construye por bloques (recurrentes locales + largo alcance en la corteza
+nativa; dos áreas en un motor con proyección y retroalimentación: relevo, aprendizaje y
+compleción a través de la proyección funcionan; la selectividad del área receptora no, por la
+volea de arranque y la potenciación no competitiva, declarado en el test).
+El motor tiene además corrientes lentas NMDA y normalización sináptica con presupuesto;
+ninguna de las dos da selectividad al área receptora porque el área emisora no tiene régimen
+sostenido en 60 ms simulados: la escala temporal del motor (un tick = 1 ms simulado) es la
+decisión pendiente. Medido con sub-pasos por tick: cinco sub-pasos dan régimen sostenido y
+selectivo al área emisora, pero la plasticidad calibrada a un paso desboca la red y el coste
+es 4× (a un millón bajaría de tiempo real); cambiar la escala es recalibrar todo lo que aprende. Falta también: normalización homeostática por tasa, neuromoduladores por
+región, retardos y oscilaciones, dendritas, y medir en GPU.
+
 ## Escalera de hitos (criterio de éxito global)
 
 1. Palabras de atributo generalizan a un objeto nuevo.

@@ -160,10 +160,11 @@ const scheduler = new PerceptionScheduler(() => brain.tick(), {
 // Restore previous learning if it exists (or its backup, if a save was interrupted)
 if (existsSync(STATE_PATH) || existsSync(`${STATE_PATH}${BACKUP_SUFFIX}`)) {
   try {
-    const { loaded, skipped } = brain.loadState(STATE_PATH);
+    const { loaded, skipped, fresh } = brain.loadState(STATE_PATH);
     console.log(
       `💾 State restored from ${STATE_PATH} — regions: ${loaded.join(', ') || 'none'}` +
-        (skipped.length ? ` | skipped (incompatible dims): ${skipped.join(', ')}` : ''),
+        (skipped.length ? ` | skipped (incompatible dims): ${skipped.join(', ')}` : '') +
+        (fresh.length ? ` | new, starting fresh: ${fresh.join(', ')}` : ''),
     );
   } catch (err) {
     console.error(`⚠️  Could not restore state (${(err as Error).message}); starting fresh.`);

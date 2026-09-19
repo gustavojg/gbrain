@@ -59,7 +59,7 @@ Fuera: `affective-lexicon.ts`.
 | **Secuencias**: el oído recibe la palabra como sucesión de sonidos; la mano dibuja a trazos | Células de tiempo, precesión de fase theta, cadenas sinápticas | Hecho en el oído: el micrófono manda cuadros cada 200 ms mientras se habla y la ventana del oído (10 cuadros) guarda el orden; dos vocales en un orden y en el otro son dos sonidos. Entre perceptos: `core/memory/sequence-memory` aprende qué sigue a qué y genera una expectativa (lo esperado no sorprende). Pendiente: la mano a trazos | Distingue "pa-ta" de "ta-pa" |
 | **Fases de codificación y recuperación** separadas (ritmo theta) en el hipocampo | Hasselmo 2002 | Pendiente (umbrales ajustados a mano); se hará cuando el motor nuevo permita recalibrar sin romper los tests | Menos falsos reconocimientos con los mismos umbrales |
 | **Memoria de trabajo con compuerta** | Ganglios basales → prefrontal (O'Reilly & Frank 2006) | Hecho: entra lo que sorprende o se recompensa (|error de predicción| ≥ 0,2), con esa prioridad; lo rutinario pasa de largo y lo retenido se desvanece sin refresco | Retiene lo relevante de una secuencia y suelta lo demás |
-| **Orden de palabras** | Estadísticas de secuencia, aprendizaje de transiciones | La memoria de secuencias ya guarda transiciones entre palabras leídas; producir en orden espera a que las palabras entren por el oído | Dice "coche azul", no "azul coche" |
+| **Orden de palabras** | Estadísticas de secuencia (Saffran 1996), aprendizaje de transiciones | **Hecho** (`core/language/word-order.ts`): cada frase leída vota el orden de los *tipos* de sus palabras (forma, color, sonido, según el registro palabra–referente); al producir, las palabras que un percepto trae de vuelta esperan un aliento (600 ms) y salen juntas en el orden ganador. Enseñado "coche verde", el coche azul es "coche azul"; enseñado "verde coche", "azul coche" | `word-order.test.ts`: dice "coche azul", no "azul coche"; al revés si se le enseña al revés |
 
 A partir de aquí las **palabras entran por el oído** y **leer es ver**: el canal de
 texto, el léxico precargado y el flujo de pensamiento en palabras (andamios) se
@@ -105,6 +105,6 @@ segundo en CPU y en una GPU alquilada. Ver `README.md` para `BRAIN_TICK_HZ`.
 
 1. Palabras de atributo generalizan a un objeto nuevo.
 2. Composición: el coche azul evoca "coche" y "azul".
-3. Lo dice en orden: "coche azul".
+3. Lo dice en orden: "coche azul". **Hecho.**
 4. Responde "¿de qué color es?" y "¿qué es?".
 5. Un objeto nuevo de un color conocido: responde el color aunque no sepa el nombre.

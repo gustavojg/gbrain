@@ -106,7 +106,7 @@ console.log('1. COLOUR');
 console.log('\n2. WORDS');
 const brain = newBrain();
 const written: string[] = [];
-brain.on('response', (e: BrainEvent) => { if (e.data.kind === 'writing') written.push(String(e.data.text)); });
+brain.on('response', (e: BrainEvent) => { if (e.data.kind === 'writing') written.push(...String(e.data.text).split(' ')); });
 const teach = (p: Picture, text: string): void => { show(brain, p); say(brain, text); };
 for (let round = 0; round < 3; round++) {
   teach(WHITE_CAR, 'coche');

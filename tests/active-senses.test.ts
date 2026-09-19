@@ -61,7 +61,7 @@ console.log('1. THE MOVING EYE');
   const written: string[] = [];
   const saccades: Array<Record<string, unknown>> = [];
   const seen: string[] = [];
-  brain.on('response', (e: BrainEvent) => { if (e.data.kind === 'writing') written.push(String(e.data.text)); });
+  brain.on('response', (e: BrainEvent) => { if (e.data.kind === 'writing') written.push(...String(e.data.text).split(' ')); });
   brain.on('affect', (e: BrainEvent) => { if (e.data.kind === 'saccade') saccades.push(e.data); });
   brain.on('memory', (e: BrainEvent) => { if (e.data.kind === 'recognition' && e.data.modality === 'visual') seen.push(String(e.data.label)); });
   for (let i = 0; i < 4; i++) {

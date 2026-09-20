@@ -30,6 +30,13 @@ export interface PerceptionJob<R> {
   finish: () => R;
   /** Ticks to run for this job instead of the scheduler's default. */
   ticks?: number;
+  /**
+   * A paced job's slices wait for real time when the brain has run ahead of
+   * it (see `SchedulerOptions.pace`): sensory input lives at the brain's
+   * rate. Lessons and practice are not paced — they are the user's fast
+   * forward.
+   */
+  paced?: boolean;
 }
 
 export interface SchedulerOptions {
@@ -47,6 +54,12 @@ export interface SchedulerOptions {
   maxQueue?: number;
   /** Yield primitive (injectable for tests). */
   defer?: (fn: () => void) => void;
+  /**
+   * Real-time pacing for paced jobs: how many ms to wait before the next
+   * slice (0 = run now). The server answers from its tick clock: wait while
+   * the brain is a perception's worth of ticks ahead of real time.
+   */
+  pace?: () => number;
 }
 
 interface QueuedJob {
@@ -61,6 +74,7 @@ export class PerceptionScheduler {
   private readonly sliceBudgetMs: number;
   private readonly maxQueue: number;
   private readonly defer: (fn: () => void) => void;
+  private readonly pace: (() => number) | null;
   private readonly queue: QueuedJob[] = [];
   private running = false;
 
@@ -70,6 +84,7 @@ export class PerceptionScheduler {
     this.sliceBudgetMs = options.sliceBudgetMs ?? 25;
     this.maxQueue = options.maxQueue ?? 32;
     this.defer = options.defer ?? ((fn) => setImmediate(fn));
+    this.pace = options.pace ?? null;
   }
 
   /** Jobs waiting to start. */
@@ -125,6 +140,14 @@ export class PerceptionScheduler {
 
     const runSlice = (): void => {
       try {
+        // A paced job waits for real time to come up to the brain.
+        if (next.job.paced && this.pace) {
+          const wait = this.pace();
+          if (wait > 0) {
+            setTimeout(runSlice, wait);
+            return;
+          }
+        }
         const sliceStart = performance.now();
         let n = 0;
         do {

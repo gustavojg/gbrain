@@ -49,6 +49,7 @@ import { DEFAULT_BRAIN_CONFIG } from './brain.config.js';
 import { BACKUP_SUFFIX } from './core/persistence/binary-protocol.js';
 import { synthesizeSpectrum } from './core/voice/vocal-tract.js';
 import { PerceptionScheduler, SchedulerBusyError } from './perception-scheduler.js';
+import { TickClock } from './tick-clock.js';
 import {
   ClientLimiter,
   HttpError,
@@ -152,18 +153,41 @@ const brain = new DigitalBrain({
   },
 });
 
-// Perceptions are propagated in slices so the event loop is never blocked.
-const scheduler = new PerceptionScheduler(() => brain.tick(), {
+// One clock for every tick: the ticks a perception runs ahead of time count
+// against real time, so that with a camera and a microphone streaming the
+// brain still lives at TICK_INTERVAL_MS per tick and not several times faster
+// (which compressed every human-timescale constant: sleeps every few seconds,
+// words pruned before they were repeated).
+const clock = new TickClock({
+  intervalMs: TICK_INTERVAL_MS,
+  speed: BRAIN_SPEED,
+  maxLeadTicks: brain.ticksFor(10_000) * BRAIN_SPEED,
+  maxLagTicks: brain.ticksFor(60_000) * BRAIN_SPEED,
+  maxCatchUp: 3 * BRAIN_SPEED,
+});
+/** One tick of the brain, counted on the clock. */
+const tickOnce = (): void => {
+  brain.tick();
+  clock.credit();
+};
+
+// Perceptions are propagated in slices so the event loop is never blocked;
+// sensory input is paced: once the brain is a perception ahead of real time,
+// the next slices wait for it (streamed frames coalesce meanwhile, so a
+// camera at 10 Hz does not become a brain at 40).
+const scheduler = new PerceptionScheduler(tickOnce, {
   ticksPerJob: brain.perceptionTicks,
+  pace: () => (clock.lead() >= brain.perceptionTicks * BRAIN_SPEED ? TICK_INTERVAL_MS : 0),
 });
 
 // Restore previous learning if it exists (or its backup, if a save was interrupted)
 if (existsSync(STATE_PATH) || existsSync(`${STATE_PATH}${BACKUP_SUFFIX}`)) {
   try {
-    const { loaded, skipped } = brain.loadState(STATE_PATH);
+    const { loaded, skipped, fresh } = brain.loadState(STATE_PATH);
     console.log(
       `💾 State restored from ${STATE_PATH} — regions: ${loaded.join(', ') || 'none'}` +
-        (skipped.length ? ` | skipped (incompatible dims): ${skipped.join(', ')}` : ''),
+        (skipped.length ? ` | skipped (incompatible dims): ${skipped.join(', ')}` : '') +
+        (fresh.length ? ` | new, starting fresh: ${fresh.join(', ')}` : ''),
     );
   } catch (err) {
     console.error(`⚠️  Could not restore state (${(err as Error).message}); starting fresh.`);
@@ -337,6 +361,7 @@ function perceive(
   return scheduler.submit({
     coalesceKey,
     ticks,
+    paced: true,
     inject: () => {
       startTime = brain.time;
       inject();
@@ -575,7 +600,7 @@ async function handleApiRoute(url: URL, req: http.IncomingMessage, res: http.Ser
   // POST /api/tick — Run a manual tick (admin)
   if (url.pathname === '/api/tick' && req.method === 'POST') {
     requireAdmin(req);
-    brain.tick();
+    tickOnce();
     sendJSON({ ok: true, time: brain.time });
     return;
   }
@@ -792,7 +817,7 @@ wss.on('connection', (ws: WebSocket) => {
           break;
         }
         case 'tick':
-          if (limiter.allow('tick')) brain.tick();
+          if (limiter.allow('tick')) tickOnce();
           break;
       }
     } catch (err) {
@@ -838,9 +863,13 @@ let autosaveTimer: ReturnType<typeof setInterval>;
 let limiterSweepTimer: ReturnType<typeof setInterval>;
 
 function startBrainLoop(): void {
-  // Brain tick — processes neurons (fast, no I/O)
+  // Brain tick — processes neurons (fast, no I/O). The clock says how many:
+  // none while perceptions have run the brain ahead of real time, a bounded
+  // catch-up after a stall.
   tickTimer = setInterval(() => {
-    for (let i = 0; i < BRAIN_SPEED; i++) brain.tick();
+    const due = clock.due();
+    for (let i = 0; i < due; i++) brain.tick();
+    clock.credit(due);
   }, TICK_INTERVAL_MS);
 
   // Separate broadcast — less frequent to avoid saturation

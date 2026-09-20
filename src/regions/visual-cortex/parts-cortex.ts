@@ -78,6 +78,8 @@ const DEFAULT_CONFIG: PartsCortexConfig = {
   partLearningRate: 0.2,
   neuronCount: 600,
   kWinners: 8,
+  // Half a square keeps ~0.55–0.6 of the square's parts code; a diagonal
+  // shares fewer of the cross's. The vigilance sits between them.
   vigilance: 0.5,
   categoryMatch: 0.35,
   gapTicks: 10,
@@ -323,8 +325,13 @@ export class PartsCortex extends BrainRegion {
     const mean = new Float32Array(this.codeSize);
     for (let i = 0; i < mean.length; i++) mean[i] = this.presentationCode[i] / this.presentationTicks;
     this.resetPresentation();
-    const lr = Math.min(1, this.cfg.learningRate * (effects.learningRateMultiplier ?? 1));
-    this.tuneParts(Math.min(1, this.cfg.partLearningRate * (effects.learningRateMultiplier ?? 1)));
+    // Categories here form by exposure alone: the ventral stream's tuning is not
+    // gated by reward (the dopamine factor belongs to corticostriatal learning),
+    // so the rates are the region's own. (Gated, the object neurons committed
+    // harder to the whole square and half of it fell below the vigilance.)
+    void effects;
+    const lr = this.cfg.learningRate;
+    this.tuneParts(this.cfg.partLearningRate);
 
     // Surprise: 1 − cosine between the parts seen and what the engram expects, before it learns.
     let dot = 0, na = 0, nb = 0;

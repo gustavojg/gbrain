@@ -162,19 +162,34 @@ export class NeuromodulatorSystem {
    *
    * @param dt - Time elapsed since the last tick (ms)
    */
+  /**
+   * Real milliseconds per simulated millisecond. The decay rates and the
+   * adaptation rates below are per REAL millisecond (a dopamine transient
+   * lasts about two seconds of real time, whatever the tick rate); the
+   * brain sets this from its tick rate. Left at 1, a tick of 1 simulated ms
+   * at 10 Hz made a two-second transient last two hundred seconds — and
+   * with a burst every few seconds, dopamine sat above 0.9 for good.
+   */
+  private timeScale = 1;
+
+  setTimeScale(realMsPerSimMs: number): void {
+    if (Number.isFinite(realMsPerSimMs) && realMsPerSimMs > 0) this.timeScale = realMsPerSimMs;
+  }
+
   decay(dt: number): void {
+    const realDt = dt * this.timeScale;
     for (const [type, state] of this.modulators) {
-      // Exponential decay toward the baseline
+      // Exponential decay toward the baseline (time constant 1/decayRate real ms).
       const diff = state.level - state.baseline;
-      state.level = state.baseline + diff * Math.exp(-state.decayRate * dt);
+      state.level = state.baseline + diff * Math.exp(-state.decayRate * realDt);
       // Hedonic adaptation: the tonic baseline drifts toward the recent level
       // (receptors desensitize under a sustained high, resensitize under a
       // sustained low), within a band around the innate set point. A high
       // that lasts stops feeling high; the set point itself is never lost.
       const setPoint = NeuromodulatorSystem.SET_POINTS[type];
       const drift =
-        (state.level - state.baseline) * NeuromodulatorSystem.ADAPTATION_RATE * dt +
-        (setPoint - state.baseline) * NeuromodulatorSystem.RESENSITIZATION_RATE * dt;
+        (state.level - state.baseline) * NeuromodulatorSystem.ADAPTATION_RATE * realDt +
+        (setPoint - state.baseline) * NeuromodulatorSystem.RESENSITIZATION_RATE * realDt;
       state.baseline = Math.max(
         setPoint - NeuromodulatorSystem.ADAPTATION_BAND,
         Math.min(setPoint + NeuromodulatorSystem.ADAPTATION_BAND, state.baseline + drift),
@@ -191,9 +206,9 @@ export class NeuromodulatorSystem {
     [ModulatorType.Acetylcholine]: 0.4,
     [ModulatorType.Oxytocin]: 0.3,
   };
-  /** Fraction of the level–baseline gap the baseline closes per ms (time constant ≈ 50 s of brain time). */
+  /** Fraction of the level–baseline gap the baseline closes per real ms (time constant ≈ 50 s). */
   private static readonly ADAPTATION_RATE = 0.00002;
-  /** Fraction of the baseline's distance to its set point closed per ms once nothing pushes (time constant ≈ 100 s). */
+  /** Fraction of the baseline's distance to its set point closed per real ms once nothing pushes (time constant ≈ 100 s). */
   private static readonly RESENSITIZATION_RATE = 0.00001;
   /** How far the baseline may drift from its set point. */
   private static readonly ADAPTATION_BAND = 0.15;
@@ -223,8 +238,12 @@ export class NeuromodulatorSystem {
 
     return {
       // Dopamine ↑ → learning ↑ | Cortisol ↑ → learning ↓
-      // DA potentiates LTP at corticostriatal synapses; cortisol blocks hippocampal NMDA
-      learningRateMultiplier: (1.0 + da * 0.8) * (1.0 - cort * 0.4),
+      // DA potentiates LTP at corticostriatal synapses; cortisol blocks hippocampal NMDA.
+      // Scaled so that the tonic set point (0.4) gives the plasticity the brain
+      // was calibrated with (≈1.6): a burst gates more, a dip less. (Before the
+      // modulators decayed in real time, dopamine sat near 1 and the old
+      // factor of 0.8 gave that same 1.6 all day long.)
+      learningRateMultiplier: (1.0 + da * 1.4) * (1.0 - cort * 0.4),
 
       // Serotonin ↑ → threshold ↑ (more stability, less impulsivity)
       // Cortisol ↑ → threshold ↑ (inhibition due to stress)

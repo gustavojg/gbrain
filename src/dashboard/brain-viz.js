@@ -40,6 +40,7 @@ const REGION_COLORS = {
   handMotorCortex:  { h: 320, s: 70, l: 62, label: 'Hand Motor' },
   colorCortex:      { h: 50,  s: 90, l: 60, label: 'Colour Ctx' },
   partsCortex:      { h: 275, s: 70, l: 62, label: 'Parts Ctx (IT)' },
+  nativeCortex:     { h: 10,  s: 80, l: 60, label: 'Native Ctx (C++)' },
 };
 
 // 3D positions of brain regions (x, y, z) normalized -1..1
@@ -56,6 +57,7 @@ const REGION_POSITIONS = {
   handMotorCortex:  { x: 0.2,   y: 0.4,  z: 0.25, size: 20 },
   colorCortex:      { x: 0.25,  y: 0.25, z: -0.55, size: 16 },
   partsCortex:      { x: -0.25, y: 0.15, z: -0.6,  size: 18 },
+  nativeCortex:     { x: 0.0,   y: -0.35, z: -0.7, size: 20 },
 };
 
 // Connections between regions (for drawing axon lines)
@@ -76,6 +78,7 @@ const CONNECTIONS = [
   ['thalamus', 'handMotorCortex'],
   ['thalamus', 'colorCortex'],
   ['thalamus', 'partsCortex'],
+  ['thalamus', 'nativeCortex'],
   ['prefrontalCortex', 'thalamus'],
   ['prefrontalCortex', 'visualCortex'],
   ['amygdala', 'hippocampus'],
@@ -1366,7 +1369,9 @@ document.getElementById('toggleWebcam')?.addEventListener('click', async () => {
   btn.disabled = true;
   status.textContent = 'Asking for the camera…';
   try {
-    webcamStream = await navigator.mediaDevices.getUserMedia({ video: { width: 64, height: 64, facingMode: 'user' } });
+    // A normal-resolution stream for the preview; the frame the brain gets is
+    // reduced to its 64×64 retina on the canvas beside it.
+    webcamStream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' } });
     video.srcObject = webcamStream;
     btn.textContent = '⏹ Disable';
     status.textContent = 'Active — sending frames';
@@ -1376,7 +1381,10 @@ document.getElementById('toggleWebcam')?.addEventListener('click', async () => {
     const wCtx = wCanvas.getContext('2d');
 
     webcamInterval = setInterval(() => {
-      wCtx.drawImage(video, 0, 0, 64, 64);
+      // Centre crop to a square, then reduce to the retina.
+      const side = Math.min(video.videoWidth, video.videoHeight) || 64;
+      const sx = ((video.videoWidth || side) - side) / 2, sy = ((video.videoHeight || side) - side) / 2;
+      wCtx.drawImage(video, sx, sy, side, side, 0, 0, 64, 64);
       const { pixels, rgb } = pixelsOf(wCtx);
       if (ws && ws.readyState === 1) {
         ws.send(JSON.stringify({ type: 'input:image', data: { pixels, rgb, width: 64, height: 64 } }));
@@ -1410,21 +1418,35 @@ function rmsOf(samples) {
 }
 
 /** Fundamental frequency by normalized autocorrelation (70–500 Hz); 0 if unvoiced. */
+/**
+ * The pitch of a frame by normalized autocorrelation, 70–500 Hz. Each lag is
+ * normalized by the energy of the two stretches actually compared (dividing
+ * by the whole frame's energy, as before, capped a low male voice at
+ * r ≈ 0.5 and read most of it as unvoiced). Prefers the longest lag among
+ * near-equal peaks, so a strong second harmonic does not halve the period.
+ */
 function pitchOf(samples, sampleRate) {
+  const n = samples.length;
   const minLag = Math.floor(sampleRate / 500);
-  const maxLag = Math.min(samples.length - 1, Math.ceil(sampleRate / 70));
-  let energy = 0;
-  for (let i = 0; i < samples.length; i++) energy += samples[i] * samples[i];
-  if (energy === 0) return 0;
+  const maxLag = Math.min(n >> 1, Math.ceil(sampleRate / 70));
   let bestLag = 0;
   let best = 0;
   for (let lag = minLag; lag <= maxLag; lag++) {
-    let sum = 0;
-    for (let i = 0; i + lag < samples.length; i++) sum += samples[i] * samples[i + lag];
-    const r = sum / energy;
+    let sum = 0, e1 = 0, e2 = 0;
+    for (let i = 0; i + lag < n; i++) { const a = samples[i], b = samples[i + lag]; sum += a * b; e1 += a * a; e2 += b * b; }
+    const r = e1 > 0 && e2 > 0 ? sum / Math.sqrt(e1 * e2) : 0;
     if (r > best) { best = r; bestLag = lag; }
   }
-  return best >= 0.5 && bestLag > 0 ? sampleRate / bestLag : 0;
+  if (best < 0.6 || bestLag === 0) return 0;
+  // Octave check: if double the lag correlates almost as well, that is the true period.
+  const twice = bestLag * 2;
+  if (twice <= maxLag) {
+    let sum = 0, e1 = 0, e2 = 0;
+    for (let i = 0; i + twice < n; i++) { const a = samples[i], b = samples[i + twice]; sum += a * b; e1 += a * a; e2 += b * b; }
+    const r2 = e1 > 0 && e2 > 0 ? sum / Math.sqrt(e1 * e2) : 0;
+    if (r2 >= best * 0.9) bestLag = twice;
+  }
+  return sampleRate / bestLag;
 }
 
 document.getElementById('toggleMic')?.addEventListener('click', async () => {
@@ -1463,7 +1485,7 @@ document.getElementById('toggleMic')?.addEventListener('click', async () => {
     await audioCtx.resume(); // iOS creates it suspended
     const source = audioCtx.createMediaStreamSource(micStream);
     micAnalyser = audioCtx.createAnalyser();
-    micAnalyser.fftSize = 1024; // ~47 Hz per bin at 48 kHz: enough to tell vowels apart
+    micAnalyser.fftSize = 2048; // ~23 Hz per bin at 48 kHz; and 43 ms of waveform, four periods of a low male voice, for the pitch
     source.connect(micAnalyser);
 
     btn.textContent = '⏹ Disable';
@@ -1556,12 +1578,26 @@ document.getElementById('toggleMic')?.addEventListener('click', async () => {
 // VOICE — the brain's vocal tract, rendered with WebAudio
 // ================================================================
 // Same articulatory model as src/core/voice/vocal-tract.ts: a voiced source
-// shaped by two formants. The brain decides F1/F2; this only makes them audible.
+// shaped by two formants. The brain decides F1/F2; this only makes them
+// audible. What the brain HEARS of itself is the model's spectrum, not this
+// playback, so nothing here changes what it learns — only what you hear.
+//
+// The voice is a small child's: a fundamental of ~260 Hz (an infant's 380 Hz
+// left too few harmonics under the formants to hear a vowel — it whistled),
+// a natural slight rise-and-fall contour and a little vibrato, formants as
+// wide as the model's (a narrow, fixed-pitch buzz is what sounds like a
+// robot) but with steep skirts (two filter stages each), a weak third
+// formant and a breath of aspiration noise.
 
 let voiceCtx = null;
 let voiceEnabled = false;
 let ownVoiceUntil = 0;
-const VOICE_PITCH_HZ = 160;
+/** A small child's fundamental frequency (adults: 100–250 Hz; infants: 300–500 Hz). */
+const VOICE_PITCH_HZ = 260;
+/** Formant bandwidths, as the vocal tract model's (FWHM of its Gaussian peaks: 2.355 × 90 and × 120 Hz). */
+const FORMANT_BANDWIDTH_HZ = { f1: 212, f2: 283, f3: 400 };
+/** The third formant: fixed, weak; it makes the vowel a voice rather than two whistles. */
+const F3_HZ = 3000;
 
 document.getElementById('toggleVoice')?.addEventListener('click', () => {
   const btn = document.getElementById('toggleVoice');
@@ -1618,7 +1654,7 @@ function playVocalization(v) {
     lead = 0.09;
     const hum = voiceCtx.createOscillator();
     hum.type = 'triangle';
-    hum.frequency.value = VOICE_PITCH_HZ;
+    hum.frequency.value = VOICE_PITCH_HZ * 1.04;
     const nasal = voiceCtx.createBiquadFilter();
     nasal.type = 'lowpass';
     nasal.frequency.value = 400;
@@ -1644,30 +1680,70 @@ function playVocalization(v) {
   const now = now0 + lead;
   const source = voiceCtx.createOscillator();
   source.type = 'sawtooth'; // rich in harmonics, like the glottal source
-  source.frequency.value = VOICE_PITCH_HZ;
+  // The pitch contour of a cry-free vocalization: a little above the usual
+  // pitch at the start, settling, then falling toward the end.
+  source.frequency.setValueAtTime(VOICE_PITCH_HZ * 1.04, now);
+  source.frequency.exponentialRampToValueAtTime(VOICE_PITCH_HZ, now + seconds * 0.4);
+  source.frequency.exponentialRampToValueAtTime(VOICE_PITCH_HZ * 0.93, now + seconds);
+  // Vibrato: a slow, small wobble of the pitch (a fixed pitch is a machine's).
+  const vibrato = voiceCtx.createOscillator();
+  vibrato.frequency.value = 5.5;
+  const vibratoDepth = voiceCtx.createGain();
+  vibratoDepth.gain.value = VOICE_PITCH_HZ * 0.012;
+  vibrato.connect(vibratoDepth);
+  vibratoDepth.connect(source.frequency);
+  // Aspiration: a breath of noise through the same tract.
+  const breathLength = Math.floor(voiceCtx.sampleRate * (seconds + 0.05));
+  const breathBuffer = voiceCtx.createBuffer(1, breathLength, voiceCtx.sampleRate);
+  const breathData = breathBuffer.getChannelData(0);
+  for (let i = 0; i < breathLength; i++) breathData[i] = Math.random() * 2 - 1;
+  const breath = voiceCtx.createBufferSource();
+  breath.buffer = breathBuffer;
+  const breathGain = voiceCtx.createGain();
+  breathGain.gain.value = 0.015;
+  breath.connect(breathGain);
 
   const out = voiceCtx.createGain();
-  const level = 0.25 * Math.min(1, Math.max(0, Number(command.amplitude) || 0.9));
+  const level = 0.3 * Math.min(1, Math.max(0, Number(command.amplitude) || 0.9));
   out.gain.setValueAtTime(0, now);
-  out.gain.linearRampToValueAtTime(level, now + 0.03);
-  out.gain.setValueAtTime(level, now + seconds - 0.08);
+  out.gain.linearRampToValueAtTime(level, now + 0.04);
+  out.gain.setValueAtTime(level, now + seconds - 0.1);
   out.gain.linearRampToValueAtTime(0, now + seconds);
 
-  for (const [freq, q, gain] of [[f1, 8, 1.0], [f2, 10, 0.78]]) {
-    const formant = voiceCtx.createBiquadFilter();
-    formant.type = 'bandpass';
-    formant.frequency.value = freq;
-    formant.Q.value = q;
+  // The tract: the two formants the brain chose, as wide as in its own
+  // model, plus a fixed, weak third one. Two stages per formant: the skirts
+  // fall twice as fast, so the harmonics away from the formants (what made
+  // it whistle) stay down and the vowel is what is left.
+  for (const [freq, bandwidth, gain] of [[f1, FORMANT_BANDWIDTH_HZ.f1, 1.0], [f2, FORMANT_BANDWIDTH_HZ.f2, 0.7], [F3_HZ, FORMANT_BANDWIDTH_HZ.f3, 0.12]]) {
+    const first = voiceCtx.createBiquadFilter();
+    first.type = 'bandpass';
+    first.frequency.value = freq;
+    first.Q.value = freq / bandwidth;
+    const second = voiceCtx.createBiquadFilter();
+    second.type = 'bandpass';
+    second.frequency.value = freq;
+    second.Q.value = freq / bandwidth;
     const formantGain = voiceCtx.createGain();
-    formantGain.gain.value = gain;
-    source.connect(formant);
-    formant.connect(formantGain);
+    formantGain.gain.value = gain * 2.2; // two stages lose level
+    source.connect(first);
+    breathGain.connect(first);
+    first.connect(second);
+    second.connect(formantGain);
     formantGain.connect(out);
   }
-  out.connect(voiceCtx.destination);
+  // Lip radiation and the softness of a small tract: nothing sharp above 4 kHz.
+  const tilt = voiceCtx.createBiquadFilter();
+  tilt.type = 'lowpass';
+  tilt.frequency.value = 4000;
+  out.connect(tilt);
+  tilt.connect(voiceCtx.destination);
+  vibrato.start(now);
+  breath.start(now);
   source.start(now);
   source.stop(now + seconds + 0.02);
-  source.onended = () => out.disconnect();
+  vibrato.stop(now + seconds + 0.02);
+  breath.stop(now + seconds + 0.02);
+  source.onended = () => { out.disconnect(); tilt.disconnect(); };
 
   ownVoiceUntil = performance.now() + seconds * 1000 + 300;
 }

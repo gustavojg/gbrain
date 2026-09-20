@@ -41,6 +41,7 @@ import { ImageGenerator } from './decoders/image-generator.js';
 import { Thalamus } from './regions/thalamus/thalamus.js';
 import { VisualCortex } from './regions/visual-cortex/visual-cortex.js';
 import { PartsCortex } from './regions/visual-cortex/parts-cortex.js';
+import { NativeCortex } from './regions/native-cortex/native-cortex.js';
 import { AuditoryCortex } from './regions/auditory-cortex/auditory-cortex.js';
 import { Hippocampus } from './regions/hippocampus/hippocampus.js';
 import { Amygdala } from './regions/amygdala/amygdala.js';
@@ -539,6 +540,8 @@ export class DigitalBrain {
   // ── The innate layer ──
   /** The speaker's usual pitch (Hz); the prosody detectors read pitch relative to it. Adapts slowly. */
   private speakerPitchHz = 150;
+  /** The speaker's usual level (RMS of their utterances): what "raised" is measured against. */
+  private speakerLevel = 0.1;
   private lastVoice: VoiceAppraisal | null = null;
   private voicesHeard = 0;
   private startles = 0;
@@ -696,6 +699,10 @@ export class DigitalBrain {
   private static readonly RETINA_SIDE = 14;
   /** Input channels of the visual cortex. */
   private static readonly VISUAL_CORTEX_INPUTS = 1000;
+  /** Neurons of the native cortex when it is switched on (its recurrent synapses persist with the state). */
+  private static readonly NATIVE_CORTEX_NEURONS = 5000;
+  /** Extra targets of the visual relay (the native cortex, when on). */
+  private readonly extraVisualRelay: string[] = [];
 
   /**
    * Regions whose weights are NOT restored from legacy (protocol v1) files.
@@ -816,6 +823,8 @@ export class DigitalBrain {
 
     // 3. Initialize neuromodulators
     this.modulators = new NeuromodulatorSystem();
+    // Neuromodulators decay in real seconds (a dopamine transient ≈ 2 s), whatever the tick rate.
+    this.modulators.setTimeScale(this.msPerTick / this.config.snn.dt);
 
     // 4. Initialize consolidation
     this.consolidationEngine = new ConsolidationEngine(DigitalBrain.SLEEP_REPLAY_CYCLES);
@@ -946,6 +955,17 @@ export class DigitalBrain {
     // The parts cortex (V2→IT): objects as arrangements of local parts. Added
     // last, with its own random source, so the other trajectories stay put.
     this.addRegion(new PartsCortex({ retinaSide: DigitalBrain.RETINA_SIDE, channelMaps: 5, inputCount: DigitalBrain.VISUAL_CORTEX_INPUTS }));
+    // The native cortex (opt-in, GBRAIN_NATIVE=1, needs `npm run build:native`):
+    // a sheet of spiking neurons on the C++ engine, fed by the visual relay —
+    // the first region on the substrate the million-neuron brain will run on.
+    if (process.env.GBRAIN_NATIVE === '1') {
+      if (NativeCortex.available()) {
+        this.addRegion(new NativeCortex({ neurons: DigitalBrain.NATIVE_CORTEX_NEURONS, inputCount: DigitalBrain.VISUAL_CORTEX_INPUTS }));
+        this.extraVisualRelay.push('nativeCortex');
+      } else {
+        console.warn('⚠️  GBRAIN_NATIVE=1 but the native engine is not built (npm run build:native): running without it.');
+      }
+    }
 
     // Connect Broca/Wernicke to the bus as an alias of 'brocaWernicke'
     // to receive packets from the existing connectome
@@ -2348,7 +2368,7 @@ export class DigitalBrain {
       // travels along that projection of the connectome (its delay and weight).
       this.bus.send({
         source: 'thalamus',
-        targets: [...DigitalBrain.THALAMIC_RELAY[type]],
+        targets: [...DigitalBrain.THALAMIC_RELAY[type], ...(type === 'visual' ? this.extraVisualRelay : [])],
         spikes: relayed,
         timestamp: this.currentTime,
         metadata: { inputType: type },
@@ -2523,15 +2543,19 @@ export class DigitalBrain {
    * something.
    */
   hearVoice(contour: VoiceContour): ProsodyAppraisal | null {
-    const appraisal = appraiseProsody(contour, this.speakerPitchHz);
+    // The usual pitch and level start from a prior and adapt to the speaker:
+    // fast on the first voice it ever hears, slowly after that.
+    const firstVoice = this.voicesHeard === 0;
+    const appraisal = appraiseProsody(contour, this.speakerPitchHz, this.speakerLevel);
     if (!appraisal) return null;
     const { valence, arousal, features } = appraisal;
 
-    // The detectors read pitch against the speaker's usual pitch: adapt to it slowly.
+    // The detectors read pitch and level against the speaker's usual: adapt to them slowly.
     if (features.voiced >= 0.3) {
       const meanHz = this.speakerPitchHz * Math.pow(2, features.pitchHeight / 12);
-      this.speakerPitchHz += (Math.max(60, Math.min(500, meanHz)) - this.speakerPitchHz) * 0.1;
+      this.speakerPitchHz += (Math.max(60, Math.min(500, meanHz)) - this.speakerPitchHz) * (firstVoice ? 1 : 0.1);
     }
+    this.speakerLevel += (Math.max(0.015, Math.min(1, features.meanRms)) - this.speakerLevel) * (firstVoice ? 0.5 : 0.1);
 
     const amygdala = this.regions.get('amygdala') as Amygdala | undefined;
     const evoked = { valence, arousal };
@@ -3205,6 +3229,7 @@ export class DigitalBrain {
         tickCount: this.tickCount,
         pendingVocab: Array.from(this.pendingVocab.entries()),
         speakerPitchHz: this.speakerPitchHz,
+        speakerLevel: this.speakerLevel,
       },
       association: this.associations.serialize(),
       motivation: this.motivation.serialize(),
@@ -3247,7 +3272,10 @@ export class DigitalBrain {
    */
   private restoreBrainExtras(data: unknown): void {
     if (typeof data !== 'object' || data === null) return;
-    const d = data as { time?: unknown; tickCount?: unknown; pendingVocab?: unknown; speakerPitchHz?: unknown };
+    const d = data as { time?: unknown; tickCount?: unknown; pendingVocab?: unknown; speakerPitchHz?: unknown; speakerLevel?: unknown };
+    if (typeof d.speakerLevel === 'number' && Number.isFinite(d.speakerLevel)) {
+      this.speakerLevel = Math.max(0.015, Math.min(1, d.speakerLevel));
+    }
     if (typeof d.speakerPitchHz === 'number' && Number.isFinite(d.speakerPitchHz)) {
       this.speakerPitchHz = Math.max(60, Math.min(500, d.speakerPitchHz));
     }
@@ -3289,7 +3317,7 @@ export class DigitalBrain {
    *
    * @returns Which regions were restored and which were skipped.
    */
-  loadState(filePath: string): { loaded: string[]; skipped: string[] } {
+  loadState(filePath: string): { loaded: string[]; skipped: string[]; fresh: string[] } {
     // If the main file is missing or corrupted (failed CRC, truncated write),
     // fall back to the previous snapshot instead of starting from scratch.
     let data;
@@ -3304,8 +3332,14 @@ export class DigitalBrain {
 
     const loaded: string[] = [];
     const skipped: string[] = [];
+    // Regions the file does not know (added since it was written): they start fresh, nothing is wrong.
+    const fresh: string[] = [];
     for (const [id, region] of this.regions) {
       const rd = data.regions.get(id);
+      if (!rd) {
+        fresh.push(id);
+        continue;
+      }
       if (rd && data.version < 2 && DigitalBrain.RESET_ON_LEGACY_STATE.has(id)) {
         console.warn(`⚠️  ${id}: weights from a legacy (v${data.version}) state are not restored — starting fresh.`);
         skipped.push(id);
@@ -3354,7 +3388,7 @@ export class DigitalBrain {
       }
     }
 
-    return { loaded, skipped };
+    return { loaded, skipped, fresh };
   }
 
   /**
